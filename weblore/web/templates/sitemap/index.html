@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Sitemap{% endblock %}
+{% block main %}
+<h1>Sitemap</h1>
+<p>Distinct URLs observed across recorded HTTP traffic, grouped by host.</p>
+
+<form method="get" action="{{ url_for('sitemap.index') }}" class="row" aria-label="Filter by host">
+  <div>
+    <label for="sm-host">Host</label>
+    <select id="sm-host" name="host">
+      <option value="">(all)</option>
+      {% for h in hosts %}
+        <option value="{{ h }}" {% if current_host == h %}selected{% endif %}>{{ h }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div><button type="submit">Filter</button></div>
+</form>
+
+<table>
+  <caption>{{ nodes|length }} endpoint{{ '' if nodes|length == 1 else 's' }}</caption>
+  <thead>
+    <tr><th scope="col">Host</th><th scope="col">Method</th><th scope="col">URL</th>
+        <th scope="col">Hits</th><th scope="col">Last status</th></tr>
+  </thead>
+  <tbody>
+    {% for n in nodes %}
+    <tr>
+      <td>{{ n.host }}</td>
+      <td>{{ n.method }}</td>
+      <td class="url"><a href="{{ url_for('history.index', q=n.url) }}">{{ n.url }}</a></td>
+      <td>{{ n.count }}</td>
+      <td>{{ n.status }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No traffic recorded yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Scope rules</h2>
+<p>Used by future Phase-3 scanner to limit testing. Two kinds (include / exclude) and two targets (host / url).</p>
+
+<form method="post" action="{{ url_for('sitemap.add_scope') }}" class="row" aria-label="Add scope rule">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div>
+    <label for="sc-kind">Kind</label>
+    <select id="sc-kind" name="kind">
+      <option value="include">include</option>
+      <option value="exclude">exclude</option>
+    </select>
+  </div>
+  <div>
+    <label for="sc-target">Target</label>
+    <select id="sc-target" name="target">
+      <option value="host">host</option>
+      <option value="url">url</option>
+    </select>
+  </div>
+  <div class="grow">
+    <label for="sc-pat">Pattern (Python regex)</label>
+    <input id="sc-pat" name="pattern" required autocomplete="off">
+  </div>
+  <div><button type="submit">Add</button></div>
+</form>
+
+<table>
+  <caption>Active scope rules</caption>
+  <thead>
+    <tr><th scope="col">#</th><th scope="col">On</th><th scope="col">Kind</th>
+        <th scope="col">Target</th><th scope="col">Pattern</th><th scope="col">Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for s in scope %}
+    <tr>
+      <td>{{ s.id }}</td>
+      <td>{{ 'yes' if s.enabled else 'no' }}</td>
+      <td>{{ s.kind }}</td>
+      <td>{{ s.target }}</td>
+      <td><code>{{ s.pattern }}</code></td>
+      <td>
+        <form method="post" action="{{ url_for('sitemap.toggle_scope', sid=s.id) }}" class="inline-form">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit">{{ 'Disable' if s.enabled else 'Enable' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('sitemap.delete_scope', sid=s.id) }}" class="inline-form"
+              onsubmit="return confirm('Delete?');">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No scope rules.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

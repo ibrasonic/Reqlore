@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Clickjacking PoC generator{% endblock %}
+{% block main %}
+<h1>Clickjacking PoC generator</h1>
+<p>The generated HTML page embeds the target inside an iframe and overlays a
+   lure caption. Open it in a browser to see whether the target prevents
+   framing.</p>
+
+<form method="post" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="u">Target URL</label>
+    <input id="u" name="url" type="url" required size="60"
+           placeholder="https://example.com/profile">
+  </p>
+  <p>
+    <label for="o">Overlay text</label>
+    <input id="o" name="overlay" type="text" value="Click here to win!" size="40">
+  </p>
+  <p><button type="submit">Download PoC</button></p>
+</form>
+{% endblock %}

@@ -1,0 +1,76 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ---------- Virtual envs ----------
+.env
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# ---------- Test / lint caches ----------
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.ruff_cache/
+.mypy_cache/
+.pyre/
+.pytype/
+
+# ---------- Editor / OS ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- Weblore project data ----------
+# Local project DBs and SQLite WAL/SHM sidecars never belong in git.
+*.weblore
+*.weblore-shm
+*.weblore-wal
+data/
+demo.weblore*
+
+# ---------- Logs / scratch ----------
+*.log
+_check.py
+_smoke_*
+-p/
+_push_to_github.ps1
+
+# ---------- Docker volumes ----------
+.docker-data/

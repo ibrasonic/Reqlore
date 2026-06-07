@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Proxy{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <ol class="breadcrumb">
+    <li><a href="{{ url_for('dashboard.index') }}">Dashboard</a></li>
+    <li aria-current="page">Proxy</li>
+  </ol>
+</nav>
+
+<h1>Proxy</h1>
+
+<section aria-labelledby="ctrl-h">
+  <h2 id="ctrl-h">Controls</h2>
+  <p>Listening endpoint: <strong>{{ proxy_endpoint }}</strong> —
+     <strong aria-live="polite">{{ 'running' if proxy_running else 'stopped' }}</strong>.</p>
+  {% if proxy_running %}
+  <form method="post" action="{{ url_for('proxy.stop') }}" class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Stop proxy</button>
+  </form>
+  {% else %}
+  <form method="post" action="{{ url_for('proxy.start') }}" class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Start proxy</button>
+  </form>
+  {% endif %}
+  <form method="post" action="{{ url_for('proxy.toggle_intercept') }}" class="inline-form" data-intercept-form>
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="from" value="checkbox">
+    <label>
+      <input type="checkbox" name="on" value="1"
+             {% if intercept_on %}checked{% endif %}
+             data-intercept-checkbox>
+      Intercept
+      (<strong aria-live="polite">{{ 'ON' if intercept_on else 'OFF' }}</strong>)
+    </label>
+    <noscript><button type="submit">Apply</button></noscript>
+  </form>
+  <p>When intercept is ON, every request is held in the queue below
+     until you forward or drop it.</p>
+  <p><a href="{{ url_for('proxy.ca_download') }}">Download Weblore <abbr title="Certificate Authority">CA</abbr> certificate (<abbr title="Privacy-Enhanced Mail, a base64 PEM-encoded X.509 file">PEM</abbr>)</a> —
+     install in your browser to intercept <abbr title="HyperText Transfer Protocol Secure">HTTPS</abbr>.</p>
+</section>
+
+<section aria-labelledby="filter-h">
+  <h2 id="filter-h">Intercept filter</h2>
+  <p>Pick which requests count as &ldquo;interesting&rdquo; when intercept is ON.
+     Leave host / path blank to match any. Defaults hold state-changing
+     methods only and skip browser background traffic and static assets,
+     so flipping intercept on during real browsing stays manageable.</p>
+  <form method="post" action="{{ url_for('proxy.set_intercept_config') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <fieldset>
+      <legend>HTTP methods to hold</legend>
+      {% for m in supported_methods %}
+      <label class="inline-check">
+        <input type="checkbox" name="method" value="{{ m }}"
+               {% if m in intercept_cfg.methods %}checked{% endif %}>
+        {{ m }}
+      </label>
+      {% endfor %}
+    </fieldset>
+    <p>
+      <label for="host_regex">Only hold requests whose <strong>host</strong> matches (regex):</label><br>
+      <input type="text" id="host_regex" name="host_regex"
+             value="{{ intercept_cfg.host_regex }}"
+             placeholder="e.g. ^target\.example\.com$  (blank = any host)">
+    </p>
+    <p>
+      <label for="path_regex">Only hold requests whose <strong>path</strong> matches (regex):</label><br>
+      <input type="text" id="path_regex" name="path_regex"
+             value="{{ intercept_cfg.path_regex }}"
+             placeholder="e.g. ^/api/  (blank = any path)">
+    </p>
+    <details>
+      <summary>Advanced excludes</summary>
+      <p>
+        <label for="exclude_host_regex">Never hold requests whose host matches:</label><br>
+        <input type="text" id="exclude_host_regex" name="exclude_host_regex"
+               value="{{ intercept_cfg.exclude_host_regex }}" size="60">
+      </p>
+      <p>
+        <label for="exclude_path_regex">Never hold requests whose path matches:</label><br>
+        <input type="text" id="exclude_path_regex" name="exclude_path_regex"
+               value="{{ intercept_cfg.exclude_path_regex }}" size="60">
+      </p>
+    </details>
+    <p><button type="submit">Save filter</button></p>
+  </form>
+</section>
+
+<section aria-labelledby="q-h"
+         data-intercept-watch
+         data-intercept-on="{{ '1' if intercept_on else '0' }}"
+         data-intercept-count="{{ items|length }}">
+  <h2 id="q-h">Intercept queue</h2>
+  {% if items %}
+    <p>{{ items|length }} held item{{ '' if items|length == 1 else 's' }}.</p>
+    <div class="row" role="group" aria-label="Bulk actions">
+      <form method="post" action="{{ url_for('proxy.forward_all') }}" class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit">Forward all ({{ items|length }})</button>
+      </form>
+      <form method="post" action="{{ url_for('proxy.drop_all') }}" class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit">Drop all ({{ items|length }})</button>
+      </form>
+      <form method="post" action="{{ url_for('proxy.send_all_to_repeater') }}" class="inline-form"
+            aria-describedby="sallhelp">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit">Send all to Repeater</button>
+      </form>
+    </div>
+    <p id="sallhelp" class="help">
+      <em>Send all to Repeater</em> snapshots every held request into history
+      for replay; flows stay held until you Forward or Drop them.
+    </p>
+    <table>
+      <caption class="visually-hidden">Held items, newest first.</caption>
+      <thead>
+        <tr><th scope="col">#</th><th scope="col">Kind</th>
+            <th scope="col">Reason</th><th scope="col">Actions</th></tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+        <tr>
+          <th scope="row">{{ it.id }}</th>
+          <td>{{ it.kind }}</td>
+          <td>{{ it.hold_reason }}</td>
+          <td>
+            <a href="{{ url_for('proxy.show_intercept', iid=it.id) }}">View</a>
+            <form method="post" action="{{ url_for('proxy.drop_intercept', iid=it.id) }}" class="inline-form">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit">Drop</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No held items.</p>
+  {% endif %}
+</section>
+{% endblock %}

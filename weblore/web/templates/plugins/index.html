@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Plugins{% endblock %}
+{% block main %}
+<h1>Plugins</h1>
+
+<section aria-labelledby="dirs-h">
+  <h2 id="dirs-h">Plugin folders</h2>
+  <p>Drop a <code>.py</code> file into any of these folders and click
+     <strong>Reload plugins</strong>. Files starting with <code>_</code> are ignored.</p>
+  <ul>
+    {% for d in dirs %}
+      <li><code>{{ d }}</code></li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="{{ url_for('.reload_plugins') }}" class="inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Reload plugins</button>
+  </form>
+  <form method="post" action="{{ url_for('.watch') }}" class="inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="on" value="1">
+    <button type="submit">Enable hot reload (watchdog)</button>
+  </form>
+  <form method="post" action="{{ url_for('.watch') }}" class="inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="on" value="0">
+    <button type="submit">Disable hot reload</button>
+  </form>
+</section>
+
+<section aria-labelledby="list-h">
+  <h2 id="list-h">Discovered plugins</h2>
+  {% if plugins %}
+    <table>
+      <caption>{{ plugins|length }} plugin(s)</caption>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Version</th>
+          <th scope="col">Description</th>
+          <th scope="col">Status</th>
+          <th scope="col">Rules</th>
+          <th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in plugins %}
+          <tr>
+            <th scope="row">{{ p.name }}</th>
+            <td>{{ p.version }}</td>
+            <td>{{ p.description }}</td>
+            <td>
+              {{ p.status }}
+              {% if p.error %}
+                <details>
+                  <summary>traceback</summary>
+                  <pre>{{ p.error }}</pre>
+                </details>
+              {% endif %}
+            </td>
+            <td>{{ p.rules|length }}</td>
+            <td>
+              <form method="post" action="{{ url_for('.toggle', name=p.name) }}" class="inline">
+                <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                <button type="submit">{{ 'Disable' if p.enabled else 'Enable' }}</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No plugins found yet. Create
+       <code>~/.weblore/plugins/example.py</code> with this template:</p>
+    <pre>PLUGIN_INFO = {
+    "name": "example",
+    "version": "0.1",
+    "description": "Demo plugin: flag responses larger than 1 MB.",
+}
+
+def scanner_rules():
+    from weblore.scanner import Finding
+
+    def big_responses(ctx):
+        if len(ctx.resp_body) &gt; 1_000_000:
+            yield Finding(
+                severity="info",
+                title="Very large response body",
+                host=ctx.host, url=ctx.url, request_id=ctx.history_id,
+                evidence=f"{len(ctx.resp_body)} bytes",
+            )
+
+    return [big_responses]
+</pre>
+  {% endif %}
+</section>
+{% endblock %}

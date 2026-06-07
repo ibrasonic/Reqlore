@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Match &amp; Replace{% endblock %}
+{% block main %}
+<h1>Match &amp; Replace</h1>
+<p>Rewrite proxied traffic on the fly. Rules apply to live proxy flows only.
+   Order is insertion order; first match wins per location.</p>
+
+<form method="post" action="{{ url_for('matchreplace.add') }}" class="stack" aria-label="Add rule">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <fieldset>
+    <legend>New rule</legend>
+    <div class="row">
+      <div>
+        <label for="mr-where">Where</label>
+        <select id="mr-where" name="where">
+          {% for k, label in where_choices %}<option value="{{ k }}">{{ label }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="mr-regex">Regex?</label>
+        <select id="mr-regex" name="is_regex">
+          <option value="0">No — literal</option>
+          <option value="1">Yes — Python regex</option>
+        </select>
+      </div>
+      <div class="grow">
+        <label for="mr-host">Host filter (regex; blank = all hosts)</label>
+        <input id="mr-host" name="host_regex" autocomplete="off">
+      </div>
+    </div>
+    <div>
+      <label for="mr-pat">Match</label>
+      <input id="mr-pat" name="pattern" required autocomplete="off">
+    </div>
+    <div>
+      <label for="mr-repl">Replace with</label>
+      <input id="mr-repl" name="replacement" autocomplete="off">
+    </div>
+    <div>
+      <label for="mr-cmt">Comment (optional)</label>
+      <input id="mr-cmt" name="comment" autocomplete="off">
+    </div>
+    <button type="submit">Add rule</button>
+  </fieldset>
+</form>
+
+<table>
+  <caption>Active rules</caption>
+  <thead>
+    <tr><th scope="col">#</th><th scope="col">On</th><th scope="col">Where</th>
+        <th scope="col">Host</th><th scope="col">Match</th><th scope="col">Replace</th>
+        <th scope="col">Regex</th><th scope="col">Comment</th><th scope="col">Actions</th></tr>
+  </thead>
+  <tbody>
+  {% for r in rules %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td>{{ 'yes' if r.enabled else 'no' }}</td>
+      <td>{{ r.where }}</td>
+      <td>{{ r.host_regex or '(any)' }}</td>
+      <td><code>{{ r.pattern }}</code></td>
+      <td><code>{{ r.replacement }}</code></td>
+      <td>{{ 'yes' if r.is_regex else 'no' }}</td>
+      <td>{{ r.comment }}</td>
+      <td>
+        <form method="post" action="{{ url_for('matchreplace.toggle', mid=r.id) }}" class="inline-form">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit">{{ 'Disable' if r.enabled else 'Enable' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('matchreplace.delete', mid=r.id) }}" class="inline-form"
+              onsubmit="return confirm('Delete this rule?');">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9">No rules yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

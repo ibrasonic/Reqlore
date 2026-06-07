@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Error {{ code }}{% endblock %}
+{% block main %}
+<h1>Error {{ code }}</h1>
+<p>{{ msg }}</p>
+<p><a href="{{ url_for('dashboard.index') }}">Return to dashboard</a></p>
+{% endblock %}

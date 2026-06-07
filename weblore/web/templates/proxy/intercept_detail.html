@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Intercept #{{ item.id }}{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <ol class="breadcrumb">
+    <li><a href="{{ url_for('dashboard.index') }}">Dashboard</a></li>
+    <li><a href="{{ url_for('proxy.index') }}">Proxy</a></li>
+    <li aria-current="page">Intercept #{{ item.id }}</li>
+  </ol>
+</nav>
+
+<h1>Intercept #{{ item.id }}</h1>
+
+<dl class="meta" aria-label="Intercept summary">
+  <dt>Direction</dt><dd>{{ item.kind }}</dd>
+  <dt>Held by</dt><dd>{{ item.hold_reason }}</dd>
+  <dt>Status</dt><dd>Pending &mdash; Forward or Drop below to release.</dd>
+</dl>
+
+<section aria-labelledby="ir-h">
+  <h2 id="ir-h">Request</h2>
+  <form method="post"
+        action="{{ url_for('proxy.forward_edited', iid=item.id) }}"
+        class="stack"
+        aria-describedby="iv-raw-help">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <label for="iv-raw">Raw bytes</label>
+    <p id="iv-raw-help" class="help">
+      Edit then use <strong>Forward edited</strong>. To send unchanged use
+      <strong>Forward as-is</strong>. To rewrite every matching request
+      instead of just this one, use Match &amp; Replace.
+    </p>
+    <textarea id="iv-raw" name="raw" rows="20" autocomplete="off"
+              spellcheck="false" wrap="off">{{ body_text }}</textarea>
+
+    <fieldset class="action-bar">
+      <legend>Decide this flow</legend>
+      <button type="submit" accesskey="e">Forward <u>e</u>dited</button>
+      <button type="submit" formnovalidate accesskey="a"
+              formaction="{{ url_for('proxy.forward_intercept', iid=item.id) }}">
+        Forward <u>a</u>s-is
+      </button>
+      <button type="submit" formnovalidate class="danger" accesskey="p"
+              formaction="{{ url_for('proxy.drop_intercept', iid=item.id) }}">
+        Dro<u>p</u>
+      </button>
+    </fieldset>
+  </form>
+</section>
+
+{% if send_targets %}
+<section aria-labelledby="is-h">
+  <h2 id="is-h">Send a copy to another tool</h2>
+  <p id="is-help" class="help">
+    Each button copies this request into another Weblore tool. The held
+    flow stays in this queue &mdash; sending never forwards or drops it.
+    Underlined letters are <a href="{{ url_for('help.index') }}#kb-h">access keys</a>
+    (Alt on Chrome/Edge, Alt+Shift on Firefox, Ctrl+Alt on macOS).
+  </p>
+  <ul class="action-list" aria-describedby="is-help">
+    {% for t in send_targets %}
+    <li>
+      <form method="post"
+            action="{{ url_for('proxy.send_to', iid=item.id, slug=t.slug) }}"
+            class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" accesskey="{{ t.key }}">{{ t.html | safe }}</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<p><a href="{{ url_for('proxy.index') }}">&larr; Back to queue</a></p>
+{% endblock %}

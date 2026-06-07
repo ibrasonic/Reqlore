@@ -1,0 +1,503 @@
+# Weblore — User Guide
+
+A complete, end-to-end walkthrough of every Weblore module: what it does, how
+to drive it from the keyboard, and how to use it against a live target.
+
+This guide assumes Weblore is already installed. If not, jump to
+[Install](#install) first.
+
+---
+
+## Table of contents
+
+1. [Install](#install)
+2. [First run](#first-run)
+3. [CLI reference](#cli-reference)
+4. [The 28 modules](#the-28-modules)
+   - [Dashboard](#dashboard-)
+   - [Proxy](#proxy-proxy)
+   - [History](#history-history)
+   - [Repeater](#repeater-repeater)
+   - [Intruder](#intruder-intruder)
+   - [Param miner](#param-miner-param-miner)
+   - [Scanner](#scanner-scanner)
+   - [Comparer](#comparer-comparer)
+   - [Decoder](#decoder-decoder)
+   - [JWT workbench](#jwt-workbench-jwt)
+   - [Sitemap](#sitemap-sitemap)
+   - [Match & replace](#match--replace-match-replace)
+   - [Search](#search-search)
+   - [Reporter](#reporter-reporter)
+   - [Plugins](#plugins-plugins)
+   - [Audio cues](#audio-cues-cues)
+   - [Settings](#settings-settings)
+   - [Help](#help-help)
+   - [GraphQL](#graphql-graphql)
+   - [WebSocket](#websocket-ws)
+   - [SAML](#saml-saml)
+   - [PoC builder](#poc-builder-poc)
+   - [Macros](#macros-macros)
+   - [Sequencer](#sequencer-sequencer)
+   - [OAST receiver](#oast-receiver-oast)
+   - [HTTP/2 workbench](#http2-workbench-h2)
+   - [Smuggling lab](#smuggling-lab-smuggling)
+   - [Scheduler](#scheduler-schedule)
+5. [Engines](#engines)
+6. [Accessibility](#accessibility)
+7. [Docker](#docker)
+8. [Troubleshooting](#troubleshooting)
+
+---
+
+## Install
+
+Requires Python 3.12 or newer (3.14 tested).
+
+```powershell
+git clone <repo>
+cd Weblore
+py -m pip install -e .[dev]
+```
+
+Optional extras:
+
+| Extra          | Purpose                                                         |
+| -------------- | --------------------------------------------------------------- |
+| `[dev]`        | Test + lint tools (`pytest`, `ruff`, `mypy`)                    |
+| `[h3]`         | HTTP/3 + QUIC engine (`aioquic`)                                |
+| `[impersonate]`| TLS-fingerprint impersonation engine (`curl-cffi`)              |
+| `[report]`     | `.docx` report export (`python-docx`)                           |
+| `[plugins]`    | Hot-reload plugin folder (`watchdog`)                           |
+| `[yaml]`       | YAML job runner (`PyYAML`)                                      |
+| `[a11y]`       | Headless axe-core CI gate (`playwright`, `axe-playwright-python`) |
+| `[schedule]`   | APScheduler backend for the Scheduler module                    |
+
+Install several at once:
+
+```powershell
+py -m pip install -e .[dev,h3,impersonate,report,yaml,schedule]
+```
+
+---
+
+## First run
+
+```powershell
+weblore init my.weblore
+weblore ui    --project my.weblore        # http://127.0.0.1:8787
+weblore proxy --project my.weblore        # MITM on 127.0.0.1:8080
+weblore both  --project my.weblore        # both in one process
+```
+
+A **project** is a single SQLite file (`*.weblore`). It holds the proxy history,
+findings, plugins state, match-replace rules, scheduler jobs, and settings.
+Move it like any file.
+
+To trust the proxy's CA in your browser, open `http://127.0.0.1:8787/proxy/`
+and click *Download CA*. Install the resulting `.crt` into the browser's
+*Authorities* store.
+
+---
+
+## CLI reference
+
+```text
+weblore init <project_path>
+weblore ui     --project <p> [--host H] [--port N] [--unsafe-bind]
+weblore proxy  --project <p> [--port N]
+weblore both   --project <p> [--host H] [--ui-port N] [--proxy-port N]
+weblore scan   --project <p> [--limit N]            # passive scanner over history
+weblore report --project <p> --out FILE [--format md|html|docx]
+weblore run    --project <p> JOB.{yaml|yml|json} [--strict]
+weblore import-har --project <p> SESSION.har
+weblore browser  [--proxy-port N] [--url URL]
+                 [--firefox-version V] [--firefox-zip FILE]
+                 [--use-system] [--wait]
+weblore prefetch-firefox [--firefox-version V] [--firefox-zip FILE] [--force]
+```
+
+`--unsafe-bind` is the only way to bind a non-loopback address; it exists so
+you can deliberately put Weblore on a lab-only interface. Never expose to the
+public internet.
+
+---
+
+## Pre-configured Firefox (`weblore browser`)
+
+`weblore browser` launches a **dedicated Firefox profile** that is already:
+
+- Pointed at the Weblore MITM proxy (`127.0.0.1:8080`)
+- Trusting the Weblore CA (so HTTPS interception just works, no manual cert
+  import)
+- Locked down: no telemetry, no auto-update, no Firefox accounts, no Pocket,
+  no password manager, no "default browser" nag
+- Opened on the Weblore UI
+
+Your existing host Firefox install is **never touched**. The dedicated profile
+lives under your user data folder (`~/.weblore/firefox-profile/` on Linux,
+`%APPDATA%\weblore\firefox-profile\` on Windows).
+
+### How Firefox is obtained
+
+1. **Host install** — if `firefox` is on PATH, it's used as-is (pass
+   `--use-system` to force this even when a cached copy exists).
+2. **First-run download** — otherwise the official portable build from
+   `archive.mozilla.org` is downloaded once (~80 MiB), SHA-256 verified
+   against Mozilla's published `SHA256SUMS`, and extracted into
+   `~/.weblore/firefox/<version>/`. Subsequent launches use the cache.
+3. **Air-gapped / pre-staged** — pass `--firefox-zip <path>` pointing at a
+   Mozilla zip/tar.xz you downloaded ahead of time, or run
+   `weblore prefetch-firefox` once on an online box and copy the cache.
+
+### Examples
+
+```powershell
+# Most common — just launch.
+weblore browser
+
+# Pin a specific Firefox version.
+weblore browser --firefox-version 127.0
+
+# Offline: use a pre-staged archive.
+weblore browser --firefox-zip C:\offline\firefox-127.0.zip
+
+# Use the host's own Firefox (skip the managed cache).
+weblore browser --use-system
+
+# Pre-download for offline use later (no launch).
+weblore prefetch-firefox
+weblore prefetch-firefox --firefox-version 127.0
+```
+
+### Platform support
+
+| OS      | Supported       | Notes                                                                 |
+| ------- | --------------- | --------------------------------------------------------------------- |
+| Windows x64 | ✅ download or system | `firefox-<ver>.zip` from archive.mozilla.org                    |
+| Linux x86_64 | ✅ download or system | `firefox-<ver>.tar.xz` from archive.mozilla.org                  |
+| macOS   | system only     | Install Firefox.app manually; auto-download not implemented (.dmg).   |
+| Docker  | system only     | The image is headless; run Firefox on the host instead.               |
+
+---
+
+## The 28 modules
+
+Every page is reachable from the top nav. Every interactive control has a
+visible label and a keyboard shortcut listed on `/help/`. Page titles follow
+the pattern `Weblore — <module>` so a screen reader's title-read command names
+the current page immediately.
+
+### Dashboard — `/`
+
+At-a-glance counts: requests captured, findings by severity, scheduler state,
+last update check (if enabled).
+
+- **Press:** `Tab` from the address bar lands on the nav, then `Enter` to open
+  any module.
+
+### Proxy — `/proxy/`
+
+Intercepting MITM. The held-request queue lists each pending request with
+*Forward*, *Drop*, *Send to repeater*, and *Edit* buttons.
+
+- **Read order:** request method → URL → host → size → buttons.
+- **Edit before forwarding:** click *Edit*, modify in the `<textarea>`, press
+  *Save & forward*.
+- **CA install:** *Download CA* button serves the on-disk PEM.
+
+### History — `/history/`
+
+A paginated table of every captured request. Columns: id, method, host, path,
+status, length, engine, tags, time. Each row has a *Detail* link.
+
+The detail page (`/history/<id>/`) shows the raw request bytes, raw response
+bytes, decoded body, and a *Send to* dropdown (Repeater / Intruder / Comparer
+/ Decoder / JWT). If any plugin registers `copy_as()` handlers, they appear
+as links under "Copy as:".
+
+### Repeater — `/repeater/`
+
+Edit + replay any request. Six engines selectable per send:
+
+- `httpx` — default, HTTP/1.1 + HTTP/2 over TLS.
+- `raw` — raw socket, sends the exact bytes you typed.
+- `h3` — HTTP/3 over QUIC (requires `[h3]` extra).
+- `curl-cffi:chrome120` / `safari17_0` / `firefox109` — real-browser TLS
+  fingerprint via curl-cffi (requires `[impersonate]` extra).
+
+The response panel always shows status, headers, and body separately so a
+screen reader can skip to whichever it wants.
+
+### Intruder — `/intruder/`
+
+Bulk request attack tool. Place `§marker§` in your request template, paste
+a payload list, choose an attack type:
+
+- **Sniper** — one marker, one payload at a time.
+- **Battering ram** — same payload into every marker.
+- **Pitchfork** — parallel lists into multiple markers.
+- **Cluster bomb** — Cartesian product across all marker lists.
+
+Same engine picker as Repeater. Results table sortable by status, length, and
+time.
+
+### Param miner — `/param-miner/`
+
+Discover hidden query, body, or header parameters. Built-in 200-word list;
+detection signals: reflected sentinel value, status code change, or body
+length change beyond a configurable tolerance (default 16 bytes).
+
+1. Paste a request URL.
+2. Choose **location**: `query`, `body`, or `header`.
+3. *Start mining*. The result table lists each parameter the server reacted
+   to, plus the signal that triggered the find.
+
+### Scanner — `/scanner/`
+
+Both passive and active checks.
+
+- **Passive** runs automatically over each new history row. Looks for missing
+  security headers, cookie flag issues, reflected content, weak TLS, etc.
+- **Active** is opt-in; pick a row, choose checks, hit *Run active*.
+  Includes `OASTSSRFCheck` which auto-wires the running OAST receiver and
+  injects its callback URL into every query/form parameter (escalates to a
+  CWE-918 high-severity finding on a hit).
+
+### Comparer — `/comparer/`
+
+Diff two byte strings or two history rows. Three views: side-by-side, unified
+diff, character-by-character. Useful for blind injection: replay with a
+benign payload, replay with the malicious one, diff the responses.
+
+### Decoder — `/decoder/`
+
+URL / base64 (std + url-safe) / hex / gzip / deflate / JSON pretty / form-url /
+common hashes (MD5/SHA1/SHA256/SHA512). Pipelined: chain transforms in a
+single textarea.
+
+### JWT workbench — `/jwt/`
+
+Parse / verify / re-sign JSON Web Tokens. Targeted attacks:
+
+- `alg=none` strip + re-encode.
+- HS256 secret crack (built-in 10k wordlist + custom).
+- `kid` injection.
+- Re-sign with arbitrary HS256 / RS256 keys.
+
+### Sitemap — `/sitemap/`
+
+A tree of every host & path observed. Each leaf links back to the latest
+history row for that endpoint. Useful for picking targets to send to the
+scanner.
+
+### Match & replace — `/match-replace/`
+
+Persistent rewrite rules applied by the proxy as bytes flow. Match types:
+literal substring, regex, header-only, body-only, request-only, response-only.
+Toggle each rule on/off without deleting it.
+
+### Search — `/search/`
+
+Full-text search across request headers, request bodies, response headers,
+response bodies, and findings. FTS5-backed.
+
+### Reporter — `/reporter/`
+
+Export a project's findings. Formats: Markdown, HTML, DOCX. Pick severities
+to include, choose an export path, *Build report*.
+
+Equivalent CLI: `weblore report --project p.weblore --out report.docx`.
+
+### Plugins — `/plugins/`
+
+Lists installed plugins, their loaded state, and the routes / panels / handlers
+they register. Plugins live in `~/.weblore/plugins/` (or
+`%USERPROFILE%\.weblore\plugins\` on Windows) and follow the API in
+[`PLUGINS.md`](PLUGINS.md).
+
+### Audio cues — `/cues/`
+
+Opt-in non-speech audio for: new request captured, new finding, scanner done,
+update available. Each cue has a slider for volume and a *Test* button. Off by
+default.
+
+### Settings — `/settings/`
+
+Theme (light / dark / high-contrast), verbosity (concise / standard / verbose),
+keyboard map (remappable per action), audio cue toggles, opt-in update check.
+
+Press *Check for updates now* (only enabled when update check is on) to
+manually poll the manifest URL. The check never runs automatically.
+
+### Help — `/help/`
+
+Searchable keyboard-shortcut map plus a one-screen self-test that walks
+through every key.
+
+### GraphQL — `/graphql/`
+
+Send GraphQL queries with variables. Built-in helpers for `__schema`
+introspection, field-by-field fuzzing, and persisted-query forging.
+
+### WebSocket — `/ws/`
+
+Connect to a WS endpoint, send framed messages (text or binary), watch the
+live transcript. Built-in CSWSH test: spin a tab from `/ws/cswsh` and watch
+which origins the target accepts.
+
+### SAML — `/saml/`
+
+Parse SAML responses and assertions. Re-sign with arbitrary keys, mutate
+`NameID`, strip signatures, test XSW (Signature Wrapping) variants.
+
+### PoC builder — `/poc/`
+
+Convert a captured request into a one-file exploit:
+
+- Self-submitting HTML form (CSRF).
+- `fetch()` snippet.
+- `curl` one-liner.
+- Raw HTTP bytes.
+
+### Macros — `/macros/`
+
+Chains of requests run in order, with response-to-request variable extraction
+(regex + JSON pointer). Wire a macro into the proxy as a *pre-request hook*
+to auto-refresh CSRF tokens, JWTs, etc.
+
+### Sequencer — `/sequencer/`
+
+Capture N samples of a token (cookie, JWT, CSRF), then estimate entropy with
+FIPS 140-2 bitstream tests + character-frequency analysis. Use to grade the
+unpredictability of session IDs, password reset tokens, etc.
+
+### OAST receiver — `/oast/`
+
+Built-in out-of-band receiver listening on a configurable port. Exposes a
+public callback URL (you bring your own DNS/port-forward). Logs HTTP, DNS,
+SMTP probes. Drives the `OASTSSRFCheck` active scan.
+
+### HTTP/2 workbench — `/h2/`
+
+Hand-craft individual HTTP/2 frames over a single connection. Useful for
+request smuggling and stream-ID confusion testing.
+
+### Smuggling lab — `/smuggling/`
+
+Pre-built request templates for CL.TE, TE.CL, TE.TE, and H2.CL smuggling
+variants. Send through any of the three forwarding engines and diff the
+front-end vs back-end response.
+
+### Scheduler — `/schedule/`
+
+Recurring passive scans that survive restarts.
+
+1. Click *Add job*.
+2. Enter a name and an interval in seconds (minimum **30**).
+3. Choose how many recent history rows to scan per run (default 1000).
+4. *Save*, then *Start* the scheduler.
+
+If `[schedule]` is installed APScheduler runs the jobs. Otherwise a tiny
+thread-based loop drives them. Jobs persist to the project file under the
+state key `sched:jobs`.
+
+---
+
+## Engines
+
+| Engine                        | Wire protocol                         | When to use                       |
+| ----------------------------- | ------------------------------------- | --------------------------------- |
+| `httpx` (default)             | HTTP/1.1 + HTTP/2 over TLS            | Anything modern                   |
+| `raw`                         | Raw bytes, no parsing                 | Smuggling, malformed headers      |
+| `h3`                          | HTTP/3 over QUIC                      | Sites that prefer h3              |
+| `curl-cffi:chrome120`         | TLS+H2 with Chrome 120 fingerprint    | TLS-fingerprint WAF bypass        |
+| `curl-cffi:safari17_0`        | TLS+H2 with Safari 17 fingerprint     | Same                              |
+| `curl-cffi:firefox109`        | TLS+H2 with Firefox 109 fingerprint   | Same                              |
+
+All six show up in Repeater, Intruder, and (for forwarding) the proxy chain.
+
+---
+
+## Accessibility
+
+Weblore is built specifically for screen-reader users (NVDA, JAWS, Orca,
+VoiceOver). Highlights:
+
+- 100 % semantic HTML5. Every page validates against axe-core (run
+  `pytest weblore/tests/a11y -q` after installing the `[a11y]` extra).
+- Every form control has an explicit `<label for=>`.
+- Every table has captions, scoped headers, and a "Read as list" alternate
+  view (per the cues on `/cues/`).
+- High-contrast theme on `/settings/` toggles WCAG-AAA color pairs.
+- Audio cues are opt-in, off by default, with per-cue volume.
+- Keyboard map is fully remappable; the *Help* page has a self-test.
+- See [`ACCESSIBILITY.md`](ACCESSIBILITY.md) for the full WCAG 2.2 AA
+  conformance map.
+
+---
+
+## Docker
+
+A multi-stage `Dockerfile` ships at the project root. Build & run:
+
+```powershell
+docker build -t weblore:latest .
+
+# Initialize a project file on the host (one-time)
+docker run --rm -v ${PWD}:/data weblore:latest init /data/my.weblore
+
+# Run the UI (always on loopback inside the container)
+docker run --rm -it `
+  -v ${PWD}:/data `
+  -p 127.0.0.1:8787:8787 `
+  weblore:latest ui --project /data/my.weblore --host 0.0.0.0 --port 8787 --unsafe-bind
+
+# Run the proxy
+docker run --rm -it `
+  -v ${PWD}:/data `
+  -p 127.0.0.1:8080:8080 `
+  weblore:latest proxy --project /data/my.weblore
+
+# Run both in one container
+docker run --rm -it `
+  -v ${PWD}:/data `
+  -p 127.0.0.1:8787:8787 `
+  -p 127.0.0.1:8080:8080 `
+  weblore:latest both --project /data/my.weblore --host 0.0.0.0 --unsafe-bind
+```
+
+`--unsafe-bind` is required inside the container because the entrypoint binds
+`0.0.0.0` so the host port-forward works. The host-side `-p` flag still pins
+to loopback, so the listener is only reachable from your workstation.
+
+A `docker-compose.yml` is provided for the "both" mode:
+
+```powershell
+docker compose up --build
+```
+
+---
+
+## Troubleshooting
+
+| Symptom                                     | Fix                                                                                  |
+| ------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `ModuleNotFoundError: aioquic`              | `pip install -e .[h3]`                                                               |
+| `ModuleNotFoundError: curl_cffi`            | `pip install -e .[impersonate]`                                                      |
+| Scheduler "backend: thread" instead of apsched | `pip install -e .[schedule]`                                                      |
+| Browser refuses proxy CA                    | Install into the browser's *Authorities* store, not the OS store.                    |
+| Update check button is disabled             | Toggle *Update check* on in `/settings/` and *Save settings* first.                  |
+| Port already in use                         | Pass `--port` (UI), `--proxy-port` (proxy), or stop the other process.               |
+| Test suite                                  | `py -m pytest weblore/tests/unit -q` — expect `240 passed`.                          |
+| Smoke all routes                            | See `scripts/smoke-routes.ps1` (or follow the loop in `docs/ROADMAP.md` Phase 7).    |
+
+---
+
+## Where to go next
+
+- A worked, end-to-end attack walkthrough against the bundled lab apps
+  (vuln-bank / vuln-shop / vuln-social), narrated from a blind pentester's
+  point of view, lives at [`docs/STORY-blind-pentester.txt`](STORY-blind-pentester.txt).
+- Plugin authoring: [`PLUGINS.md`](PLUGINS.md).
+- Internals: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+- Roadmap: [`ROADMAP.md`](ROADMAP.md).

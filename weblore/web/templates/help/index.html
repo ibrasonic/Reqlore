@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Help{% endblock %}
+{% block main %}
+<h1>Help &amp; keyboard map</h1>
+
+<section aria-labelledby="kb-h">
+  <h2 id="kb-h">Keyboard map</h2>
+  <table>
+    <caption class="visually-hidden">Keyboard shortcuts.</caption>
+    <thead><tr><th scope="col">Shortcut</th><th scope="col">Action</th></tr></thead>
+    <tbody>
+      {% for key, action in keymap %}
+        <tr><th scope="row"><kbd>{{ key }}</kbd></th><td>{{ action }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>Note: in most browsers, access-key shortcuts are <kbd>Alt</kbd>+key on Windows,
+     <kbd>Control</kbd>+<kbd>Option</kbd>+key on macOS.</p>
+</section>
+
+<section aria-labelledby="a11y-h">
+  <h2 id="a11y-h">Accessibility</h2>
+  <p>Weblore targets WCAG 2.2 Level AA. Every page is plain semantic HTML;
+     all actions are reachable by keyboard; focus indicators are 3 px solid;
+     no information is conveyed by colour alone.</p>
+  <p>To report an a11y bug, see the <a href="https://github.com/">project page</a>.</p>
+</section>
+
+<section aria-labelledby="about-h">
+  <h2 id="about-h">About</h2>
+  <p>Weblore is an accessible local-only web pentesting suite. It uses the
+     <code>httpx</code> library for normal traffic, raw sockets for
+     byte-exact requests, and <code>mitmproxy</code> for intercepting TLS.
+     See the <a href="https://github.com/">documentation</a> for the
+     architecture overview.</p>
+</section>
+{% endblock %}

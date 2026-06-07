@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Scheduled scans{% endblock %}
+{% block main %}
+<h1>Scheduled passive scans</h1>
+<p>Background jobs persist with the project. The scheduler uses
+   <strong>APScheduler</strong> when installed
+   (<code>pip install weblore[schedule]</code>), otherwise a plain thread loop.
+   Jobs only run while the UI process is alive.</p>
+
+<p>Backend: <strong>{{ status.backend }}</strong> &middot;
+   Running: <strong>{{ 'yes' if status.running else 'no' }}</strong></p>
+
+<form method="post" action="{{ url_for('.start' if not status.running else '.stop') }}">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <button type="submit">{{ 'Stop scheduler' if status.running else 'Start scheduler' }}</button>
+</form>
+
+<h2>Jobs</h2>
+{% if status.jobs %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Name</th>
+        <th scope="col">Interval (s)</th>
+        <th scope="col">Scan limit</th>
+        <th scope="col">Last run</th>
+        <th scope="col">Last findings</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for j in status.jobs %}
+      <tr>
+        <td><code>{{ j.name }}</code></td>
+        <td>{{ j.interval_s }}</td>
+        <td>{{ j.scan_limit }}</td>
+        <td>{{ j.last_run_ts or '—' }}</td>
+        <td>{{ j.last_findings }}</td>
+        <td>
+          <form method="post" action="{{ url_for('.run', name=j.name) }}" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit">Run now</button>
+          </form>
+          <form method="post" action="{{ url_for('.remove', name=j.name) }}" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit">Remove</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No jobs configured.</p>
+{% endif %}
+
+<h2>Add a job</h2>
+<form method="post" action="{{ url_for('.add') }}" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="s-name">Name</label>
+    <input id="s-name" name="name" required>
+    <label for="s-int">Interval (s, &ge; 30)</label>
+    <input id="s-int" name="interval_s" type="number" min="30" value="3600">
+    <label for="s-lim">Scan limit</label>
+    <input id="s-lim" name="scan_limit" type="number" min="1" max="50000" value="1000">
+  </p>
+  <p><button type="submit">Add job</button></p>
+</form>
+{% endblock %}

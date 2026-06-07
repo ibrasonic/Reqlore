@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Weblore — SAML inspector{% endblock %}
+{% block main %}
+<h1>SAML inspector</h1>
+<p>Paste a SAMLRequest / SAMLResponse value (URL-encoded or raw base64).
+   The inspector tries the HTTP-POST and HTTP-Redirect bindings, decodes the
+   XML, and flags common issues.</p>
+
+<form method="post" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="b">SAML payload (base64 or raw XML)</label><br>
+    <textarea id="b" name="blob" rows="6" cols="80" required>{{ blob }}</textarea>
+  </p>
+  <p><button type="submit">Inspect</button></p>
+</form>
+
+{% if r %}
+  {% if r.error %}
+    <p><strong>Error:</strong> {{ r.error }}</p>
+    {% if r.pretty %}<details><summary>Raw XML</summary><pre>{{ r.pretty }}</pre></details>{% endif %}
+  {% else %}
+    <h2>Summary</h2>
+    <dl>
+      <dt>Binding</dt><dd>{{ r.binding }}</dd>
+      <dt>Issuer</dt><dd>{{ r.issuer or '—' }}</dd>
+      <dt>Destination</dt><dd>{{ r.destination or '—' }}</dd>
+      <dt>ID</dt><dd>{{ r.id or '—' }}</dd>
+      <dt>NotOnOrAfter</dt><dd>{{ r.not_on_or_after or '—' }}</dd>
+      <dt>Audience</dt><dd>{{ r.audience or '—' }}</dd>
+    </dl>
+
+    <h2>Findings ({{ r.findings|length }})</h2>
+    {% if r.findings %}
+      <ul>
+        {% for f in r.findings %}
+          <li><strong>{{ f.severity }}</strong> · {{ f.title }} — {{ f.detail }}</li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No issues detected by the built-in checks.</p>
+    {% endif %}
+
+    <h2>Decoded XML</h2>
+    <pre>{{ r.pretty }}</pre>
+  {% endif %}
+{% endif %}
+{% endblock %}

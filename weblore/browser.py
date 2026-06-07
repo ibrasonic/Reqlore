@@ -1,0 +1,530 @@
+"""Portable-Firefox launcher for Weblore.
+
+Lets the user spin up a *dedicated* Firefox profile pre-configured to:
+  - route all HTTP/HTTPS traffic through Weblore's MITM proxy (127.0.0.1:8080)
+  - trust Weblore's CA (via Firefox enterprise policies)
+  - open the Weblore UI on first launch
+  - leave the host's existing Firefox install (if any) completely untouched
+
+If Firefox is already on PATH we use it. Otherwise we download the official
+portable build from `archive.mozilla.org` on first run, cache it under
+``~/.weblore/firefox/<version>/``, and reuse it forever after.
+
+For offline / air-gapped use, call :func:`download_firefox` ahead of time
+with ``--firefox-zip`` pointing at a pre-staged archive.
+
+Only stdlib + ``cryptography`` (already a dependency). No new pip deps.
+"""
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import logging
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.parse
+import urllib.request
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
+VERSIONS_JSON_URL = "https://product-details.mozilla.org/1.0/firefox_versions.json"
+ARCHIVE_BASE = "https://archive.mozilla.org/pub/firefox/releases"
+DEFAULT_TIMEOUT_S = 60.0
+DEFAULT_LANG = "en-US"
+
+
+# ---------------------------------------------------------------------------
+# Platform detection
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PlatformSpec:
+    """Per-OS build descriptor."""
+    key: str                # "win64" | "linux64" | "macos"
+    archive_name: str       # e.g. "firefox-127.0.zip"
+    archive_subdir: str     # subdir inside the archive layout
+    exe_relpath: str        # path to the firefox executable inside the extracted tree
+    extractor: str          # "zip" | "tar.xz" | "dmg"
+
+
+def detect_platform() -> PlatformSpec | None:
+    """Return the platform spec for the current OS, or None if unsupported."""
+    system = platform.system()
+    machine = platform.machine().lower()
+
+    if system == "Windows" and ("64" in machine or machine in {"amd64", "x86_64"}):
+        # Mozilla only ships the NSIS installer on Windows (no plain zip).
+        # We run it silently into our cache dir — no admin, no shortcuts,
+        # no maintenance service, and (critically) the `distribution/`
+        # folder is created so policies.json has a home.
+        return PlatformSpec(
+            key="win64",
+            archive_name="Firefox Setup {ver}.exe",
+            archive_subdir="win64/{lang}",
+            exe_relpath="firefox.exe",
+            extractor="exe-installer",
+        )
+    if system == "Linux" and machine in {"x86_64", "amd64"}:
+        return PlatformSpec(
+            key="linux-x86_64",
+            archive_name="firefox-{ver}.tar.xz",
+            archive_subdir="linux-x86_64/{lang}",
+            exe_relpath="firefox/firefox",
+            extractor="tar.xz",
+        )
+    if system == "Darwin":
+        # macOS ships a .dmg which requires hdiutil to mount; we don't
+        # auto-install on macOS — fall back to "use Firefox.app on PATH".
+        return None
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Cache layout
+# ---------------------------------------------------------------------------
+
+def cache_root() -> Path:
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    d = base / "weblore" / "firefox"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def profile_root() -> Path:
+    """Where the dedicated Firefox profile lives."""
+    return cache_root().parent / "firefox-profile"
+
+
+def cached_install(version: str) -> Path:
+    """Path to the per-version extracted Firefox tree."""
+    return cache_root() / version
+
+
+# ---------------------------------------------------------------------------
+# Discovery
+# ---------------------------------------------------------------------------
+
+def find_firefox(*, prefer_cache: bool = True) -> Path | None:
+    """Return an absolute path to a usable firefox executable.
+
+    If ``prefer_cache`` is True (the default) we prefer our managed cache
+    over a host install — guarantees the user gets the policies.json setup.
+    """
+    spec = detect_platform()
+    if prefer_cache and spec is not None:
+        root = cache_root()
+        if root.exists():
+            # Pick the most-recent version dir that contains the exe.
+            candidates = sorted(
+                (p for p in root.iterdir() if p.is_dir()),
+                key=lambda p: p.name, reverse=True,
+            )
+            for c in candidates:
+                exe = c / spec.exe_relpath
+                if exe.exists():
+                    return exe
+
+    # System fallback.
+    for name in ("firefox", "firefox.exe"):
+        p = shutil.which(name)
+        if p:
+            return Path(p)
+
+    # macOS Firefox.app
+    mac_app = Path("/Applications/Firefox.app/Contents/MacOS/firefox")
+    if mac_app.exists():
+        return mac_app
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Download
+# ---------------------------------------------------------------------------
+
+def latest_version(timeout_s: float = DEFAULT_TIMEOUT_S) -> str:
+    """Fetch the current 'LATEST_FIREFOX_VERSION' string from Mozilla."""
+    req = urllib.request.Request(
+        VERSIONS_JSON_URL, headers={"User-Agent": "weblore-browser/1.0"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310
+        data = json.loads(r.read().decode("utf-8"))
+    ver = data.get("LATEST_FIREFOX_VERSION")
+    if not isinstance(ver, str) or not re.match(r"^\d+\.\d+(\.\d+)?$", ver):
+        raise RuntimeError(f"unexpected version payload from Mozilla: {ver!r}")
+    return ver
+
+
+def _build_archive_url(spec: PlatformSpec, version: str, lang: str) -> str:
+    subdir = spec.archive_subdir.format(lang=lang)
+    fname = spec.archive_name.format(ver=version)
+    # URL-encode the filename component (handles spaces in "Firefox Setup ...").
+    quoted = urllib.parse.quote(fname)
+    return f"{ARCHIVE_BASE}/{version}/{subdir}/{quoted}"
+
+
+def _sha256_sums_url(version: str) -> str:
+    return f"{ARCHIVE_BASE}/{version}/SHA256SUMS"
+
+
+def _fetch_expected_sha(version: str, archive_basename: str, lang: str,
+                        spec: PlatformSpec, timeout_s: float) -> str | None:
+    """Parse Mozilla's SHA256SUMS file for the archive's expected hash.
+
+    Returns None if the line isn't found (e.g. very old version layout) —
+    we treat that as 'skip verification, log a warning'.
+    """
+    req = urllib.request.Request(
+        _sha256_sums_url(version), headers={"User-Agent": "weblore-browser/1.0"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310
+            body = r.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        log.warning("could not fetch SHA256SUMS for %s: %s", version, exc)
+        return None
+    needle = f"{spec.archive_subdir.format(lang=lang)}/{archive_basename}"
+    for line in body.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[1] == needle:
+            return parts[0].lower()
+    return None
+
+
+def _download(url: str, dest: Path, timeout_s: float,
+              progress: bool = True) -> None:
+    log.info("downloading %s", url)
+    req = urllib.request.Request(url, headers={"User-Agent": "weblore-browser/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout_s) as r, open(dest, "wb") as f:  # noqa: S310
+        total = int(r.headers.get("Content-Length") or 0)
+        seen = 0
+        chunk = 1024 * 64
+        last_pct = -1
+        while True:
+            buf = r.read(chunk)
+            if not buf:
+                break
+            f.write(buf)
+            seen += len(buf)
+            if progress and total:
+                pct = (seen * 100) // total
+                if pct != last_pct and pct % 5 == 0:
+                    log.info("  ... %d%% (%d / %d KiB)",
+                             pct, seen // 1024, total // 1024)
+                    last_pct = pct
+
+
+def _sha256_file(p: Path) -> str:
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for block in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _extract(archive: Path, target: Path, kind: str) -> None:
+    target.mkdir(parents=True, exist_ok=True)
+    if kind == "zip":
+        with zipfile.ZipFile(archive) as z:
+            z.extractall(target)
+        return
+    if kind == "tar.xz":
+        with tarfile.open(archive, mode="r:xz") as t:
+            t.extractall(target, filter="data")  # py3.12+ safe extract filter
+        return
+    if kind == "exe-installer":
+        _run_firefox_installer(archive, target)
+        return
+    raise RuntimeError(f"unsupported extractor: {kind}")
+
+
+def _run_firefox_installer(installer: Path, target: Path) -> None:
+    """Run Mozilla's NSIS Setup .exe silently into `target`.
+
+    Mozilla's installer is portable when invoked with these flags and an
+    explicit `InstallDirectoryPath`. It writes only into the target dir
+    (plus a small HKCU uninstall registry entry that we ignore). No admin
+    required when `target` is user-writable.
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    args = [
+        str(installer),
+        f"/InstallDirectoryPath={target}",
+        "/TaskbarShortcut=false",
+        "/DesktopShortcut=false",
+        "/StartMenuShortcut=false",
+        "/MaintenanceService=false",
+        "/PrivateBrowsingShortcut=false",
+        "/RemoveDistributionDir=false",
+        "/S",
+    ]
+    log.info("running silent installer: %s", " ".join(args))
+    proc = subprocess.run(args, check=False)  # noqa: S603
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Firefox installer exited with status {proc.returncode}"
+        )
+    exe = target / "firefox.exe"
+    if not exe.exists():
+        raise RuntimeError(
+            f"installer finished but {exe} not found — install layout changed?"
+        )
+
+
+def download_firefox(*, version: str | None = None,
+                     lang: str = DEFAULT_LANG,
+                     timeout_s: float = DEFAULT_TIMEOUT_S,
+                     archive_path: Path | None = None,
+                     force: bool = False) -> Path:
+    """Ensure a portable Firefox is available; return path to the exe.
+
+    Parameters
+    ----------
+    version:
+        Pin a Firefox release (e.g. ``"127.0"``). Defaults to the current
+        LATEST_FIREFOX_VERSION from product-details.mozilla.org.
+    archive_path:
+        If given, **skip the download** and use this local file (must be a
+        Mozilla-format zip/tar.xz matching the host OS). Lets air-gapped
+        users pre-stage the archive offline.
+    force:
+        Re-extract even if a cached install already exists.
+    """
+    spec = detect_platform()
+    if spec is None:
+        raise RuntimeError(
+            "Auto-download is not supported on this OS — "
+            "install Firefox manually and make sure it's on PATH."
+        )
+
+    if version is None:
+        if archive_path is not None:
+            m = re.search(
+                r"(?:firefox-|Firefox Setup )(\d+\.\d+(?:\.\d+)?)\."
+                r"(?:zip|tar\.xz|exe|msi)$",
+                archive_path.name,
+            )
+            if not m:
+                raise RuntimeError(
+                    f"cannot infer version from filename: {archive_path.name}"
+                )
+            version = m.group(1)
+        else:
+            version = latest_version(timeout_s=timeout_s)
+
+    target = cached_install(version)
+    exe = target / spec.exe_relpath
+    if exe.exists() and not force:
+        log.info("using cached Firefox %s at %s", version, exe)
+        return exe
+
+    if target.exists() and force:
+        shutil.rmtree(target)
+
+    if archive_path is not None:
+        src = archive_path
+        log.info("using local archive: %s", src)
+    else:
+        archive_name = spec.archive_name.format(ver=version)
+        url = _build_archive_url(spec, version, lang)
+        src = cache_root() / archive_name
+        if not src.exists() or force:
+            _download(url, src, timeout_s=timeout_s)
+        # Verify against Mozilla's SHA256SUMS.
+        expected = _fetch_expected_sha(version, archive_name, lang, spec, timeout_s)
+        if expected:
+            actual = _sha256_file(src)
+            if actual.lower() != expected:
+                src.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"SHA256 mismatch for {archive_name}: "
+                    f"got {actual}, expected {expected}"
+                )
+            log.info("SHA256 verified.")
+        else:
+            log.warning("SHA256 entry not found — skipping verification.")
+
+    log.info("extracting to %s ...", target)
+    _extract(src, target, spec.extractor)
+
+    if not exe.exists():
+        raise RuntimeError(
+            f"extracted archive but {exe} not found — layout changed?"
+        )
+    log.info("Firefox %s ready: %s", version, exe)
+    return exe
+
+
+# ---------------------------------------------------------------------------
+# Policy + profile setup
+# ---------------------------------------------------------------------------
+
+def _policies_dict(*, ca_path: Path, proxy_host: str, proxy_port: int,
+                   homepage_url: str) -> dict:
+    """Enterprise-policy payload — controls cert trust + proxy + lock-down."""
+    return {
+        "policies": {
+            "Certificates": {
+                "Install": [str(ca_path)],
+                "ImportEnterpriseRoots": False,
+            },
+            "Proxy": {
+                "Mode": "manual",
+                "HTTPProxy": f"{proxy_host}:{proxy_port}",
+                "SSLProxy": f"{proxy_host}:{proxy_port}",
+                "UseHTTPProxyForAllProtocols": True,
+                "Passthrough": "",
+                "Locked": True,
+            },
+            "DisableAppUpdate": True,
+            "DisableTelemetry": True,
+            "DisableFirefoxStudies": True,
+            "DisableFirefoxAccounts": True,
+            "DisablePocket": True,
+            "DontCheckDefaultBrowser": True,
+            "OverrideFirstRunPage": homepage_url,
+            "OverridePostUpdatePage": "",
+            "Homepage": {
+                "URL": homepage_url,
+                "StartPage": "homepage",
+                "Locked": False,
+            },
+            "PasswordManagerEnabled": False,
+            "OfferToSaveLogins": False,
+            "NetworkPrediction": False,
+            "DisableSafeMode": False,
+        }
+    }
+
+
+def _policies_target_dir(exe: Path) -> Path:
+    """Where to drop policies.json relative to the firefox exe."""
+    # Windows / Linux: <install-root>/distribution/policies.json
+    # macOS: <Firefox.app>/Contents/Resources/distribution/
+    if sys.platform == "darwin" and "Firefox.app" in str(exe):
+        root = exe.parent.parent / "Resources"
+    else:
+        root = exe.parent
+    return root / "distribution"
+
+
+def install_policies(*, exe: Path, ca_path: Path,
+                     proxy_host: str, proxy_port: int,
+                     homepage_url: str) -> Path:
+    """Write policies.json next to the firefox binary. Returns its path."""
+    if not ca_path.exists():
+        raise FileNotFoundError(f"CA certificate not found: {ca_path}")
+    dist = _policies_target_dir(exe)
+    dist.mkdir(parents=True, exist_ok=True)
+    out = dist / "policies.json"
+    payload = _policies_dict(
+        ca_path=ca_path, proxy_host=proxy_host, proxy_port=proxy_port,
+        homepage_url=homepage_url,
+    )
+    out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    log.info("wrote policies.json -> %s", out)
+    return out
+
+
+def ensure_profile(profile_dir: Path | None = None) -> Path:
+    """Create the dedicated profile directory if it doesn't exist."""
+    p = profile_dir or profile_root()
+    p.mkdir(parents=True, exist_ok=True)
+    # Seed a tiny user.js so Firefox doesn't show 'first-run' nags even
+    # when policies.json hasn't been applied yet (first cold boot).
+    user_js = p / "user.js"
+    if not user_js.exists():
+        user_js.write_text(
+            "// Weblore-managed profile — do not edit by hand.\n"
+            'user_pref("browser.shell.checkDefaultBrowser", false);\n'
+            'user_pref("browser.startup.homepage_override.mstone", "ignore");\n'
+            'user_pref("datareporting.policy.firstRunURL", "");\n'
+            'user_pref("trailhead.firstrun.didSeeAboutWelcome", true);\n'
+            'user_pref("browser.aboutwelcome.enabled", false);\n'
+            # Without this, Firefox silently bypasses the proxy for localhost
+            # / 127.0.0.1 / *.localhost, so tests against local lab apps
+            # (vuln-bank :3001, vuln-shop :3002, vuln-social :3003) never
+            # reach Weblore's MITM and never appear in History.
+            'user_pref("network.proxy.allow_hijacking_localhost", true);\n'
+            'user_pref("network.proxy.no_proxies_on", "");\n',
+            encoding="utf-8",
+        )
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Launch
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LaunchResult:
+    exe: Path
+    profile: Path
+    policies: Path
+    pid: int | None
+
+
+def launch(*, exe: Path, profile_dir: Path, url: str,
+           extra_args: list[str] | None = None,
+           wait: bool = False) -> LaunchResult:
+    """Spawn Firefox pointed at our managed profile."""
+    args = [
+        str(exe),
+        "--no-remote",
+        "--new-instance",
+        "--profile", str(profile_dir),
+        url,
+    ]
+    if extra_args:
+        args.extend(extra_args)
+    log.info("launching: %s", " ".join(args))
+    if wait:
+        proc = subprocess.run(args, check=False)  # noqa: S603
+        pid = None
+    else:
+        proc = subprocess.Popen(args)  # noqa: S603
+        pid = proc.pid
+    return LaunchResult(
+        exe=exe, profile=profile_dir,
+        policies=_policies_target_dir(exe) / "policies.json",
+        pid=pid,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Convenience: one-shot setup + launch
+# ---------------------------------------------------------------------------
+
+def run_browser(*, ca_path: Path,
+                proxy_host: str = "127.0.0.1", proxy_port: int = 8080,
+                ui_url: str = "http://127.0.0.1:8787/",
+                version: str | None = None,
+                archive_path: Path | None = None,
+                prefer_cache: bool = True,
+                wait: bool = False) -> LaunchResult:
+    """End-to-end: find/download Firefox, install policies, spawn it.
+
+    Returns a :class:`LaunchResult` so callers can show the user what was set.
+    """
+    exe = find_firefox(prefer_cache=prefer_cache)
+    if exe is None:
+        exe = download_firefox(version=version, archive_path=archive_path)
+    install_policies(
+        exe=exe, ca_path=ca_path,
+        proxy_host=proxy_host, proxy_port=proxy_port,
+        homepage_url=ui_url,
+    )
+    profile = ensure_profile()
+    return launch(exe=exe, profile_dir=profile, url=ui_url, wait=wait)

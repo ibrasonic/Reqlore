@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Session macros{% endblock %}
+{% block main %}
+<h1>Session-handling macros</h1>
+<p>A macro is an ordered sequence of HTTP requests with variable capture.
+   Use them to keep a session warm, fetch CSRF tokens before later requests,
+   or chain calls during fuzzing.</p>
+<p><a href="{{ url_for('.new') }}">New macro</a></p>
+
+{% if macros %}
+  <table>
+    <caption>Saved macros</caption>
+    <thead><tr><th scope="col">#</th><th scope="col">Name</th><th scope="col">Steps</th></tr></thead>
+    <tbody>
+      {% for m in macros %}
+        <tr>
+          <td>{{ m.id }}</td>
+          <td><a href="{{ url_for('.show', mid=m.id) }}">{{ m.name }}</a></td>
+          <td>{{ m.n_steps }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No macros saved yet.</p>
+{% endif %}
+{% endblock %}

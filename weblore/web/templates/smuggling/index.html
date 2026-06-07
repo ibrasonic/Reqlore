@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Request smuggling{% endblock %}
+{% block main %}
+<h1>Request smuggling helpers</h1>
+<p>Generate raw HTTP/1.1 byte payloads for CL.TE, TE.CL, and TE.TE tests.
+   Weblore does <strong>not</strong> automatically send these — copy or download
+   the bytes and forward them through the raw engine in Repeater.</p>
+
+<form method="post" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="url">Target URL</label>
+    <input id="url" name="url" type="url" value="{{ url }}" required size="60"
+           placeholder="https://target.example.com/some/path">
+  </p>
+  <p>
+    <label for="technique">Technique</label>
+    <select id="technique" name="technique">
+      <option value="cl.te" {% if technique == "cl.te" %}selected{% endif %}>CL.TE (front-end CL, back-end TE)</option>
+      <option value="te.cl" {% if technique == "te.cl" %}selected{% endif %}>TE.CL (front-end TE, back-end CL)</option>
+      <option value="te.te" {% if technique == "te.te" %}selected{% endif %}>TE.TE (header obfuscation)</option>
+    </select>
+  </p>
+  <p>
+    <label for="sm">Smuggled method</label>
+    <input id="sm" name="smuggled_method" value="{{ smuggled_method }}" size="8">
+    <label for="sp">Smuggled path</label>
+    <input id="sp" name="smuggled_path" value="{{ smuggled_path }}" size="32">
+  </p>
+  <p>
+    <button type="submit">Generate</button>
+    <button type="submit" name="download" value="1">Download .bin</button>
+  </p>
+</form>
+
+{% if payload %}
+  <h2>{{ payload.name }} — {{ payload.description }}</h2>
+  {% if payload.notes %}
+    <ul>{% for n in payload.notes %}<li>{{ n }}</li>{% endfor %}</ul>
+  {% endif %}
+  <h3>Raw bytes (latin-1 view, CRLF terminated)</h3>
+  <pre>{{ raw_text }}</pre>
+{% endif %}
+{% endblock %}

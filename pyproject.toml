@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weblore"
+version = "0.1.0"
+description = "Weblore — accessible Burp-grade web pentesting suite"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+authors = [{ name = "Ibrahim Badawy", email = "ibrahim.badawy@aucegypt.edu" }]
+keywords = ["pentesting", "security", "proxy", "accessibility", "a11y"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Framework :: Flask",
+  "Intended Audience :: Information Technology",
+  "License :: Other/Proprietary License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Internet :: WWW/HTTP",
+  "Topic :: Security",
+]
+dependencies = [
+  "flask>=3.0",
+  "jinja2>=3.1",
+  "waitress>=3.0",
+  "httpx[http2,socks]>=0.27",
+  "h2>=4.1",
+  "websockets>=12.0",
+  "mitmproxy>=10.0",
+  "cryptography>=42",
+  "itsdangerous>=2.1",
+  "argon2-cffi>=23.1",
+  "PyJWT>=2.8",
+  "lxml>=5.0",
+  "beautifulsoup4>=4.12",
+  "regex>=2024.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+h3 = [
+  "aioquic>=1.0",
+]
+impersonate = [
+  "curl-cffi>=0.7",
+]
+report = [
+  "python-docx>=1.1",
+]
+plugins = [
+  "watchdog>=4.0",
+]
+yaml = [
+  "PyYAML>=6.0",
+]
+a11y = [
+  "playwright>=1.45",
+  "axe-playwright-python>=0.1.4",
+]
+schedule = [
+  "APScheduler>=3.10",
+]
+
+[project.scripts]
+weblore = "weblore.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["weblore*"]
+
+[tool.setuptools.package-data]
+"weblore.web" = ["templates/**/*.html", "static/**/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "S"]
+ignore = ["S101"]  # asserts in tests
+
+[tool.pytest.ini_options]
+testpaths = ["weblore/tests"]
+addopts = "-ra --tb=short"

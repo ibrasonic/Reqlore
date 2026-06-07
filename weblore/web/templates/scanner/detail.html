@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Finding {{ f.id }}{% endblock %}
+{% block main %}
+<p><a href="{{ url_for('.index') }}">&larr; Back to findings</a></p>
+
+<h1>{{ f.title }}</h1>
+
+<dl>
+  <dt>Severity</dt><dd>{{ f.severity }}</dd>
+  <dt>CWE</dt><dd>{{ f.cwe or '—' }}</dd>
+  <dt>OWASP</dt><dd>{{ f.owasp or '—' }}</dd>
+  <dt>Host</dt><dd>{{ f.host or '—' }}</dd>
+  <dt>URL</dt><dd><code>{{ f.url or '—' }}</code></dd>
+  <dt>Status</dt><dd>{{ f.status }}</dd>
+  {% if f.request_id %}
+    <dt>Originating request</dt>
+    <dd><a href="{{ url_for('history.show', hid=f.request_id) }}">#{{ f.request_id }}</a></dd>
+  {% endif %}
+</dl>
+
+{% if f.evidence %}
+  <h2>Evidence</h2>
+  <pre>{{ f.evidence }}</pre>
+{% endif %}
+
+{% if f.payload %}
+  <h2>Payload</h2>
+  <pre>{{ f.payload }}</pre>
+{% endif %}
+
+<h2>Triage</h2>
+<form method="post" action="{{ url_for('.set_status', fid=f.id) }}" class="inline">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <label for="st">Mark as</label>
+  <select id="st" name="status">
+    {% for s in statuses %}
+      <option value="{{ s }}" {% if f.status == s %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Update status</button>
+</form>
+
+<form method="post" action="{{ url_for('.delete', fid=f.id) }}" class="inline">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <button type="submit">Delete finding</button>
+</form>
+{% endblock %}

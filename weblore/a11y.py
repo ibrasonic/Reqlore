@@ -1,0 +1,319 @@
+"""Accessibility helpers.
+
+Pure functions for contrast, plain-language summaries, and "Copy as ..."
+renderers. No I/O. Heavily unit-tested.
+"""
+from __future__ import annotations
+
+import difflib
+import re
+from dataclasses import dataclass
+from typing import Iterable
+
+
+# ---------- WCAG contrast (relative luminance per WCAG 2.1) ----------
+
+def _channel(c: int) -> float:
+    s = c / 255.0
+    return s / 12.92 if s <= 0.03928 else ((s + 0.055) / 1.055) ** 2.4
+
+
+def relative_luminance(rgb: tuple[int, int, int]) -> float:
+    r, g, b = rgb
+    return 0.2126 * _channel(r) + 0.7152 * _channel(g) + 0.0722 * _channel(b)
+
+
+def contrast_ratio(fg: tuple[int, int, int], bg: tuple[int, int, int]) -> float:
+    lf, lb = relative_luminance(fg), relative_luminance(bg)
+    lighter, darker = max(lf, lb), min(lf, lb)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def hex_to_rgb(s: str) -> tuple[int, int, int]:
+    s = s.lstrip("#")
+    if len(s) == 3:
+        s = "".join(c * 2 for c in s)
+    return int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16)
+
+
+def wcag_pass(fg: str, bg: str, *, large_text: bool = False) -> tuple[bool, float]:
+    ratio = contrast_ratio(hex_to_rgb(fg), hex_to_rgb(bg))
+    threshold = 3.0 if large_text else 4.5
+    return ratio >= threshold, ratio
+
+
+# ---------- Plain-language summary of an HTTP response ----------
+
+@dataclass
+class ResponseSummaryInput:
+    status: int
+    reason: str
+    headers: list[tuple[str, str]]
+    body: bytes
+    duration_ms: int
+
+
+_REFLECT_CANDIDATE = re.compile(rb"[A-Za-z0-9_\-]{3,32}")
+
+
+def _header(headers: Iterable[tuple[str, str]], name: str) -> str | None:
+    target = name.lower()
+    for k, v in headers:
+        if k.lower() == target:
+            return v
+    return None
+
+
+def _all_headers(headers: Iterable[tuple[str, str]], name: str) -> list[str]:
+    target = name.lower()
+    return [v for k, v in headers if k.lower() == target]
+
+
+def summarise_response(r: ResponseSummaryInput, *, reflected: list[str] | None = None) -> str:
+    bits: list[str] = []
+    bits.append(f"HTTP {r.status} {r.reason}".strip())
+    size = len(r.body)
+    size_str = f"{size} bytes" if size < 1024 else f"{size / 1024:.1f} KB"
+    ctype = _header(r.headers, "content-type") or "no content type"
+    bits.append(f"{size_str} {ctype.split(';')[0]}")
+    bits.append(f"took {r.duration_ms} ms")
+
+    cookies = len(_all_headers(r.headers, "set-cookie"))
+    if cookies:
+        bits.append(f"sets {cookies} cookie{'s' if cookies != 1 else ''}")
+
+    # Notable security headers
+    notable = []
+    for h in ("strict-transport-security", "content-security-policy",
+              "x-frame-options", "x-content-type-options"):
+        if _header(r.headers, h):
+            notable.append(h)
+    missing = [h for h in ("content-security-policy", "x-content-type-options")
+               if _header(r.headers, h) is None]
+    if missing:
+        bits.append("missing " + ", ".join(missing))
+
+    body_lc = r.body[:65536].lower()
+    if b"<script" in body_lc:
+        bits.append("body contains script tags")
+    if reflected:
+        bits.append("reflects parameter " + ", ".join(reflected))
+
+    return "; ".join(bits) + "."
+
+
+# ---------- "Copy as ..." renderers ----------
+
+def _sh_quote(s: str) -> str:
+    if not s:
+        return "''"
+    if re.match(r"^[A-Za-z0-9_@%+=:,./-]+$", s):
+        return s
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def render_curl(
+    method: str,
+    url: str,
+    headers: list[tuple[str, str]],
+    body: bytes | None,
+) -> str:
+    parts = ["curl", "-sS", "-i", "-X", method]
+    for k, v in headers:
+        if k.lower() in ("content-length",):
+            continue
+        parts += ["-H", _sh_quote(f"{k}: {v}")]
+    if body:
+        try:
+            body_text = body.decode("utf-8")
+            parts += ["--data-raw", _sh_quote(body_text)]
+        except UnicodeDecodeError:
+            parts += ["--data-binary", "@-"]
+    parts.append(_sh_quote(url))
+    return " ".join(parts)
+
+
+def render_httpx(
+    method: str,
+    url: str,
+    headers: list[tuple[str, str]],
+    body: bytes | None,
+) -> str:
+    h = "[" + ", ".join(f"({k!r}, {v!r})" for k, v in headers) + "]"
+    body_kw = ""
+    if body:
+        try:
+            body_kw = f", content={body.decode('utf-8')!r}"
+        except UnicodeDecodeError:
+            body_kw = f", content={body!r}"
+    return (
+        f"import httpx\n"
+        f"r = httpx.request({method!r}, {url!r}, headers={h}{body_kw})\n"
+        f"print(r.status_code, len(r.content))"
+    )
+
+
+def render_requests(
+    method: str,
+    url: str,
+    headers: list[tuple[str, str]],
+    body: bytes | None,
+) -> str:
+    headers_dict = "{" + ", ".join(f"{k!r}: {v!r}" for k, v in headers) + "}"
+    data_kw = ""
+    if body:
+        try:
+            data_kw = f", data={body.decode('utf-8')!r}"
+        except UnicodeDecodeError:
+            data_kw = f", data={body!r}"
+    return (
+        f"import requests\n"
+        f"r = requests.request({method!r}, {url!r}, headers={headers_dict}{data_kw})\n"
+        f"print(r.status_code, len(r.content))"
+    )
+
+
+def render_fetch(
+    method: str,
+    url: str,
+    headers: list[tuple[str, str]],
+    body: bytes | None,
+) -> str:
+    h_obj = "{" + ", ".join(f"{k!r}: {v!r}" for k, v in headers) + "}"
+    body_kw = ""
+    if body:
+        try:
+            body_kw = f", body: {body.decode('utf-8')!r}"
+        except UnicodeDecodeError:
+            body_kw = f", body: new Uint8Array({list(body)})"
+    return f"fetch({url!r}, {{ method: {method!r}, headers: {h_obj}{body_kw} }})"
+
+
+def render_raw_http(
+    method: str,
+    url: str,
+    headers: list[tuple[str, str]],
+    body: bytes | None,
+    http_version: str = "1.1",
+) -> str:
+    from urllib.parse import urlsplit
+
+    p = urlsplit(url)
+    path = p.path or "/"
+    if p.query:
+        path += "?" + p.query
+    lines = [f"{method} {path} HTTP/{http_version}"]
+    if not any(k.lower() == "host" for k, _ in headers):
+        host = p.hostname or ""
+        if p.port:
+            host = f"{host}:{p.port}"
+        lines.append(f"Host: {host}")
+    lines.extend(f"{k}: {v}" for k, v in headers)
+    raw = "\r\n".join(lines) + "\r\n\r\n"
+    if body:
+        try:
+            raw += body.decode("utf-8")
+        except UnicodeDecodeError:
+            raw += f"<{len(body)} binary bytes>"
+    return raw
+
+
+# ---------- Diff helpers (Comparer module) ----------
+
+@dataclass
+class DiffSummary:
+    added: int
+    removed: int
+    changed: int
+    same: int
+
+    def sentence(self, label_a: str = "A", label_b: str = "B") -> str:
+        parts = []
+        if self.added:
+            parts.append(f"{self.added} line{'s' if self.added != 1 else ''} only in {label_b}")
+        if self.removed:
+            parts.append(f"{self.removed} line{'s' if self.removed != 1 else ''} only in {label_a}")
+        if self.changed:
+            parts.append(f"{self.changed} line{'s' if self.changed != 1 else ''} changed")
+        if not parts:
+            return "No differences."
+        return "; ".join(parts) + f"; {self.same} lines unchanged."
+
+
+def diff_summary(a: str, b: str) -> DiffSummary:
+    """Plain-language line diff summary, screen-reader friendly."""
+    sm = difflib.SequenceMatcher(a=a.splitlines(), b=b.splitlines(), autojunk=False)
+    added = removed = changed = same = 0
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        la, lb = i2 - i1, j2 - j1
+        if tag == "equal":
+            same += la
+        elif tag == "insert":
+            added += lb
+        elif tag == "delete":
+            removed += la
+        elif tag == "replace":
+            changed += max(la, lb)
+    return DiffSummary(added=added, removed=removed, changed=changed, same=same)
+
+
+def diff_lines(a: str, b: str) -> list[tuple[str, int | None, int | None, str]]:
+    """Per-line diff: list of (tag, line_no_a, line_no_b, text).
+
+    tag in {"same", "add", "del", "chg"}. Line numbers are 1-based or None.
+    """
+    out: list[tuple[str, int | None, int | None, str]] = []
+    al = a.splitlines()
+    bl = b.splitlines()
+    sm = difflib.SequenceMatcher(a=al, b=bl, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            for k in range(i2 - i1):
+                out.append(("same", i1 + k + 1, j1 + k + 1, al[i1 + k]))
+        elif tag == "insert":
+            for k in range(j2 - j1):
+                out.append(("add", None, j1 + k + 1, bl[j1 + k]))
+        elif tag == "delete":
+            for k in range(i2 - i1):
+                out.append(("del", i1 + k + 1, None, al[i1 + k]))
+        elif tag == "replace":
+            for k in range(i2 - i1):
+                out.append(("del", i1 + k + 1, None, al[i1 + k]))
+            for k in range(j2 - j1):
+                out.append(("add", None, j1 + k + 1, bl[j1 + k]))
+    return out
+
+
+def byte_diff_summary(a: bytes, b: bytes) -> str:
+    """One-sentence byte-level summary."""
+    if a == b:
+        return "Identical (both empty)." if not a else f"Identical ({len(a)} bytes)."
+    if len(a) == len(b):
+        n = sum(1 for x, y in zip(a, b) if x != y)
+        return f"Same length ({len(a)} bytes); {n} byte{'s' if n != 1 else ''} differ."
+    return (f"A is {len(a)} bytes, B is {len(b)} bytes "
+            f"(delta {len(b) - len(a):+d}).")
+
+
+# ---------- JWT plain-language summary ----------
+
+def summarise_jwt(header: dict, payload: dict) -> str:
+    alg = header.get("alg", "unknown")
+    typ = header.get("typ", "JWT")
+    bits = [f"{typ} signed with {alg}"]
+    if "kid" in header:
+        bits.append(f"key id {header['kid']!r}")
+    if "iss" in payload:
+        bits.append(f"issued by {payload['iss']!r}")
+    if "sub" in payload:
+        bits.append(f"subject {payload['sub']!r}")
+    if "aud" in payload:
+        bits.append(f"audience {payload['aud']!r}")
+    if "exp" in payload:
+        import time as _t
+        delta = int(payload["exp"]) - int(_t.time())
+        bits.append(f"expires in {delta} seconds" if delta > 0
+                    else f"expired {-delta} seconds ago")
+    if alg.lower() == "none":
+        bits.append("warning: alg=none means no signature is verified")
+    return "; ".join(bits) + "."

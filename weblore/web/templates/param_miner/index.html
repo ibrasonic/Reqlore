@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Param miner{% endblock %}
+{% block main %}
+<h1>Hidden parameter miner</h1>
+<p>Probes the target URL with a built-in {{ word_count }}-word list. A parameter
+   is reported when the response status, body length, or reflected sentinel
+   changes. The miner sends real traffic — keep <code>max words</code> small
+   while you tune the configuration.</p>
+
+<form method="post" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="pm-url">Target URL</label>
+    <input id="pm-url" name="url" type="url" value="{{ form.url }}" required size="60"
+           placeholder="https://target.example.com/api/items">
+  </p>
+  <p>
+    <label for="pm-method">Method</label>
+    <select id="pm-method" name="method">
+      {% for m in ["GET","POST","PUT","DELETE","PATCH"] %}
+        <option value="{{ m }}" {% if form.method == m %}selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select>
+    <label for="pm-loc">Where</label>
+    <select id="pm-loc" name="location">
+      <option value="query" {% if form.location == "query" %}selected{% endif %}>Query string</option>
+      <option value="body"  {% if form.location == "body"  %}selected{% endif %}>Form body</option>
+      <option value="header" {% if form.location == "header" %}selected{% endif %}>Header (X-Name)</option>
+    </select>
+  </p>
+  <p>
+    <label for="pm-max">Max words</label>
+    <input id="pm-max" name="max_words" type="number" min="1" max="{{ word_count }}" value="{{ form.max_words }}">
+    <label for="pm-delay">Delay (ms / request)</label>
+    <input id="pm-delay" name="rate_delay" type="number" min="0" max="2000" value="{{ form.rate_delay }}">
+  </p>
+  <p>
+    <label for="pm-extra">Extra words (one per line, optional)</label><br>
+    <textarea id="pm-extra" name="extra" rows="3" cols="40">{{ form.extra }}</textarea>
+  </p>
+  <p>
+    <button type="submit">Mine</button>
+  </p>
+</form>
+
+{% if error %}
+  <p role="alert" class="err">Error: {{ error }}</p>
+{% endif %}
+
+{% if result %}
+  <h2>Result — {{ result.tried }} probe(s) in {{ result.elapsed_ms }} ms</h2>
+  <p>Found <strong>{{ result.found|length }}</strong> candidate(s) at
+     <code>{{ result.location }}</code> on <code>{{ result.url }}</code>.</p>
+  {% if result.found %}
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Parameter</th>
+          <th scope="col">Evidence</th>
+          <th scope="col">Status (base &rarr; probe)</th>
+          <th scope="col">Length (base &rarr; probe)</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for hp in result.found %}
+        <tr>
+          <td><code>{{ hp.name }}</code></td>
+          <td>{{ hp.evidence }}</td>
+          <td>{{ hp.baseline_status }} &rarr; {{ hp.probe_status }}</td>
+          <td>{{ hp.baseline_len }} &rarr; {{ hp.probe_len }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No parameters changed the response within tolerance.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

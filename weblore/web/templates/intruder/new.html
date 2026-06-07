@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Weblore — New Intruder attack{% endblock %}
+{% block main %}
+<h1>New Intruder attack</h1>
+<p>Mark insertion points in the raw request template by wrapping them with the marker character
+   (default <code>{{ marker }}</code>), then pick payload sources.</p>
+
+{% if error %}
+<p role="alert">{{ error }}</p>
+{% endif %}
+
+<form method="post" action="{{ url_for('intruder.new') }}" class="stack" aria-label="Create attack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+  <fieldset>
+    <legend>Basics</legend>
+    <div class="row">
+      <div class="grow">
+        <label for="i-name">Attack name</label>
+        <input id="i-name" name="name" value="{{ form.name }}" required autocomplete="off">
+      </div>
+      <div>
+        <label for="i-type">Attack type</label>
+        <select id="i-type" name="attack_type" aria-describedby="i-type-help">
+          {% for k, label in attack_types %}
+            <option value="{{ k }}" {% if form.attack_type == k %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <p id="i-type-help" class="muted">Sniper / Battering use 1 set; Pitchfork &amp; Cluster Bomb use up to 4.</p>
+      </div>
+      <div>
+        <label for="i-engine">Engine</label>
+        <select id="i-engine" name="engine">
+          <option value="httpx" {% if form.engine == 'httpx' %}selected{% endif %}>httpx</option>
+          <option value="raw" {% if form.engine == 'raw' %}selected{% endif %}>raw (byte-exact)</option>
+          <option value="h3" {% if form.engine == 'h3' %}selected{% endif %}>h3 (HTTP/3, optional)</option>
+          <option value="curl-cffi:chrome120" {% if form.engine == 'curl-cffi:chrome120' %}selected{% endif %}>curl-cffi: chrome120</option>
+          <option value="curl-cffi:safari17_0" {% if form.engine == 'curl-cffi:safari17_0' %}selected{% endif %}>curl-cffi: safari17_0</option>
+          <option value="curl-cffi:firefox109" {% if form.engine == 'curl-cffi:firefox109' %}selected{% endif %}>curl-cffi: firefox109</option>
+        </select>
+      </div>
+    </div>
+    <div>
+      <label for="i-url">Base URL (for scheme + fallback host)</label>
+      <input id="i-url" name="url" value="{{ form.url }}" required type="url">
+    </div>
+    <div>
+      <label for="i-marker">Marker character (one char; default <code>{{ marker }}</code>)</label>
+      <input id="i-marker" name="marker" value="{{ form.marker }}" maxlength="2">
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Request template</legend>
+    <label for="i-tpl">Raw HTTP request (wrap each insertion point with the marker)</label>
+    <textarea id="i-tpl" name="template" rows="10" required autocomplete="off">{{ form.template }}</textarea>
+  </fieldset>
+
+  <fieldset>
+    <legend>Payload source</legend>
+    <div class="row">
+      <div>
+        <label for="i-src">Source</label>
+        <select id="i-src" name="source">
+          <option value="text" {% if form.source == 'text' %}selected{% endif %}>Text (one per line)</option>
+          <option value="numbers" {% if form.source == 'numbers' %}selected{% endif %}>Number range</option>
+          <option value="brute" {% if form.source == 'brute' %}selected{% endif %}>Brute force (alphabet × length)</option>
+          <option value="common_pw" {% if form.source == 'common_pw' %}selected{% endif %}>Common passwords (built-in)</option>
+        </select>
+      </div>
+    </div>
+
+    <div>
+      <label for="i-pl">Set 1 — one payload per line</label>
+      <textarea id="i-pl" name="payloads_text" rows="6" autocomplete="off">{{ form.payloads_text }}</textarea>
+    </div>
+    <div>
+      <label for="i-pl2">Set 2 (pitchfork / clusterbomb)</label>
+      <textarea id="i-pl2" name="payloads_set2" rows="4" autocomplete="off">{{ form.payloads_set2 }}</textarea>
+    </div>
+    <div>
+      <label for="i-pl3">Set 3 (pitchfork / clusterbomb)</label>
+      <textarea id="i-pl3" name="payloads_set3" rows="4" autocomplete="off">{{ form.payloads_set3 }}</textarea>
+    </div>
+    <div>
+      <label for="i-pl4">Set 4 (pitchfork / clusterbomb)</label>
+      <textarea id="i-pl4" name="payloads_set4" rows="4" autocomplete="off">{{ form.payloads_set4 }}</textarea>
+    </div>
+
+    <div class="row">
+      <div><label for="i-ns">Number start</label><input id="i-ns" name="num_start" value="{{ form.num_start }}"></div>
+      <div><label for="i-ne">Number end</label><input id="i-ne" name="num_end" value="{{ form.num_end }}"></div>
+      <div><label for="i-nst">Step</label><input id="i-nst" name="num_step" value="{{ form.num_step }}"></div>
+    </div>
+    <div class="row">
+      <div><label for="i-ba">Brute alphabet</label><input id="i-ba" name="brute_alphabet" value="{{ form.brute_alphabet }}"></div>
+      <div><label for="i-bmin">Min length</label><input id="i-bmin" name="brute_min" value="{{ form.brute_min }}"></div>
+      <div><label for="i-bmax">Max length</label><input id="i-bmax" name="brute_max" value="{{ form.brute_max }}"></div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Options</legend>
+    <div class="row">
+      <div><label for="i-cc">Concurrency</label><input id="i-cc" name="concurrency" value="{{ form.concurrency }}"></div>
+      <div><label for="i-dly">Delay per request (ms)</label><input id="i-dly" name="delay_ms" value="{{ form.delay_ms }}"></div>
+      <div><label for="i-mx">Max requests (safety cap)</label><input id="i-mx" name="max_requests" value="{{ form.max_requests }}"></div>
+    </div>
+    <div>
+      <label for="i-proc">Payload processors (comma-separated, applied in order)</label>
+      <input id="i-proc" name="processors" value="{{ form.processors }}" placeholder="url, upper">
+      <p class="muted">Available: {{ processors|join(', ') }}</p>
+    </div>
+    <div>
+      <label for="i-grep">Grep — extract patterns (one regex per line)</label>
+      <textarea id="i-grep" name="grep" rows="3" autocomplete="off">{{ form.grep }}</textarea>
+    </div>
+  </fieldset>
+
+  <button type="submit">Create attack</button>
+</form>
+{% endblock %}

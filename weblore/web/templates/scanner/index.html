@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}Weblore — Scanner{% endblock %}
+{% block main %}
+<h1>Passive scanner</h1>
+
+<section aria-labelledby="run-h">
+  <h2 id="run-h">Run a scan</h2>
+  <p>
+    Replays no traffic. Audits every recorded request/response pair against
+    the built-in rule set plus any enabled plugin rules and writes new findings
+    to the project. Duplicate findings (same title + URL + evidence) are
+    suppressed.
+  </p>
+  <form method="post" action="{{ url_for('.run') }}" class="inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label for="lim">Scan most recent</label>
+    <input id="lim" name="limit" type="number" value="5000" min="1" max="50000">
+    <span> requests.</span>
+    <button type="submit">Run passive scan</button>
+  </form>
+</section>
+
+<section aria-labelledby="active-h">
+  <h2 id="active-h">Active scan (sends traffic)</h2>
+  <p>
+    The active scanner <strong>sends mutated HTTP requests</strong> to the
+    target. Only run it against systems you are authorised to test. Probes
+    are minimal markers, not weaponised exploits, but they will appear in
+    the target's logs.
+  </p>
+  <form method="post" action="{{ url_for('.run_active') }}" class="stack">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <fieldset>
+      <legend>Scope</legend>
+      <p>
+        <label for="ahost">Host filter</label>
+        <select id="ahost" name="host">
+          <option value="">(any host)</option>
+          {% for h in hosts %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="alim">Maximum recorded requests to probe</label>
+        <input id="alim" name="limit" type="number" value="20" min="1" max="2000">
+      </p>
+      <p>
+        <label for="ato">Per-request timeout (seconds)</label>
+        <input id="ato" name="timeout" type="number" value="10" min="1" max="60">
+      </p>
+      <p>
+        <label for="adel">Delay between probes (ms)</label>
+        <input id="adel" name="delay" type="number" value="0" min="0" max="5000">
+      </p>
+      <p>
+        <input type="checkbox" id="afollow" name="follow" value="1">
+        <label for="afollow">Follow redirects</label>
+      </p>
+    </fieldset>
+    <fieldset>
+      <legend>Checks to run</legend>
+      {% for c in active_checks %}
+        <p>
+          <input type="checkbox" id="chk-{{ c.name }}" name="checks" value="{{ c.name }}" checked>
+          <label for="chk-{{ c.name }}"><strong>{{ c.name }}</strong> — {{ c.description }}</label>
+        </p>
+      {% endfor %}
+    </fieldset>
+    <p><button type="submit">Run active scan</button></p>
+  </form>
+</section>
+
+<section aria-labelledby="sum-h">
+  <h2 id="sum-h">Summary</h2>
+  <table>
+    <caption>Open findings by severity</caption>
+    <thead><tr><th scope="col">Severity</th><th scope="col">Count</th></tr></thead>
+    <tbody>
+      {% for s in severities %}
+        <tr><th scope="row">{{ s.title() }}</th><td>{{ summary.get(s, 0) }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p>
+    <a href="{{ url_for('reporter.index') }}">Export findings &rarr;</a>
+  </p>
+</section>
+
+<section aria-labelledby="find-h">
+  <h2 id="find-h">Findings</h2>
+  <form method="get" class="inline" role="search" aria-label="Filter findings">
+    <label for="sev">Severity</label>
+    <select id="sev" name="severity">
+      <option value="">all</option>
+      {% for s in severities %}
+        <option value="{{ s }}" {% if sev == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <label for="st">Status</label>
+    <select id="st" name="status">
+      <option value="">all</option>
+      {% for s in statuses %}
+        <option value="{{ s }}" {% if status == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <label for="hs">Host</label>
+    <select id="hs" name="host">
+      <option value="">all</option>
+      {% for h in hosts %}
+        <option value="{{ h }}" {% if host == h %}selected{% endif %}>{{ h }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Filter</button>
+  </form>
+
+  {% if findings %}
+  <table>
+    <caption>{{ findings|length }} finding(s)</caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Severity</th>
+        <th scope="col">Title</th>
+        <th scope="col">Host</th>
+        <th scope="col">URL</th>
+        <th scope="col">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in findings %}
+      <tr>
+        <td>{{ f.id }}</td>
+        <td>{{ f.severity }}</td>
+        <td><a href="{{ url_for('.show', fid=f.id) }}">{{ f.title }}</a></td>
+        <td>{{ f.host or '—' }}</td>
+        <td><code>{{ (f.url or '—')[:80] }}</code></td>
+        <td>{{ f.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p>No findings recorded yet. Click <strong>Run scan now</strong> after you
+       have proxied some traffic.</p>
+  {% endif %}
+</section>
+{% endblock %}
