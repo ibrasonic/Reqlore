@@ -45,9 +45,14 @@ RUN apt-get update \
 
 # Install the wheel + the most useful optional extras for general-purpose use.
 # Skip the dev / a11y extras (those are CI-only).
+# Note: we can't write `pip install /tmp/*.whl[report,yaml,schedule]` because
+# `sh` interprets `[...]` as a glob character class, not as pip's extras
+# syntax. Install the wheel first to register `weblore` on PyPI's local
+# resolver, then ask pip again *by package name* with the extras.
 COPY --from=build /dist/*.whl /tmp/
 RUN pip install --upgrade pip \
- && pip install /tmp/*.whl[report,yaml,schedule] \
+ && pip install /tmp/*.whl \
+ && pip install "weblore[report,yaml,schedule]" \
  && rm -rf /tmp/*.whl /root/.cache
 
 USER weblore
