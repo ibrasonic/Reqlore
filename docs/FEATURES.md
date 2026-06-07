@@ -65,11 +65,12 @@ Legend: ✅ shipped · 🚧 in progress · 📋 planned · — out of scope
 
 | Feature | Status | Phase |
 |---|---|---|
-| URL / HTML / b64 / hex / gzip / deflate | 📋 | 1 |
-| JWT decode + sign (HS/RS/ES, alg=none) | 📋 | 1 |
-| Unicode escapes / ROT-N | 📋 | 1 |
-| MD5 / SHA1 / SHA-2 / HMAC | 📋 | 1 |
-| Smart-decode (chained) | 📋 | 1 |
+| URL / HTML / b64 / hex / gzip / deflate | ✅ | 1 |
+| Form-body URL encode/decode (preserves `&` and `=`) | ✅ | 8 |
+| JWT decode + sign (HS/RS/ES, alg=none) | ✅ | 2 |
+| Unicode escapes / ROT-N | ✅ | 1 |
+| MD5 / SHA1 / SHA-2 / HMAC | ✅ | 1 |
+| Smart-decode (chained) | ✅ | 1 |
 
 ## Comparer
 

@@ -87,7 +87,17 @@ Weblore targets **WCAG 2.2 Level AA** as a minimum and intentionally exceeds it 
 
 ### Keyboard
 
-- Global shortcuts use modifier + letter (never single letter — collides with SR shortcuts).
+- Global JS shortcuts use **modifier + letter** (never single letter —
+  single letters collide with screen-reader browse-mode quick-nav).
+- Per-page action buttons (e.g. the Proxy intercept-detail "Forward edited"
+  / "Forward as-is" / "Drop" bar and the "Send to..." list) use HTML
+  [`accesskey`](https://developer.mozilla.org/docs/Web/HTML/Global_attributes/accesskey)
+  attributes instead of JS shortcuts. The browser handles `accesskey`
+  **before** the screen reader's browse-mode layer, so the shortcut works
+  in NVDA without disabling browse mode. The activation modifier varies by
+  browser (Alt on Chrome/Edge, Alt+Shift on Firefox, Ctrl+Alt on macOS) —
+  this is documented per page and surfaced in the `<u>` underline shown on
+  the access-key letter.
 - Press `?` anywhere to open a full keyboard map page.
 - Map is editable in Settings.
 

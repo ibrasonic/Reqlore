@@ -2,7 +2,7 @@
 
 Burp-grade web application pentesting suite. Python-native. Accessible-first. Local web UI.
 
-> **Status:** Phase 7 complete — see [`docs/ROADMAP.md`](docs/ROADMAP.md). 240/240 unit tests pass, 28/28 routes serve 200.
+> **Status:** Phase 8 complete — 333/333 unit tests pass. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## What it is
 
@@ -28,7 +28,7 @@ Burp Suite is the industry standard but its Java Swing UI is a barrier for scree
 ## Install (dev)
 
 ```powershell
-git clone <repo>
+git clone https://github.com/ibrasonic/Weblore.git
 cd Weblore
 py -m pip install -e .[dev]
 weblore init demo.weblore

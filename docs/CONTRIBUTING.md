@@ -3,7 +3,7 @@
 ## Dev setup
 
 ```powershell
-git clone <repo>
+git clone https://github.com/ibrasonic/Weblore.git
 cd Weblore
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1

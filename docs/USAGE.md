@@ -54,7 +54,7 @@ This guide assumes Weblore is already installed. If not, jump to
 Requires Python 3.12 or newer (3.14 tested).
 
 ```powershell
-git clone <repo>
+git clone https://github.com/ibrasonic/Weblore.git
 cd Weblore
 py -m pip install -e .[dev]
 ```
@@ -198,12 +198,34 @@ last update check (if enabled).
 ### Proxy — `/proxy/`
 
 Intercepting MITM. The held-request queue lists each pending request with
-*Forward*, *Drop*, *Send to repeater*, and *Edit* buttons.
+*Forward edited*, *Forward as-is*, and *Drop* buttons, plus a "Send to..."
+menu so you can dispatch the held request into any other panel without
+forwarding it first.
 
-- **Read order:** request method → URL → host → size → buttons.
-- **Edit before forwarding:** click *Edit*, modify in the `<textarea>`, press
-  *Save & forward*.
-- **CA install:** *Download CA* button serves the on-disk PEM.
+- **Read order:** breadcrumb → request summary (`<dl class="meta">`) →
+  editable request `<textarea>` → action bar → "Send to..." list.
+- **Action bar accesskeys** (browser-native; Alt on Chrome/Edge, Alt+Shift
+  on Firefox, Ctrl+Alt on macOS):
+  - **e** — Forward edited
+  - **a** — Forward as-is
+  - **p** — Drop request (`button.danger`)
+- **Send to... targets** (each with its own accesskey, all open the target
+  panel pre-populated with the held request — the request is also snapshotted
+  to History so you don't lose it):
+  - **r** — Repeater
+  - **i** — Intruder
+  - **m** — Comparer (side A)
+  - **b** — PoC builder
+  - **j** — JWT workbench
+  - **o** — Decoder
+- **Send all (queued) to Repeater** — one-shot button at the top of the
+  intercept-queue listing; ships every currently-held request into Repeater
+  tabs at once.
+- **CA install:** *Download CA* button on `/proxy/` serves the on-disk PEM.
+
+> The single-letter shortcuts are HTML `accesskey` attributes, which the
+> browser handles **before** the screen reader's browse-mode layer — so they
+> work in NVDA without the usual single-letter-quick-nav collisions.
 
 ### History — `/history/`
 
@@ -212,8 +234,8 @@ status, length, engine, tags, time. Each row has a *Detail* link.
 
 The detail page (`/history/<id>/`) shows the raw request bytes, raw response
 bytes, decoded body, and a *Send to* dropdown (Repeater / Intruder / Comparer
-/ Decoder / JWT). If any plugin registers `copy_as()` handlers, they appear
-as links under "Copy as:".
+/ PoC builder / JWT workbench / Decoder). If any plugin registers `copy_as()`
+handlers, they appear as links under "Copy as:".
 
 ### Repeater — `/repeater/`
 
@@ -271,9 +293,30 @@ benign payload, replay with the malicious one, diff the responses.
 
 ### Decoder — `/decoder/`
 
-URL / base64 (std + url-safe) / hex / gzip / deflate / JSON pretty / form-url /
-common hashes (MD5/SHA1/SHA256/SHA512). Pipelined: chain transforms in a
-single textarea.
+A single textarea + an op dropdown + Run. The full op list:
+
+| Op | What it does |
+|---|---|
+| `url_encode` | Percent-encode every reserved character (`quote(s, safe="")`). Use for a single value you'll drop into one URL slot. |
+| `url_decode` | `unquote_plus` — decodes both `%20` and `+` to a space. |
+| `form_encode` | **URL encode (form body, keep `&` and `=`).** Splits on `&` and then on the first `=`, encodes the key and value separately, rejoins. Use this when you want to decode a body, edit one value, and re-encode without `&`/`=` inside values being promoted into new param boundaries. |
+| `form_decode` | **URL decode (form body, keep `&` and `=`).** Same split, `unquote_plus` on each side. |
+| `html_encode` / `html_decode` | HTML entity escape / unescape (quotes included). |
+| `b64_encode` / `b64_decode` | Standard base64 (strict on decode — rejects garbage rather than silently returning replacement chars). |
+| `b64url_encode` / `b64url_decode` | URL-safe base64; `b64url_encode` strips padding. |
+| `hex_encode` / `hex_decode` | Hex; decoder is liberal — accepts whitespace, `:` / `-` / `_` separators, and a leading `0x`. |
+| `gzip_encode` / `gzip_decode` | Gzip wrapped in base64 (so you can paste it into a text field). |
+| `deflate_encode` / `deflate_decode` | Raw zlib wrapped in base64. |
+| `rot13` | Classic ROT-13. |
+| `md5` / `sha1` / `sha256` / `sha512` | One-way hashes (hex digest). |
+| `jwt_decode` | Decode a JWT without verifying — emits `{header, payload}`. |
+| `json_pretty` / `json_minify` | JSON reformatters. |
+| `smart_decode` | Iteratively tries url_decode → b64_decode → jwt_decode (with strict shape gates) until the output stops changing or stops looking printable. |
+
+**Typical Intercept → Decoder → Intercept flow:** on the held request, press
+**Send to...** → **Decoder** (accesskey `o`); pick `form_decode`; edit one
+value in the readable output; switch the op to `form_encode`; Run; copy the
+result back into the intercept textarea; *Forward edited*.
 
 ### JWT workbench — `/jwt/`
 
@@ -488,7 +531,7 @@ docker compose up --build
 | Browser refuses proxy CA                    | Install into the browser's *Authorities* store, not the OS store.                    |
 | Update check button is disabled             | Toggle *Update check* on in `/settings/` and *Save settings* first.                  |
 | Port already in use                         | Pass `--port` (UI), `--proxy-port` (proxy), or stop the other process.               |
-| Test suite                                  | `py -m pytest weblore/tests/unit -q` — expect `240 passed`.                          |
+| Test suite                                  | `py -m pytest weblore/tests/unit -q` — expect `333 passed` (Phase 8).                |
 | Smoke all routes                            | See `scripts/smoke-routes.ps1` (or follow the loop in `docs/ROADMAP.md` Phase 7).    |
 
 ---
