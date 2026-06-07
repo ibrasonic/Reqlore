@@ -103,7 +103,7 @@ def cmd_both(args: argparse.Namespace) -> int:
     return cmd_ui(argparse.Namespace(
         project=str(project_path),
         host=settings.ui_host, port=settings.ui_port,
-        unsafe_bind=False,
+        unsafe_bind=bool(getattr(args, "unsafe_bind", False)),
     ), proxy=ctrl)
 
 
@@ -281,6 +281,8 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--host", default=None)
     pb.add_argument("--ui-port", type=int, default=None)
     pb.add_argument("--proxy-port", type=int, default=None)
+    pb.add_argument("--unsafe-bind", action="store_true",
+                    help="Allow binding non-loopback addresses (dangerous).")
     pb.set_defaults(func=cmd_both)
 
     psc = sub.add_parser("scan", help="Run the passive scanner on recorded history.")
