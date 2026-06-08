@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from reqlore.cli import build_parser
+from reqlore.cli import build_parser, main
 
 
 def _parse(*argv: str):
@@ -28,7 +28,7 @@ class TestBothSubcommand:
             "--proxy-port", "8080",
             "--unsafe-bind",
         )
-        assert ns.cmd == "both"
+        assert ns.subcommand == "both"
         assert ns.unsafe_bind is True
         assert ns.host == "0.0.0.0"
         assert ns.ui_port == 8787
@@ -62,3 +62,33 @@ class TestSubcommandSurface:
         with pytest.raises(SystemExit) as exc:
             _parse(cmd, "--help")
         assert exc.value.code == 0
+
+
+class TestNoPrefixMatching:
+    # allow_abbrev=False on every parser: long-option prefixes must NOT
+    # silently match. This keeps scripts stable as new flags are added.
+    @pytest.mark.parametrize("bad", ["--ver", "--versi", "--vers"])
+    def test_version_prefix_rejected(self, bad):
+        with pytest.raises(SystemExit) as exc:
+            _parse(bad)
+        assert exc.value.code == 2
+
+    def test_version_full_flag_accepted(self):
+        with pytest.raises(SystemExit) as exc:
+            _parse("--version")
+        assert exc.value.code == 0
+
+    def test_subcommand_flag_prefix_rejected(self):
+        # `--proj` used to match `--project` under default argparse.
+        with pytest.raises(SystemExit) as exc:
+            _parse("ui", "--proj", "demo.rlr")
+        assert exc.value.code == 2
+
+
+class TestBareInvocation:
+    def test_bare_reqlore_prints_help_and_exits_zero(self, capsys):
+        rc = main([])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "usage: reqlore" in out
+        assert "<subcommand>" in out

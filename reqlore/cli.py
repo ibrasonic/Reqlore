@@ -488,15 +488,23 @@ def cmd_prefetch_firefox(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="reqlore", description="Reqlore — accessible web pentesting suite")
+    p = argparse.ArgumentParser(
+        prog="reqlore",
+        description="Reqlore — accessible web pentesting suite",
+        allow_abbrev=False,
+    )
     p.add_argument("--version", action="version", version=f"reqlore {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(
+        dest="subcommand",
+        metavar="<subcommand>",
+        required=False,  # handled in main() so bare `reqlore` shows help instead of a one-liner
+    )
 
-    pi = sub.add_parser("init", help="Create or open a project file.")
+    pi = sub.add_parser("init", help="Create or open a project file.", allow_abbrev=False)
     pi.add_argument("project_path")
     pi.set_defaults(func=cmd_init)
 
-    pu = sub.add_parser("ui", help="Start the UI server.")
+    pu = sub.add_parser("ui", help="Start the UI server.", allow_abbrev=False)
     pu.add_argument("--project", required=True)
     pu.add_argument("--host", default=None)
     pu.add_argument("--port", type=int, default=None)
@@ -511,7 +519,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pu.set_defaults(func=cmd_ui)
 
-    pp = sub.add_parser("proxy", help="Start the MITM proxy only.")
+    pp = sub.add_parser("proxy", help="Start the MITM proxy only.", allow_abbrev=False)
     pp.add_argument("--project", required=True)
     pp.add_argument("--port", type=int, default=None)
     pp.add_argument("--ui-port", type=int, default=None,
@@ -522,7 +530,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pp.set_defaults(func=cmd_proxy)
 
-    pb = sub.add_parser("both", help="Start UI + proxy in the same process.")
+    pb = sub.add_parser("both", help="Start UI + proxy in the same process.", allow_abbrev=False)
     pb.add_argument("--project", required=True)
     pb.add_argument("--host", default=None)
     pb.add_argument("--ui-port", type=int, default=None)
@@ -537,13 +545,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pb.set_defaults(func=cmd_both)
 
-    psc = sub.add_parser("scan", help="Run the passive scanner on recorded history.")
+    psc = sub.add_parser("scan", help="Run the passive scanner on recorded history.", allow_abbrev=False)
     psc.add_argument("--project", required=True)
     psc.add_argument("--limit", type=int, default=5000,
                      help="How many most-recent requests to scan (default 5000).")
     psc.set_defaults(func=cmd_scan)
 
-    pr = sub.add_parser("report", help="Export findings as md / html / docx.")
+    pr = sub.add_parser("report", help="Export findings as md / html / docx.", allow_abbrev=False)
     pr.add_argument("--project", required=True)
     pr.add_argument("--out", required=True, help="Path to write the report to.")
     pr.add_argument("--format", choices=["md", "markdown", "html", "docx"],
@@ -551,14 +559,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Output format (defaults to the --out file extension).")
     pr.set_defaults(func=cmd_report)
 
-    prun = sub.add_parser("run", help="Run a YAML/JSON job file.")
+    prun = sub.add_parser("run", help="Run a YAML/JSON job file.", allow_abbrev=False)
     prun.add_argument("--project", required=True)
     prun.add_argument("job", help="Path to a .yaml/.yml/.json job file.")
     prun.add_argument("--strict", action="store_true",
                      help="Abort the run on the first failing step.")
     prun.set_defaults(func=cmd_run)
 
-    pih = sub.add_parser("import-har", help="Import a HAR file into the project history.")
+    pih = sub.add_parser("import-har", help="Import a HAR file into the project history.", allow_abbrev=False)
     pih.add_argument("--project", required=True)
     pih.add_argument("har", help="Path to a .har file.")
     pih.set_defaults(func=cmd_import_har)
@@ -566,6 +574,7 @@ def build_parser() -> argparse.ArgumentParser:
     pb2 = sub.add_parser(
         "browser",
         help="Launch a dedicated Firefox preconfigured with the Reqlore proxy + CA.",
+        allow_abbrev=False,
     )
     pb2.add_argument("--proxy-port", type=int, default=None,
                      help="Proxy port to point Firefox at (default: settings value).")
@@ -584,6 +593,7 @@ def build_parser() -> argparse.ArgumentParser:
     pf = sub.add_parser(
         "prefetch-firefox",
         help="Download Firefox into the cache for later offline use (no launch).",
+        allow_abbrev=False,
     )
     pf.add_argument("--firefox-version", default=None)
     pf.add_argument("--firefox-zip", default=None,
@@ -597,6 +607,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "func", None) is None:
+        # Bare `reqlore` (no subcommand). Print full help to stdout and
+        # exit 0 — friendlier than argparse's default "the following
+        # arguments are required" one-liner.
+        parser.print_help()
+        return 0
     try:
         return args.func(args)
     except KeyboardInterrupt:

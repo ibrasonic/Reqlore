@@ -309,8 +309,8 @@ def test_cli_browser_subparser_registered():
     parser = build_parser()
     # Capture --help text to assert subcommand presence.
     actions = {a.dest for a in parser._actions}
-    assert "cmd" in actions
-    subactions = next(a for a in parser._actions if a.dest == "cmd")
+    assert "subcommand" in actions
+    subactions = next(a for a in parser._actions if a.dest == "subcommand")
     names = set(subactions.choices.keys())
     assert "browser" in names
     assert "prefetch-firefox" in names
@@ -325,7 +325,7 @@ def test_cli_browser_parses(monkeypatch):
         "--url", "http://127.0.0.1:8787/",
         "--use-system",
     ])
-    assert ns.cmd == "browser"
+    assert ns.subcommand == "browser"
     assert ns.proxy_port == 8081
     assert ns.url == "http://127.0.0.1:8787/"
     assert ns.use_system is True
