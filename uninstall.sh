@@ -41,6 +41,20 @@ if command -v pipx >/dev/null 2>&1; then
     fi
 fi
 
+# ---- 1b. user-site `pip install --user` reqlore (stale shim trap) ---------
+# A leftover `pip install --user reqlore` leaves a shim in ~/.local/bin that
+# can shadow the pipx install. Detect and remove it so `reqlore` resolves
+# cleanly after a re-install.
+for _py in python3 python; do
+    if command -v "$_py" >/dev/null 2>&1; then
+        if "$_py" -m pip show reqlore >/dev/null 2>&1; then
+            info "removing stale user-site reqlore (pip --user shim)"
+            "$_py" -m pip uninstall -y reqlore >/dev/null 2>&1 && removed_any=1
+        fi
+        break
+    fi
+done
+
 # ---- 2. local venv ---------------------------------------------------------
 VENV="${REQLORE_VENV:-.venv}"
 if [ -d "$VENV" ]; then

@@ -107,6 +107,12 @@ use_pipx() {
     PATH="$HOME/.local/bin:$PATH"
     export PATH
 
+    # A previous `pip install --user reqlore` (e.g. before the rename) leaves
+    # ~/.local/lib/pythonX.Y/site-packages/reqlore + a shim in ~/.local/bin
+    # that, on some PATH orderings, shadows the pipx install. Wipe it before
+    # we move on so `reqlore` resolves cleanly.
+    "$PYTHON" -m pip uninstall -y reqlore >/dev/null 2>&1 || true
+
     info "installing Reqlore with pipx (isolated CLI on PATH)"
     pipx install --force .
     info "done."
