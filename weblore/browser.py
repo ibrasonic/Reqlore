@@ -468,6 +468,213 @@ def ensure_profile(profile_dir: Path | None = None) -> Path:
 # Launch
 # ---------------------------------------------------------------------------
 
+# Mozilla's portable Firefox tarball ships only its own xul/gfx code; everything
+# else (ALSA, GTK, dbus-glib, X11 helpers, libpci) has to come from the host.
+# A minimal cloud image (WSL Ubuntu, slim Docker, etc.) doesn't have these and
+# Firefox dies at startup with `XPCOMGlueLoad error ... libasound.so.2: cannot
+# open shared object file`. We detect the missing sonames with `ldd` and try
+# the system package manager once before launching.
+LINUX_RUNTIME_PACKAGES: dict[str, dict[str, list[str]]] = {
+    # soname -> { pkgmgr -> [candidate package names; first that exists wins] }
+    "libasound.so.2": {
+        "apt": ["libasound2t64", "libasound2"],
+        "dnf": ["alsa-lib"],
+        "pacman": ["alsa-lib"],
+        "zypper": ["libasound2"],
+        "apk": ["alsa-lib"],
+    },
+    "libdbus-glib-1.so.2": {
+        "apt": ["libdbus-glib-1-2"],
+        "dnf": ["dbus-glib"],
+        "pacman": ["dbus-glib"],
+        "zypper": ["dbus-1-glib"],
+        "apk": ["dbus-glib"],
+    },
+    "libgtk-3.so.0": {
+        "apt": ["libgtk-3-0t64", "libgtk-3-0"],
+        "dnf": ["gtk3"],
+        "pacman": ["gtk3"],
+        "zypper": ["libgtk-3-0"],
+        "apk": ["gtk+3.0"],
+    },
+    "libX11-xcb.so.1": {
+        "apt": ["libx11-xcb1"],
+        "dnf": ["libX11-xcb"],
+        "pacman": ["libx11"],
+        "zypper": ["libX11-xcb1"],
+        "apk": ["libx11"],
+    },
+    "libXt.so.6": {
+        "apt": ["libxt6"],
+        "dnf": ["libXt"],
+        "pacman": ["libxt"],
+        "zypper": ["libXt6"],
+        "apk": ["libxt"],
+    },
+    "libpci.so.3": {
+        "apt": ["libpci3"],
+        "dnf": ["pciutils-libs"],
+        "pacman": ["pciutils"],
+        "zypper": ["libpci3"],
+        "apk": ["pciutils-libs"],
+    },
+    "libdbus-1.so.3": {
+        "apt": ["libdbus-1-3"],
+        "dnf": ["dbus-libs"],
+        "pacman": ["dbus"],
+        "zypper": ["libdbus-1-3"],
+        "apk": ["dbus-libs"],
+    },
+}
+
+_PKGMGR_INSTALL_CMD: dict[str, list[str]] = {
+    "apt":    ["apt-get", "install", "-y", "--no-install-recommends"],
+    "dnf":    ["dnf", "install", "-y"],
+    "pacman": ["pacman", "-S", "--noconfirm", "--needed"],
+    "zypper": ["zypper", "--non-interactive", "install", "--no-recommends"],
+    "apk":    ["apk", "add", "--no-cache"],
+}
+_PKGMGR_REFRESH_CMD: dict[str, list[str]] = {
+    "apt":    ["apt-get", "update"],
+    "dnf":    [],
+    "pacman": ["pacman", "-Sy"],
+    "zypper": ["zypper", "--non-interactive", "refresh"],
+    "apk":    ["apk", "update"],
+}
+
+
+def _detect_linux_pkgmgr() -> str | None:
+    """Pick the first package manager actually on PATH."""
+    for name in ("apt-get", "dnf", "pacman", "zypper", "apk"):
+        if shutil.which(name):
+            return "apt" if name == "apt-get" else name
+    return None
+
+
+def _ldd_missing(exe: Path) -> list[str]:
+    """Return sonames `ldd` reports as 'not found' for `exe`."""
+    if not shutil.which("ldd"):
+        return []
+    try:
+        r = subprocess.run(  # noqa: S603
+            ["ldd", str(exe)],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    out = (r.stdout or "") + (r.stderr or "")
+    missing: list[str] = []
+    for line in out.splitlines():
+        # "        libasound.so.2 => not found"
+        m = re.match(r"\s*([^\s]+)\s+=>\s+not found", line)
+        if m:
+            soname = m.group(1)
+            if soname not in missing:
+                missing.append(soname)
+    return missing
+
+
+def _apt_pkg_exists(pkg: str) -> bool:
+    r = subprocess.run(  # noqa: S603
+        ["apt-cache", "show", pkg],
+        capture_output=True, text=True, timeout=10,
+    )
+    return r.returncode == 0 and bool((r.stdout or "").strip())
+
+
+def _pick_packages(missing: list[str], pkgmgr: str) -> list[str]:
+    """Resolve missing sonames to concrete package names for `pkgmgr`."""
+    chosen: list[str] = []
+    for soname in missing:
+        candidates = LINUX_RUNTIME_PACKAGES.get(soname, {}).get(pkgmgr, [])
+        if not candidates:
+            continue
+        picked: str | None = None
+        if pkgmgr == "apt":
+            for c in candidates:
+                if _apt_pkg_exists(c):
+                    picked = c
+                    break
+        picked = picked or candidates[0]
+        if picked not in chosen:
+            chosen.append(picked)
+    return chosen
+
+
+def _sudo_prefix() -> list[str] | None:
+    """Return [] if root, ['sudo','-n'] if non-interactive sudo works, else None.
+
+    `sudo -n` exits 1 immediately when a password would be required, so we
+    never block the launch on a hidden prompt the user can't see.
+    """
+    if os.geteuid() == 0:  # type: ignore[attr-defined]
+        return []
+    sudo = shutil.which("sudo")
+    if not sudo:
+        return None
+    r = subprocess.run([sudo, "-n", "true"],  # noqa: S603
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        return [sudo, "-n"]
+    return None  # sudo exists but would prompt for a password
+
+
+def ensure_linux_runtime(exe: Path) -> list[str]:
+    """Best-effort: install missing host libs Firefox needs. Returns leftover sonames.
+
+    No-op on non-Linux. Skipped entirely if WEBLORE_NO_AUTODEPS=1. Only tries
+    the package manager when sudo is available without a password prompt.
+    """
+    if platform.system() != "Linux":
+        return []
+    if os.environ.get("WEBLORE_NO_AUTODEPS") == "1":
+        return _ldd_missing(exe)
+
+    missing = _ldd_missing(exe)
+    if not missing:
+        return []
+
+    pkgmgr = _detect_linux_pkgmgr()
+    if pkgmgr is None:
+        log.warning("Firefox needs %s but no supported package manager was found.",
+                    ", ".join(missing))
+        return missing
+
+    pkgs = _pick_packages(missing, pkgmgr)
+    if not pkgs:
+        log.warning("Firefox needs %s but no package mapping is known for %s.",
+                    ", ".join(missing), pkgmgr)
+        return missing
+
+    sudo = _sudo_prefix()
+    if sudo is None:
+        cmd = " ".join(_PKGMGR_INSTALL_CMD[pkgmgr] + pkgs)
+        print(
+            "\nWeblore: Firefox is missing host libraries and I can't elevate "
+            "non-interactively.\n"
+            f"  Missing: {', '.join(missing)}\n"
+            f"  Run:     sudo {cmd}\n",
+            file=sys.stderr,
+        )
+        return missing
+
+    print(f"\nWeblore: installing Firefox runtime deps via {pkgmgr}: "
+          f"{', '.join(pkgs)}\n", file=sys.stderr)
+
+    refresh = _PKGMGR_REFRESH_CMD.get(pkgmgr, [])
+    if refresh:
+        subprocess.run(sudo + refresh, check=False)  # noqa: S603
+    install_cmd = sudo + _PKGMGR_INSTALL_CMD[pkgmgr] + pkgs
+    r = subprocess.run(install_cmd, check=False)  # noqa: S603
+    if r.returncode != 0:
+        log.warning("package install exited %d; continuing anyway", r.returncode)
+
+    leftover = _ldd_missing(exe)
+    if leftover:
+        log.warning("still missing after install: %s", ", ".join(leftover))
+    return leftover
+
+
 @dataclass
 class LaunchResult:
     exe: Path
@@ -521,6 +728,7 @@ def run_browser(*, ca_path: Path,
     exe = find_firefox(prefer_cache=prefer_cache)
     if exe is None:
         exe = download_firefox(version=version, archive_path=archive_path)
+    ensure_linux_runtime(exe)
     install_policies(
         exe=exe, ca_path=ca_path,
         proxy_host=proxy_host, proxy_port=proxy_port,
