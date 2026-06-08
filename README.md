@@ -25,20 +25,64 @@ Full per-module walkthrough: [`docs/USAGE.md`](docs/USAGE.md).
 
 Burp Suite is the industry standard but its Java Swing UI is a barrier for screen-reader users. Weblore is built ground-up as plain semantic HTML5 + Jinja2, which is the most reliable substrate for NVDA, JAWS, Orca, and VoiceOver. Targets **WCAG 2.2 AA**; details in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md).
 
-## Install (dev)
+## Install
+
+Requires **Python 3.12+**. Pick the path that matches your platform.
+
+### Quickest: one-shot installer (Linux / macOS / Windows)
+
+```bash
+# Linux / macOS
+git clone https://github.com/ibrasonic/Weblore.git
+cd Weblore
+sh install.sh
+```
+
+```bat
+:: Windows (cmd or PowerShell)
+git clone https://github.com/ibrasonic/Weblore.git
+cd Weblore
+install.bat
+```
+
+The installer creates a virtual environment in `.venv/`, installs Weblore
+into it, and prints how to run the `weblore` command. On Linux/macOS, if
+[`pipx`](https://pipx.pypa.io) is available it's used instead (preferred
+— you get a global `weblore` command with no activation step).
+
+Then:
+
+```
+weblore init demo.weblore
+weblore both --project demo.weblore   # UI on http://127.0.0.1:8787, proxy on 127.0.0.1:8080
+```
+
+(On Windows, prefix the command with `.venv\Scripts\` or activate the venv with `.venv\Scripts\activate.bat`.)
+
+### Manual install (contributors / hacking)
 
 ```powershell
 git clone https://github.com/ibrasonic/Weblore.git
 cd Weblore
-py -m pip install -e .[dev]
+py -m venv .venv
+.venv\Scripts\Activate.ps1            # Linux/macOS: source .venv/bin/activate
+py -m pip install -e ".[dev]"         # editable install + test/lint tools
+py -m pytest weblore/tests/unit -q    # should be 346 passed
 weblore init demo.weblore
-weblore ui    --project demo.weblore     # browse http://127.0.0.1:8787
-weblore proxy --project demo.weblore     # MITM on 127.0.0.1:8080
-weblore both  --project demo.weblore     # UI + proxy in one process
-weblore browser                          # spawn a pre-configured Firefox
+weblore both --project demo.weblore
+```
+
+Other subcommands:
+
+```
+weblore ui    --project demo.weblore   # UI only
+weblore proxy --project demo.weblore   # MITM only
+weblore browser                        # spawn Firefox pre-pointed at the proxy
 ```
 
 Optional extras: `[h3]`, `[impersonate]`, `[report]`, `[plugins]`, `[yaml]`, `[a11y]`, `[schedule]` — see [`docs/USAGE.md`](docs/USAGE.md#install).
+
+> **Debian/Ubuntu/Kali users:** `pip install .` against system Python is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `install.sh` (recommended), or `python3 -m venv .venv && source .venv/bin/activate` first. If `venv` is missing, `sudo apt install python3-venv`.
 
 ## Run with Docker
 
