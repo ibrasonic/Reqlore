@@ -29,6 +29,13 @@ KEYMAP = [
     ("Alt+B",  "Send to PoC builder (intercept detail)"),
     ("Alt+J",  "Send to JWT workbench (intercept detail)"),
     ("Alt+O",  "Send to Decoder (intercept detail)"),
+    # On the History-detail page (History > click a row):
+    ("Alt+R",  "Send to Repeater (history detail)"),
+    ("Alt+I",  "Send to Intruder (history detail)"),
+    ("Alt+M",  "Send to Comparer side A (history detail)"),
+    ("Alt+B",  "Send to PoC builder (history detail)"),
+    ("Alt+J",  "Send to JWT workbench (history detail)"),
+    ("Alt+O",  "Send to Decoder (history detail)"),
 ]
 
 

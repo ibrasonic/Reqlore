@@ -7,6 +7,8 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 
 from ...a11y import ResponseSummaryInput, summarise_response
 from ...plugins import get_registry
+from ..send_targets import (available_targets, bearer_token,
+                              parse_raw_request, target_label)
 
 bp = Blueprint("history", __name__)
 
@@ -49,11 +51,13 @@ def show(hid: int):
         headers=headers, body=body, duration_ms=row.duration_ms,
     ))
     plugin_copy_as = [h.name for h in get_registry().active_copy_as()]
+    send_targets = available_targets(row.req_blob)
     return render_template(
         "history/detail.html",
         row=row, req_text=req_text, resp_text=resp_text,
         summary=summary, status_line=status_line,
         plugin_copy_as=plugin_copy_as,
+        send_targets=send_targets,
     )
 
 
@@ -78,6 +82,44 @@ def to_repeater(hid: int):
     if not row:
         abort(404)
     return redirect(url_for("repeater.index", from_history=hid))
+
+
+@bp.route("/<int:hid>/send/<slug>", methods=["POST"])
+def send_to(hid: int, slug: str):
+    """Dispatch a recorded request to another tool.
+
+    Mirrors the Intercept-detail ``/proxy/intercept/<iid>/send/<slug>``
+    endpoint, but with no need to snapshot first because History rows
+    already have a stable id every tool can hydrate from.
+    """
+    row = g.project.get_history(hid)
+    if not row:
+        abort(404)
+    parsed = parse_raw_request(row.req_blob)
+    if slug == "repeater":
+        target = url_for("repeater.index", from_history=hid)
+    elif slug == "intruder":
+        target = url_for("intruder.new", from_history=hid)
+    elif slug == "comparer-a":
+        target = url_for("comparer.index", from_a=hid)
+    elif slug == "comparer":
+        # Legacy slug used by send_targets.SEND_TARGETS ("comparer")
+        # maps to side A; "comparer-b" is exposed separately.
+        target = url_for("comparer.index", from_a=hid)
+    elif slug == "comparer-b":
+        target = url_for("comparer.index", from_b=hid)
+    elif slug == "poc":
+        target = url_for("poc.index", from_history=hid)
+    elif slug == "jwt":
+        target = url_for("jwt.index",
+                         token=bearer_token(parsed.headers))
+    elif slug == "decoder":
+        target = url_for("decoder.index",
+                         text=parsed.body.decode("utf-8", errors="replace"))
+    else:
+        abort(404, description=f"Unknown send target: {slug!r}")
+    flash(f"Sent history #{hid} to {target_label(slug)}.", "ok")
+    return redirect(target)
 
 
 @bp.route("/export.jsonl")

@@ -6,11 +6,37 @@
    <strong>{{ row.status }}</strong> in {{ row.duration_ms }} ms ({{ row.engine }})</p>
 <p><em>Summary:</em> {{ summary }}</p>
 
-<form method="post" action="{{ url_for('history.to_repeater', hid=row.id) }}" class="inline-form">
-  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-  <button type="submit">Send to Repeater</button>
-</form>
-<a href="{{ url_for('poc.index', from_history=row.id) }}">Make CSRF PoC &rarr;</a>
+{% if send_targets %}
+<section aria-labelledby="hs-h">
+  <h2 id="hs-h">Send a copy to another tool</h2>
+  <p id="hs-help" class="help">
+    Each button copies this request into another Reqlore tool. The
+    History entry itself stays put. Underlined letters are
+    <a href="{{ url_for('help.index') }}#kb-h">access keys</a>
+    (Alt on Chrome/Edge, Alt+Shift on Firefox, Ctrl+Alt on macOS).
+  </p>
+  <ul class="action-list" aria-describedby="hs-help">
+    {% for t in send_targets %}
+    <li>
+      <form method="post"
+            action="{{ url_for('history.send_to', hid=row.id, slug=t.slug) }}"
+            class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" accesskey="{{ t.key }}">{{ t.html | safe }}</button>
+      </form>
+    </li>
+    {% endfor %}
+    <li>
+      <form method="post"
+            action="{{ url_for('history.send_to', hid=row.id, slug='comparer-b') }}"
+            class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit">Send to Comparer (side B)</button>
+      </form>
+    </li>
+  </ul>
+</section>
+{% endif %}
 
 {% if plugin_copy_as %}
   <p>Plugin copy-as renderers:

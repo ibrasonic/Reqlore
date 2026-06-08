@@ -398,3 +398,161 @@ def test_send_to_decoder_lands_with_body_filled(client, project):
     # escapes the quotes for safe rendering inside <textarea>).
     assert b"&#34;u&#34;:&#34;a&#34;" in r.data \
         or b'{"u":"a","p":"b"}' in r.data
+
+
+# ---------------------------------------------------------------------------
+# Send-to from the History detail page (same menu, different surface)
+# ---------------------------------------------------------------------------
+
+def _history_csrf(client) -> str:
+    client.get("/history/")
+    with client.session_transaction() as sess:
+        return sess.get("csrf", "")
+
+
+def _seed_history(project) -> int:
+    """Insert a history row matching the intercept fixture so the same
+    assertions can re-run on the recorded-flows surface."""
+    return project.add_history(
+        host="target.test", method="POST", url="http://target.test/api/login",
+        status=200, duration_ms=12, engine="raw",
+        raw_req=_REQ_RAW, raw_resp=b"HTTP/1.1 200 OK\r\n\r\n{}",
+    )
+
+
+def test_history_detail_renders_full_send_menu(client, project):
+    hid = _seed_history(project)
+    r = client.get(f"/history/{hid}")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    # Every target button must be present; JWT only because the fixture
+    # carries an Authorization: Bearer header, Decoder only because the
+    # request has a body. Both apply here. The access-key letter is
+    # wrapped in <u>...</u> in the button label, so we assert on the
+    # split form.
+    for needle in ("Send to <u>R</u>epeater",
+                   "Send to <u>I</u>ntruder",
+                   "Send to Co<u>m</u>parer (side A)",
+                   "Send to PoC <u>b</u>uilder",
+                   "Send to <u>J</u>WT workbench",
+                   "Send t<u>o</u> Decoder"):
+        assert needle in body, f"missing button: {needle!r}"
+    # Access-key letters must match the Intercept-detail menu.
+    for key in ('accesskey="r"', 'accesskey="i"', 'accesskey="m"',
+                'accesskey="b"', 'accesskey="j"', 'accesskey="o"'):
+        assert key in body, f"missing access key: {key}"
+
+
+def test_history_index_has_per_row_intruder_link(client, project):
+    hid = _seed_history(project)
+    r = client.get("/history/")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    assert f"/intruder/new?from_history={hid}" in body
+    assert f"/repeater/?from_history={hid}" in body
+
+
+def test_history_send_to_intruder_lands_with_template_filled(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/intruder",
+                    data={"_csrf": csrf}, follow_redirects=True)
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    assert "POST /api/login HTTP/1.1" in body
+    assert "Host: target.test" in body
+
+
+def test_history_send_to_repeater_lands_with_request_filled(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/repeater",
+                    data={"_csrf": csrf}, follow_redirects=True)
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    assert "Repeater" in body
+    assert "target.test" in body
+    assert "/api/login" in body
+
+
+def test_history_send_to_comparer_side_a(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/comparer",
+                    data={"_csrf": csrf}, follow_redirects=True)
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    assert "Comparer" in body
+    assert "POST /api/login" in body
+
+
+def test_history_send_to_comparer_side_b(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/comparer-b",
+                    data={"_csrf": csrf}, follow_redirects=True)
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    assert "Comparer" in body
+
+
+def test_history_send_to_jwt_lands_with_token_filled(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/jwt",
+                    data={"_csrf": csrf}, follow_redirects=True)
+    assert r.status_code == 200
+    assert b"eyJhbGciOiJub25lIn0.eyJzdWIiOiJhbGljZSJ9." in r.data
+
+
+def test_history_send_to_decoder_lands_with_body_filled(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/decoder",
+                    data={"_csrf": csrf}, follow_redirects=True)
+    assert r.status_code == 200
+    assert b"&#34;u&#34;:&#34;a&#34;" in r.data \
+        or b'{"u":"a","p":"b"}' in r.data
+
+
+def test_history_send_to_poc_lands_with_request(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/poc",
+                    data={"_csrf": csrf}, follow_redirects=True)
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    assert "PoC" in body
+
+
+def test_history_send_to_unknown_slug_returns_404(client, project):
+    hid = _seed_history(project)
+    csrf = _history_csrf(client)
+    r = client.post(f"/history/{hid}/send/no-such-thing",
+                    data={"_csrf": csrf})
+    assert r.status_code == 404
+
+
+def test_history_send_to_unknown_hid_returns_404(client, project):
+    csrf = _history_csrf(client)
+    r = client.post("/history/99999/send/intruder",
+                    data={"_csrf": csrf})
+    assert r.status_code == 404
+
+
+def test_history_detail_hides_jwt_when_no_bearer(client, project):
+    hid = project.add_history(
+        host="ex.test", method="GET", url="http://ex.test/x",
+        status=200, duration_ms=1, engine="raw",
+        raw_req=b"GET /x HTTP/1.1\r\nHost: ex.test\r\n\r\n",
+        raw_resp=b"HTTP/1.1 200 OK\r\n\r\n",
+    )
+    r = client.get(f"/history/{hid}")
+    assert r.status_code == 200
+    body = r.data.decode("utf-8", "replace")
+    assert "Send to <u>J</u>WT workbench" not in body
+    # No body either, so Decoder also vanishes from the menu.
+    assert "Send t<u>o</u> Decoder" not in body
+    # Repeater / Intruder still present.
+    assert "Send to <u>R</u>epeater" in body
+    assert "Send to <u>I</u>ntruder" in body
