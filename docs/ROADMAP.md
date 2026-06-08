@@ -21,7 +21,7 @@ End state: a usable proxy + history + repeater + decoder, with the full a11y
 baseline in place so every later phase only needs to add Blueprints and
 templates that follow the established patterns.
 
-- [x] Repo skeleton, `pyproject.toml`, MIT license
+- [x] Repo skeleton, `pyproject.toml`, PolyForm Noncommercial 1.0.0 license
 - [x] `reqlore.cli` entry point (`ui`, `proxy`, `init`, `both`)
 - [x] `reqlore.config` + per-project SQLite settings
 - [x] `reqlore.storage.Project` — schema, blob compression, thread-safe

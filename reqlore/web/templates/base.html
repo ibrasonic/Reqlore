@@ -49,6 +49,14 @@
         <li><a href="{{ url_for('cues.index') }}">Cues</a></li>
         <li><a href="{{ url_for('settings.index') }}" accesskey="9">Settings</a></li>
         <li><a href="{{ url_for('help.index') }}" accesskey="0">Help</a></li>
+        {% if auth_enabled %}
+        <li>
+          <form method="post" action="{{ url_for('auth.logout') }}" class="nav-logout">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit" class="link-button">Sign out</button>
+          </form>
+        </li>
+        {% endif %}
       </ul>
     </nav>
   </header>

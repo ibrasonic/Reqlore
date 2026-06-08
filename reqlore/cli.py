@@ -109,6 +109,45 @@ def _abort_if_port_busy(label: str, host: str, port: int) -> int | None:
     return None
 
 
+def _enforce_unsafe_bind_password(
+    settings: Settings, args: argparse.Namespace,
+) -> int | None:
+    """Refuse to start when --unsafe-bind is requested without a password.
+
+    Loopback binds never require a password (the operator on the same
+    machine already has filesystem access). Any other bind exposes the UI
+    to other hosts, so we require either REQLORE_PASSWORD or
+    REQLORE_PASSWORD_HASH to be set when the operator opts in with
+    --unsafe-bind. The check honours the existing
+    ``require_password_on_unsafe_bind`` setting so power users can opt out
+    by setting it to ``false`` in their config, but the env-var must still
+    be set OR the user must pass the explicit escape hatch
+    --no-password (e.g. when fronting Reqlore with their own auth proxy).
+    """
+    if not getattr(args, "unsafe_bind", False):
+        return None
+    if settings.ui_host == "127.0.0.1":
+        return None
+    if getattr(args, "no_password", False):
+        print(
+            "warning: --unsafe-bind --no-password: the UI is exposed without "
+            "authentication. Front it with your own reverse proxy + auth, or "
+            "you WILL be compromised.",
+            file=sys.stderr,
+        )
+        return None
+    if settings.auth_enabled:
+        return None
+    print(
+        "error: --unsafe-bind requires a password. Set REQLORE_PASSWORD "
+        "(plaintext, hashed in-memory at startup) or REQLORE_PASSWORD_HASH "
+        "(pre-computed argon2id hash), or pass --no-password to acknowledge "
+        "you have your own auth layer in front.",
+        file=sys.stderr,
+    )
+    return 2
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     path = _resolve_project(args.project_path)
     Project(path).close()
@@ -126,6 +165,8 @@ def cmd_ui(args: argparse.Namespace, *, proxy: ProxyController | None = None) ->
     if settings.ui_host != "127.0.0.1" and not args.unsafe_bind:
         print("refusing to bind non-loopback without --unsafe-bind", file=sys.stderr)
         return 2
+    if rc := _enforce_unsafe_bind_password(settings, args):
+        return rc
 
     # Skip the port pre-check when we were chained from `cmd_both` — the proxy
     # already owns its port and we own the UI port from the same process.
@@ -226,6 +267,11 @@ def cmd_both(args: argparse.Namespace) -> int:
         proxy_host="127.0.0.1",
         proxy_port=args.proxy_port or 8080,
     ))
+    if settings.ui_host != "127.0.0.1" and not args.unsafe_bind:
+        print("refusing to bind non-loopback without --unsafe-bind", file=sys.stderr)
+        return 2
+    if rc := _enforce_unsafe_bind_password(settings, args):
+        return rc
     # Check both ports up front — failing after the proxy has started would
     # leak a thread and leave port 8080 held.
     rc = _abort_if_port_busy("UI", settings.ui_host, settings.ui_port)
@@ -260,6 +306,7 @@ def cmd_both(args: argparse.Namespace) -> int:
         project=str(project_path),
         host=settings.ui_host, port=settings.ui_port,
         unsafe_bind=bool(getattr(args, "unsafe_bind", False)),
+        no_password=bool(getattr(args, "no_password", False)),
         verbose=verbose,
     ), proxy=ctrl)
 
@@ -455,6 +502,11 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument("--port", type=int, default=None)
     pu.add_argument("--unsafe-bind", action="store_true",
                     help="Allow binding non-loopback addresses (dangerous).")
+    pu.add_argument("--no-password", action="store_true",
+                    help="When combined with --unsafe-bind, skip the "
+                         "REQLORE_PASSWORD requirement. Use this only if you "
+                         "front Reqlore with your own auth proxy (nginx, "
+                         "Caddy, oauth2-proxy, etc.).")
     pu.add_argument("-v", "--verbose", action="store_true",
                     help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pu.set_defaults(func=cmd_ui)
@@ -477,6 +529,10 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--proxy-port", type=int, default=None)
     pb.add_argument("--unsafe-bind", action="store_true",
                     help="Allow binding non-loopback addresses (dangerous).")
+    pb.add_argument("--no-password", action="store_true",
+                    help="When combined with --unsafe-bind, skip the "
+                         "REQLORE_PASSWORD requirement. Use this only if you "
+                         "front Reqlore with your own auth proxy.")
     pb.add_argument("-v", "--verbose", action="store_true",
                     help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pb.set_defaults(func=cmd_both)

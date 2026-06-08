@@ -83,7 +83,7 @@ Legend: ✅ shipped · 🚧 in progress · 📋 planned · — out of scope
 
 | Feature | Status | Phase |
 |---|---|---|
-| Passive: security headers, mixed content, autocomplete-on-pw, CSP report-only, source maps, dir listing, sensitive files | 📋 | 3 |
+| Passive (12 rules): security headers, X-Frame-Options, insecure cookies, server banner, CORS, verbose errors, directory listing, sensitive paths, mixed content, JWT `alg=none`, open-redirect hints, basic-auth over HTTP | shipped | 3 |
 | Active: XSS (reflected/stored), SQLi (error/time), OS-cmd, SSRF (+OAST), open redirect, host-header inj, XXE, proto-pollution, GraphQL introspection, JWT alg=none, SSTI fingerprint | 📋 | 4 |
 | Per-finding CWE + OWASP + reproducer | 📋 | 3 |
 

@@ -52,6 +52,16 @@ class Settings:
 
     # Security
     require_password_on_unsafe_bind: bool = True
+    # If set, the UI requires a login. Either a plaintext password
+    # (hashed in-memory at startup) or a pre-computed argon2 hash.
+    ui_password: str = ""
+    ui_password_hash: str = ""
+    # Cookie session lifetime in seconds (default 8 hours).
+    session_max_age_s: int = 8 * 3600
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.ui_password or self.ui_password_hash)
 
     @property
     def ca_dir(self) -> Path:
@@ -76,4 +86,13 @@ def settings_from_env(base: Settings | None = None) -> Settings:
         s.proxy_host = v
     if v := os.environ.get("REQLORE_PROXY_PORT"):
         s.proxy_port = int(v)
+    if v := os.environ.get("REQLORE_PASSWORD"):
+        s.ui_password = v
+    if v := os.environ.get("REQLORE_PASSWORD_HASH"):
+        s.ui_password_hash = v
+    if v := os.environ.get("REQLORE_SESSION_MAX_AGE"):
+        try:
+            s.session_max_age_s = max(60, int(v))
+        except ValueError:
+            pass
     return s

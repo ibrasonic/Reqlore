@@ -57,6 +57,11 @@ def create_app(project_path: Path, settings: Settings, *,
                 from flask import abort
                 abort(400, description="CSRF token mismatch")
 
+    # Optional UI password gate. No-op unless REQLORE_PASSWORD or
+    # REQLORE_PASSWORD_HASH is set; loopback clients always bypass.
+    from .auth import init_auth
+    init_auth(app, settings)
+
     @app.after_request
     def _security_headers(resp):
         resp.headers["Content-Security-Policy"] = (
@@ -95,6 +100,7 @@ def create_app(project_path: Path, settings: Settings, *,
             "cues_on": project.get_state("cues", "0") == "1",
             "findings_count": project.findings_count(),
             "settings": settings,
+            "auth_enabled": app.config.get("REQLORE_AUTH_ENABLED", False),
         }
 
     @app.template_filter("url_unquote")
@@ -188,6 +194,12 @@ def create_app(project_path: Path, settings: Settings, *,
         from flask import render_template
         return render_template("error.html", code=400,
                                msg=getattr(e, "description", "Bad request.")), 400
+
+    @app.errorhandler(401)
+    def _401(e):
+        from flask import render_template
+        return render_template("error.html", code=401,
+                               msg="Authentication required. Sign in to continue."), 401
 
     return app
 

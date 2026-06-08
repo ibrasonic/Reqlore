@@ -1,0 +1,75 @@
+{# Standalone login page - does NOT extend base.html so the nav is not
+   reachable to unauthenticated callers. Keeps the same theme + a11y
+   primitives (skip-link, sr-live region, focus order) as the rest of
+   the UI. #}
+<!doctype html>
+<html lang="en" data-theme="{{ theme }}" data-verbosity="{{ verbosity }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in &mdash; Reqlore</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reqlore.css') }}">
+  <link rel="icon" href="data:,">
+</head>
+<body class="login-page">
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <main id="main" tabindex="-1" class="login-main">
+    <section class="login-card" aria-labelledby="login-heading">
+      <p class="brand">
+        <img class="brand-icon"
+             src="{{ url_for('static', filename='reqlore-icon.svg') }}"
+             alt="" width="28" height="28">
+        <span>Reqlore</span>
+      </p>
+      <h1 id="login-heading">Sign in</h1>
+      <p class="login-intro">
+        This Reqlore instance is exposed beyond loopback and requires a
+        password. The password was set by the operator who started the
+        server (environment variable <code>REQLORE_PASSWORD</code>).
+      </p>
+
+      {% if error %}
+        <div class="login-error" role="alert" id="login-error">{{ error }}</div>
+      {% endif %}
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <ul class="flashes" role="status">
+            {% for cat, m in messages %}
+              <li class="flash flash-{{ cat }}">{{ m }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" action="{{ url_for('auth.login') }}"
+            class="login-form" novalidate>
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        {% if next_url %}
+          <input type="hidden" name="next" value="{{ next_url }}">
+        {% endif %}
+
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password"
+                 autocomplete="current-password"
+                 required
+                 aria-required="true"
+                 {% if error %}aria-invalid="true" aria-describedby="login-error"{% endif %}>
+        </div>
+
+        <button type="submit" class="primary">Sign in</button>
+      </form>
+
+      <p class="login-help">
+        Lost the password? Restart the server without
+        <code>--unsafe-bind</code> (loopback access never requires a
+        password), or re-set <code>REQLORE_PASSWORD</code> and restart.
+      </p>
+    </section>
+  </main>
+
+  <div id="sr-live" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+</body>
+</html>

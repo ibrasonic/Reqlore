@@ -103,10 +103,10 @@ and click *Download CA*. Install the resulting `.crt` into the browser's
 
 ```text
 reqlore init <project_path>
-reqlore ui     --project <p> [--host H] [--port N] [--unsafe-bind]
+reqlore ui     --project <p> [--host H] [--port N] [--unsafe-bind] [--no-password]
 reqlore proxy  --project <p> [--port N]
-reqlore both   --project <p> [--host H] [--ui-port N] [--proxy-port N]
-reqlore scan   --project <p> [--limit N]            # passive scanner over history
+reqlore both   --project <p> [--host H] [--ui-port N] [--proxy-port N] [--unsafe-bind] [--no-password]
+reqlore scan   --project <p> [--limit N]            # passive scanner over history (default --limit 5000)
 reqlore report --project <p> --out FILE [--format md|html|docx]
 reqlore run    --project <p> JOB.{yaml|yml|json} [--strict]
 reqlore import-har --project <p> SESSION.har
@@ -119,6 +119,44 @@ reqlore prefetch-firefox [--firefox-version V] [--firefox-zip FILE] [--force]
 `--unsafe-bind` is the only way to bind a non-loopback address; it exists so
 you can deliberately put Reqlore on a lab-only interface. Never expose to the
 public internet.
+
+When `--unsafe-bind` is set, Reqlore refuses to start unless you also set
+`REQLORE_PASSWORD` (plaintext, argon2id-hashed in memory at startup) or
+`REQLORE_PASSWORD_HASH` (pre-computed argon2id hash). Loopback clients
+never need a password — if you're on the same machine you already have
+filesystem access to the project. Use `--no-password` only when you front
+Reqlore with your own authenticating reverse proxy (nginx with auth_basic,
+Caddy `basic_auth`, `oauth2-proxy`, Cloudflare Access, etc.). See
+[`docs/SECURITY.md`](SECURITY.md#ui-authentication) for the full model.
+
+## Environment variables
+
+All CLI flags can be overridden via environment variables. Resolution order:
+CLI flag > environment variable > project setting > user config > defaults.
+
+| Variable | Overrides | Notes |
+|---|---|---|
+| `REQLORE_UI_HOST` | `--host` | Default `127.0.0.1`. |
+| `REQLORE_UI_PORT` | `--port` / `--ui-port` | Default `8787`. |
+| `REQLORE_PROXY_HOST` | (proxy bind host) | Always `127.0.0.1`; setting otherwise is unsupported. |
+| `REQLORE_PROXY_PORT` | `--port` (proxy) / `--proxy-port` | Default `8080`. |
+| `REQLORE_PASSWORD` | (UI password, plaintext) | Hashed once at startup with argon2id. Required for `--unsafe-bind` unless you pass `--no-password`. |
+| `REQLORE_PASSWORD_HASH` | (UI password, pre-hashed) | Use this in systemd unit files / container secrets so the plaintext never lives in env. Must be a valid argon2id hash (`$argon2id$…`). |
+| `REQLORE_SESSION_MAX_AGE` | (login cookie lifetime, seconds) | Default `28800` (8 hours). Minimum 60. |
+| `REQLORE_VERBOSE` | `-v` / `--verbose` | Set to `1` to enable INFO logging globally. |
+| `REQLORE_NO_PIPX` | (installer) | Set to `1` to force the install script to use a venv instead of `pipx`. |
+| `REQLORE_VENV` | (installer) | Custom venv path used by the install script (default `.venv`). |
+| `REQLORE_NO_AUTODEPS` | (browser launcher) | Set to `1` to skip the auto-install of Linux runtime libraries Firefox depends on. |
+| `REQLORE_DATA` | (Docker only) | Project data directory inside the container; default `/data`. |
+
+**Pre-hashing a password** (recommended for shared deployments):
+
+```powershell
+py -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('your-passphrase-here'))"
+```
+
+Store the output as `REQLORE_PASSWORD_HASH` and you never have to put the
+plaintext in your shell history or process listing.
 
 ---
 
@@ -335,9 +373,41 @@ scanner.
 
 ### Match & replace — `/match-replace/`
 
-Persistent rewrite rules applied by the proxy as bytes flow. Match types:
-literal substring, regex, header-only, body-only, request-only, response-only.
-Toggle each rule on/off without deleting it.
+Persistent rewrite rules applied by the proxy as bytes flow. Each rule has
+four fields:
+
+- **Where** — `request` (only outbound) or `response` (only inbound).
+- **Part** — `headers`, `body`, or `both`.
+- **Match** — either a `literal` substring or a Python `regex`. Regex uses
+  the standard `re` module (no `regex` extension), and the rule body is
+  the *replacement* string (`\1`, `\2` for capture groups when match is
+  regex; literal text otherwise).
+- **Scope** — optional host filter (`example.com`, `*.target.test`) so a
+  rule only fires on the assets you actually want to rewrite.
+
+Each rule has an *enabled* toggle so you can keep half a dozen rules
+built-up over a long engagement and flip them on per task without losing
+them. Rules are evaluated in order, top-down; the first match wins per
+part (a `headers`-only rule never touches the body, and vice-versa).
+
+The rule set is persisted in the project file and is exported with the
+project — hand someone a `.rlr` and your match-replace rules travel with
+it. The CSV-shaped table on the page is also the import surface: paste a
+set of rules in and *Save* to install them in bulk.
+
+Examples that show up often:
+
+| Goal | Where | Part | Match | Replace |
+|---|---|---|---|---|
+| Force a user header on every outbound request | `request` | `headers` | `^User-Agent:.*$` (regex) | `User-Agent: Reqlore-test/1.0` |
+| Add a tracing header for the dev team | `request` | `headers` | `^Host:` (regex) | `X-Reqlore-Trace: 1\r\nHost:` |
+| Strip CSP so XSS PoCs render in-browser | `response` | `headers` | `^Content-Security-Policy:.*$\r\n` (regex) | `` (empty) |
+| Pin a feature flag the back-end echoes | `response` | `body` | `"experimental_search":\s*false` (regex) | `"experimental_search": true` |
+| Tag every API response with the test phase | `response` | `body` | `</body>` (literal) | `<!-- reqlore-phase-3 --></body>` |
+
+If you need request-or-response-shaped logic that does more than text
+rewriting (e.g. "only when the response is JSON and status is 401"), use
+a plugin instead — see [`docs/PLUGINS.md`](PLUGINS.md).
 
 ### Search — `/search/`
 
@@ -531,7 +601,7 @@ docker compose up --build
 | Browser refuses proxy CA                    | Install into the browser's *Authorities* store, not the OS store.                    |
 | Update check button is disabled             | Toggle *Update check* on in `/settings/` and *Save settings* first.                  |
 | Port already in use                         | Pass `--port` (UI), `--proxy-port` (proxy), or stop the other process.               |
-| Test suite                                  | `py -m pytest reqlore/tests/unit -q` — expect `333 passed` (Phase 8).                |
+| Test suite                                  | `py -m pytest reqlore/tests/unit -q` — expect `363 passed` (Phase 9, after UI password gate).                |
 | Smoke all routes                            | See `scripts/smoke-routes.ps1` (or follow the loop in `docs/ROADMAP.md` Phase 7).    |
 
 ---
