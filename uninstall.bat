@@ -31,6 +31,22 @@ if not errorlevel 1 (
     )
 )
 
+rem ---- 1b. user-site `pip install --user` reqlore (stale shim trap) -------
+rem A leftover `pip install --user reqlore` (often from before the rename)
+rem leaves %APPDATA%\Python\PythonNN\Scripts\reqlore.exe on PATH and shadows
+rem the pipx install. Detect and remove it so `reqlore` resolves cleanly.
+set "PY="
+where py >nul 2>&1 && set "PY=py"
+if not defined PY where python >nul 2>&1 && set "PY=python"
+if defined PY (
+    %PY% -m pip show reqlore >nul 2>&1
+    if not errorlevel 1 (
+        echo ==^> removing stale user-site reqlore ^(pip --user shim^)
+        %PY% -m pip uninstall -y reqlore >nul 2>&1
+        if not errorlevel 1 set "REMOVED=1"
+    )
+)
+
 rem ---- 2. local venv ------------------------------------------------------
 set "VENV=.venv"
 

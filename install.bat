@@ -77,6 +77,11 @@ rem ----------------------------------------------------------------------
         )
     )
 
+    rem A previous `pip install --user` could have left a reqlore.exe shim
+    rem in %APPDATA%\Python\PythonNN\Scripts that's earlier on PATH than
+    rem ~\.local\bin and shadows the pipx install. Wipe it before we move on.
+    %PY% -m pip uninstall -y reqlore >nul 2>&1
+
     echo ==^> registering pipx scripts directory on PATH ^(persistent^)
     %PY% -m pipx ensurepath >nul 2>&1
 
