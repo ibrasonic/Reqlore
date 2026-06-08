@@ -1,12 +1,12 @@
-# Weblore — Security of the tool itself
+# Reqlore — Security of the tool itself
 
-Weblore is itself a high-privilege tool: it sees plaintext of all proxied traffic, it can issue any HTTP request, and it stores secrets (CA private key, session tokens, JWT keys). The threat model below describes how we keep that contained.
+Reqlore is itself a high-privilege tool: it sees plaintext of all proxied traffic, it can issue any HTTP request, and it stores secrets (CA private key, session tokens, JWT keys). The threat model below describes how we keep that contained.
 
 ## Threat model
 
 | Actor | Capability | Mitigation |
 |---|---|---|
-| Local unprivileged process | Can read `~/.weblore/*` if perms wrong | CA key written with 0600 (Unix) / DACL owner-only (Windows). All sensitive files under user profile, not world-readable. |
+| Local unprivileged process | Can read `~/.reqlore/*` if perms wrong | CA key written with 0600 (Unix) / DACL owner-only (Windows). All sensitive files under user profile, not world-readable. |
 | Local browser tab on the same machine | Can hit `127.0.0.1:8787` and try CSRF | UI CSRF tokens on every form (itsdangerous). Strict `Content-Type` checks on JSON endpoints. Origin/Referer enforcement. |
 | Pentest target server | Returns crafted HTML/JS that lands in our UI | All rendered target HTML is shown in a sandboxed `<iframe sandbox>`. Response bodies are escaped before insertion into UI templates. No raw `\| safe` on user-influenced data. |
 | Pentest target server (XSS in proxy) | Tries to break out of "rendered for preview" | Same iframe sandbox. CSP `default-src 'self'` on the UI itself. |
@@ -15,11 +15,11 @@ Weblore is itself a high-privilege tool: it sees plaintext of all proxied traffi
 
 ## Hard rules
 
-1. **No bind to 0.0.0.0 by default.** `--unsafe-bind 0.0.0.0` requires also setting `WEBLORE_PASSWORD` (argon2-cffi).
+1. **No bind to 0.0.0.0 by default.** `--unsafe-bind 0.0.0.0` requires also setting `REQLORE_PASSWORD` (argon2-cffi).
 2. **CA key is never logged.** Logger redacts paths matching CA key location.
 3. **Project files** never contain secrets in cleartext beyond what the user explicitly stored — but they ARE sensitive (full history, CA cert chain). Encryption at rest (optional, argon2 → AES-256-GCM via cryptography) is on by default for new projects.
 4. **CSP on UI:** `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'`.
-5. **CSRF tokens** on every state-changing form (`X-Weblore-CSRF` header on fetch, hidden field on form POSTs).
+5. **CSRF tokens** on every state-changing form (`X-Reqlore-CSRF` header on fetch, hidden field on form POSTs).
 6. **Strict same-origin** for the UI; no CORS allowances.
 7. **HttpOnly + SameSite=Strict + Secure** session cookie (Secure only when behind TLS).
 8. **No outbound calls without consent.** Update check, interactsh, telemetry — all opt-in toggles, off by default.

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — WS transcript #{{ tid }}{% endblock %}
+{% block main %}
+<h1>WebSocket transcript #{{ tid }}</h1>
+<p>URL: <code>{{ t.url }}</code> · {{ t.messages|length }} message(s) ·
+   {{ 'closed' if t.closed else 'open (read-only snapshot)' }}</p>
+
+<table>
+  <caption>Messages</caption>
+  <thead><tr><th scope="col">Dir</th><th scope="col">Kind</th><th scope="col">Size</th><th scope="col">Content</th></tr></thead>
+  <tbody>
+    {% for m in t.messages %}
+      <tr>
+        <th scope="row">{{ m.direction }}</th>
+        <td>{{ m.kind }}</td>
+        <td>{{ m.size }}</td>
+        <td><pre style="margin:0; white-space:pre-wrap;">{{ m.data }}</pre></td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Send another message</h2>
+<form method="post" action="{{ url_for('.send_more', tid=tid) }}" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="hdr">Headers (one per line, "Name: value")</label><br>
+    <textarea id="hdr" name="headers" rows="2" cols="80"></textarea>
+  </p>
+  <p>
+    <input type="radio" id="k-text" name="kind" value="text" checked>
+    <label for="k-text">Text</label>
+    <input type="radio" id="k-bin" name="kind" value="binary">
+    <label for="k-bin">Binary (hex)</label>
+  </p>
+  <p>
+    <label for="d">Data</label><br>
+    <textarea id="d" name="data" rows="3" cols="80"></textarea>
+  </p>
+  <p>
+    <label for="rs">Read for (seconds)</label>
+    <input id="rs" name="recv_seconds" type="number" value="2" step="0.5" min="0" max="60">
+  </p>
+  <p><button type="submit">Send</button></p>
+</form>
+
+<form method="post" action="{{ url_for('.delete', tid=tid) }}" class="inline">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <button type="submit">Delete transcript</button>
+</form>
+{% endblock %}

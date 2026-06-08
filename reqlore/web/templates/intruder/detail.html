@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Attack #{{ attack.id }}{% endblock %}
+{% block main %}
+<h1>Attack #{{ attack.id }} — {{ attack.name }}</h1>
+
+<dl>
+  <dt>Type</dt><dd>{{ attack.attack_type }}</dd>
+  <dt>URL</dt><dd class="url">{{ attack.url }}</dd>
+  <dt>Engine</dt><dd>{{ attack.engine }}</dd>
+  <dt>Status</dt><dd>{{ attack.status }}</dd>
+  <dt>Positions</dt><dd>{{ attack.positions|length }}</dd>
+  <dt>Payload sets</dt><dd>{{ attack.payloads|length }}</dd>
+</dl>
+
+<div class="row">
+  <form method="post" action="{{ url_for('intruder.start', aid=attack.id) }}" class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Start / Restart</button>
+  </form>
+  <form method="post" action="{{ url_for('intruder.cancel', aid=attack.id) }}" class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Cancel</button>
+  </form>
+  <form method="post" action="{{ url_for('intruder.delete', aid=attack.id) }}" class="inline-form"
+        onsubmit="return confirm('Delete this attack and its results?');">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Delete</button>
+  </form>
+</div>
+
+<h2>Results ({{ results|length }})</h2>
+
+<p>Sort:
+  <a href="?sort=seq">#</a> ·
+  <a href="?sort=status">Status</a> ·
+  <a href="?sort=len">Length</a> ·
+  <a href="?sort=time">Time</a> ·
+  <a href="?sort=grep">Grep</a>
+  | <a href="?sort={{ sort }}&desc={% if desc %}0{% else %}1{% endif %}">{{ 'descending' if not desc else 'ascending' }}</a>
+</p>
+
+<table>
+  <caption>Attack results</caption>
+  <thead>
+    <tr><th scope="col">#</th><th scope="col">Payloads</th><th scope="col">Status</th>
+        <th scope="col">Length</th><th scope="col">Time (ms)</th><th scope="col">Grep</th>
+        <th scope="col">History</th></tr>
+  </thead>
+  <tbody>
+    {% for r in results %}
+    <tr>
+      <td>{{ r.seq }}</td>
+      <td>{% for p in r.payloads %}<code>{{ p }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td>{{ r.status }}</td>
+      <td>{{ r.len_resp }}</td>
+      <td>{{ r.duration_ms }}</td>
+      <td>{{ r.grep_hits }}</td>
+      <td>{% if r.history_id %}<a href="{{ url_for('history.detail', hid=r.history_id) }}">view</a>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7">No results yet. Click <em>Start</em>.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

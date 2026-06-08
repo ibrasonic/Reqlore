@@ -1,4 +1,4 @@
-# Weblore — Feature Matrix
+# Reqlore — Feature Matrix
 
 Legend: ✅ shipped · 🚧 in progress · 📋 planned · — out of scope
 
@@ -7,7 +7,7 @@ Legend: ✅ shipped · 🚧 in progress · 📋 planned · — out of scope
 | Feature | Status | Phase | Notes |
 |---|---|---|---|
 | Local web UI (Flask, 127.0.0.1) | ✅ | 1 | Themes light/dark/high-contrast/system |
-| Project files (.weblore SQLite) | ✅ | 1 | Thread-safe; WAL; zlib blob compression |
+| Project files (.rlr SQLite) | ✅ | 1 | Thread-safe; WAL; zlib blob compression |
 | HTTP engine: httpx (H1/H2, mTLS, proxies) | ✅ | 1 | Default engine |
 | HTTP engine: raw socket+ssl | ✅ | 1 | Byte-exact, no normalisation |
 | HTTP engine: h2 frame-level | 📋 | 5 | For smuggling/priority |

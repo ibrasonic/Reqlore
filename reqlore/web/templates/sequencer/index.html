@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Sequencer{% endblock %}
+{% block main %}
+<h1>Sequencer — token quality analyser</h1>
+<p>Paste one token per line (session IDs, CSRF tokens, password-reset codes...).
+   Reqlore computes Shannon entropy per character, per-position character
+   distribution, Hamming distance between consecutive tokens, and longest
+   repeated run.</p>
+
+<form method="post" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="tokens">Tokens (one per line)</label><br>
+    <textarea id="tokens" name="tokens" rows="14" cols="80" required>{{ tokens_text }}</textarea>
+  </p>
+  <p>
+    <button type="submit">Analyse</button>
+  </p>
+</form>
+
+{% if result %}
+  <h2 id="result">Result — {{ result.sample_count }} sample(s)</h2>
+  <dl>
+    <dt>Overall rating</dt>
+    <dd><strong>{{ result.rating | upper }}</strong></dd>
+    <dt>Common token length</dt>
+    <dd>{{ result.common_length }} characters
+        {% if result.length_variance %} (varies by {{ result.length_variance }}){% endif %}</dd>
+    <dt>Entropy</dt>
+    <dd>{{ "%.2f" | format(result.overall_entropy_bits_per_char) }} bits/char
+        — {{ "%.2f" | format(result.overall_entropy_bits_per_token) }} bits/token</dd>
+    <dt>Longest run of identical chars</dt>
+    <dd>{{ result.longest_run }}</dd>
+    <dt>Hamming distance (consecutive)</dt>
+    <dd>min {{ result.min_hamming }} · mean {{ "%.2f" | format(result.mean_hamming) }} · max {{ result.max_hamming }}</dd>
+    <dt>Character classes</dt>
+    <dd>
+      {% for cls, n in result.char_classes.items() %}
+        <code>{{ cls }}={{ n }}</code>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </dd>
+  </dl>
+
+  {% if result.notes %}
+    <h3>Notes</h3>
+    <ul>
+      {% for n in result.notes %}<li>{{ n }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+
+  <h3>Per-position breakdown</h3>
+  <table>
+    <caption>Entropy and most-common characters at each position</caption>
+    <thead>
+      <tr><th scope="col">Pos</th><th scope="col">Distinct</th>
+          <th scope="col">Bits</th><th scope="col">Most common</th></tr>
+    </thead>
+    <tbody>
+      {% for p in result.positions %}
+        <tr{% if p.index in result.weak_positions %} class="row-warn"{% endif %}>
+          <td>{{ p.index }}</td>
+          <td>{{ p.distinct }}</td>
+          <td>{{ "%.2f" | format(p.entropy_bits) }}</td>
+          <td>{% for ch, n in p.most_common %}<code>{{ ch }}</code>×{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+{% endblock %}

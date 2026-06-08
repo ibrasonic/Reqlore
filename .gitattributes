@@ -19,7 +19,7 @@
 *.gif   binary
 *.ico   binary
 *.pdf   binary
-*.weblore binary
+*.rlr binary
 *.whl   binary
 *.gz    binary
 *.zip   binary

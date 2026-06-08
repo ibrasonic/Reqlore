@@ -1,9 +1,9 @@
-# Weblore — User Guide
+# Reqlore — User Guide
 
-A complete, end-to-end walkthrough of every Weblore module: what it does, how
+A complete, end-to-end walkthrough of every Reqlore module: what it does, how
 to drive it from the keyboard, and how to use it against a live target.
 
-This guide assumes Weblore is already installed. If not, jump to
+This guide assumes Reqlore is already installed. If not, jump to
 [Install](#install) first.
 
 ---
@@ -54,8 +54,8 @@ This guide assumes Weblore is already installed. If not, jump to
 Requires Python 3.12 or newer (3.14 tested).
 
 ```powershell
-git clone https://github.com/ibrasonic/Weblore.git
-cd Weblore
+git clone https://github.com/ibrasonic/Reqlore.git
+cd Reqlore
 py -m pip install -e .[dev]
 ```
 
@@ -83,13 +83,13 @@ py -m pip install -e .[dev,h3,impersonate,report,yaml,schedule]
 ## First run
 
 ```powershell
-weblore init my.weblore
-weblore ui    --project my.weblore        # http://127.0.0.1:8787
-weblore proxy --project my.weblore        # MITM on 127.0.0.1:8080
-weblore both  --project my.weblore        # both in one process
+reqlore init my.rlr
+reqlore ui    --project my.rlr        # http://127.0.0.1:8787
+reqlore proxy --project my.rlr        # MITM on 127.0.0.1:8080
+reqlore both  --project my.rlr        # both in one process
 ```
 
-A **project** is a single SQLite file (`*.weblore`). It holds the proxy history,
+A **project** is a single SQLite file (`*.rlr`). It holds the proxy history,
 findings, plugins state, match-replace rules, scheduler jobs, and settings.
 Move it like any file.
 
@@ -102,40 +102,40 @@ and click *Download CA*. Install the resulting `.crt` into the browser's
 ## CLI reference
 
 ```text
-weblore init <project_path>
-weblore ui     --project <p> [--host H] [--port N] [--unsafe-bind]
-weblore proxy  --project <p> [--port N]
-weblore both   --project <p> [--host H] [--ui-port N] [--proxy-port N]
-weblore scan   --project <p> [--limit N]            # passive scanner over history
-weblore report --project <p> --out FILE [--format md|html|docx]
-weblore run    --project <p> JOB.{yaml|yml|json} [--strict]
-weblore import-har --project <p> SESSION.har
-weblore browser  [--proxy-port N] [--url URL]
+reqlore init <project_path>
+reqlore ui     --project <p> [--host H] [--port N] [--unsafe-bind]
+reqlore proxy  --project <p> [--port N]
+reqlore both   --project <p> [--host H] [--ui-port N] [--proxy-port N]
+reqlore scan   --project <p> [--limit N]            # passive scanner over history
+reqlore report --project <p> --out FILE [--format md|html|docx]
+reqlore run    --project <p> JOB.{yaml|yml|json} [--strict]
+reqlore import-har --project <p> SESSION.har
+reqlore browser  [--proxy-port N] [--url URL]
                  [--firefox-version V] [--firefox-zip FILE]
                  [--use-system] [--wait]
-weblore prefetch-firefox [--firefox-version V] [--firefox-zip FILE] [--force]
+reqlore prefetch-firefox [--firefox-version V] [--firefox-zip FILE] [--force]
 ```
 
 `--unsafe-bind` is the only way to bind a non-loopback address; it exists so
-you can deliberately put Weblore on a lab-only interface. Never expose to the
+you can deliberately put Reqlore on a lab-only interface. Never expose to the
 public internet.
 
 ---
 
-## Pre-configured Firefox (`weblore browser`)
+## Pre-configured Firefox (`reqlore browser`)
 
-`weblore browser` launches a **dedicated Firefox profile** that is already:
+`reqlore browser` launches a **dedicated Firefox profile** that is already:
 
-- Pointed at the Weblore MITM proxy (`127.0.0.1:8080`)
-- Trusting the Weblore CA (so HTTPS interception just works, no manual cert
+- Pointed at the Reqlore MITM proxy (`127.0.0.1:8080`)
+- Trusting the Reqlore CA (so HTTPS interception just works, no manual cert
   import)
 - Locked down: no telemetry, no auto-update, no Firefox accounts, no Pocket,
   no password manager, no "default browser" nag
-- Opened on the Weblore UI
+- Opened on the Reqlore UI
 
 Your existing host Firefox install is **never touched**. The dedicated profile
-lives under your user data folder (`~/.weblore/firefox-profile/` on Linux,
-`%APPDATA%\weblore\firefox-profile\` on Windows).
+lives under your user data folder (`~/.reqlore/firefox-profile/` on Linux,
+`%APPDATA%\reqlore\firefox-profile\` on Windows).
 
 ### How Firefox is obtained
 
@@ -144,29 +144,29 @@ lives under your user data folder (`~/.weblore/firefox-profile/` on Linux,
 2. **First-run download** — otherwise the official portable build from
    `archive.mozilla.org` is downloaded once (~80 MiB), SHA-256 verified
    against Mozilla's published `SHA256SUMS`, and extracted into
-   `~/.weblore/firefox/<version>/`. Subsequent launches use the cache.
+   `~/.reqlore/firefox/<version>/`. Subsequent launches use the cache.
 3. **Air-gapped / pre-staged** — pass `--firefox-zip <path>` pointing at a
    Mozilla zip/tar.xz you downloaded ahead of time, or run
-   `weblore prefetch-firefox` once on an online box and copy the cache.
+   `reqlore prefetch-firefox` once on an online box and copy the cache.
 
 ### Examples
 
 ```powershell
 # Most common — just launch.
-weblore browser
+reqlore browser
 
 # Pin a specific Firefox version.
-weblore browser --firefox-version 127.0
+reqlore browser --firefox-version 127.0
 
 # Offline: use a pre-staged archive.
-weblore browser --firefox-zip C:\offline\firefox-127.0.zip
+reqlore browser --firefox-zip C:\offline\firefox-127.0.zip
 
 # Use the host's own Firefox (skip the managed cache).
-weblore browser --use-system
+reqlore browser --use-system
 
 # Pre-download for offline use later (no launch).
-weblore prefetch-firefox
-weblore prefetch-firefox --firefox-version 127.0
+reqlore prefetch-firefox
+reqlore prefetch-firefox --firefox-version 127.0
 ```
 
 ### Platform support
@@ -184,7 +184,7 @@ weblore prefetch-firefox --firefox-version 127.0
 
 Every page is reachable from the top nav. Every interactive control has a
 visible label and a keyboard shortcut listed on `/help/`. Page titles follow
-the pattern `Weblore — <module>` so a screen reader's title-read command names
+the pattern `Reqlore — <module>` so a screen reader's title-read command names
 the current page immediately.
 
 ### Dashboard — `/`
@@ -349,13 +349,13 @@ response bodies, and findings. FTS5-backed.
 Export a project's findings. Formats: Markdown, HTML, DOCX. Pick severities
 to include, choose an export path, *Build report*.
 
-Equivalent CLI: `weblore report --project p.weblore --out report.docx`.
+Equivalent CLI: `reqlore report --project p.rlr --out report.docx`.
 
 ### Plugins — `/plugins/`
 
 Lists installed plugins, their loaded state, and the routes / panels / handlers
-they register. Plugins live in `~/.weblore/plugins/` (or
-`%USERPROFILE%\.weblore\plugins\` on Windows) and follow the API in
+they register. Plugins live in `~/.reqlore/plugins/` (or
+`%USERPROFILE%\.reqlore\plugins\` on Windows) and follow the API in
 [`PLUGINS.md`](PLUGINS.md).
 
 ### Audio cues — `/cues/`
@@ -463,11 +463,11 @@ All six show up in Repeater, Intruder, and (for forwarding) the proxy chain.
 
 ## Accessibility
 
-Weblore is built specifically for screen-reader users (NVDA, JAWS, Orca,
+Reqlore is built specifically for screen-reader users (NVDA, JAWS, Orca,
 VoiceOver). Highlights:
 
 - 100 % semantic HTML5. Every page validates against axe-core (run
-  `pytest weblore/tests/a11y -q` after installing the `[a11y]` extra).
+  `pytest reqlore/tests/a11y -q` after installing the `[a11y]` extra).
 - Every form control has an explicit `<label for=>`.
 - Every table has captions, scoped headers, and a "Read as list" alternate
   view (per the cues on `/cues/`).
@@ -484,29 +484,29 @@ VoiceOver). Highlights:
 A multi-stage `Dockerfile` ships at the project root. Build & run:
 
 ```powershell
-docker build -t weblore:latest .
+docker build -t reqlore:latest .
 
 # Initialize a project file on the host (one-time)
-docker run --rm -v ${PWD}:/data weblore:latest init /data/my.weblore
+docker run --rm -v ${PWD}:/data reqlore:latest init /data/my.rlr
 
 # Run the UI (always on loopback inside the container)
 docker run --rm -it `
   -v ${PWD}:/data `
   -p 127.0.0.1:8787:8787 `
-  weblore:latest ui --project /data/my.weblore --host 0.0.0.0 --port 8787 --unsafe-bind
+  reqlore:latest ui --project /data/my.rlr --host 0.0.0.0 --port 8787 --unsafe-bind
 
 # Run the proxy
 docker run --rm -it `
   -v ${PWD}:/data `
   -p 127.0.0.1:8080:8080 `
-  weblore:latest proxy --project /data/my.weblore
+  reqlore:latest proxy --project /data/my.rlr
 
 # Run both in one container
 docker run --rm -it `
   -v ${PWD}:/data `
   -p 127.0.0.1:8787:8787 `
   -p 127.0.0.1:8080:8080 `
-  weblore:latest both --project /data/my.weblore --host 0.0.0.0 --unsafe-bind
+  reqlore:latest both --project /data/my.rlr --host 0.0.0.0 --unsafe-bind
 ```
 
 `--unsafe-bind` is required inside the container because the entrypoint binds
@@ -531,7 +531,7 @@ docker compose up --build
 | Browser refuses proxy CA                    | Install into the browser's *Authorities* store, not the OS store.                    |
 | Update check button is disabled             | Toggle *Update check* on in `/settings/` and *Save settings* first.                  |
 | Port already in use                         | Pass `--port` (UI), `--proxy-port` (proxy), or stop the other process.               |
-| Test suite                                  | `py -m pytest weblore/tests/unit -q` — expect `333 passed` (Phase 8).                |
+| Test suite                                  | `py -m pytest reqlore/tests/unit -q` — expect `333 passed` (Phase 8).                |
 | Smoke all routes                            | See `scripts/smoke-routes.ps1` (or follow the loop in `docs/ROADMAP.md` Phase 7).    |
 
 ---

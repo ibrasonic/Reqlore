@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — HTTP/2 frame tool{% endblock %}
+{% block main %}
+<h1>HTTP/2 frame tool</h1>
+<p>Parse a hex dump of one or more HTTP/2 frames, or build common frames
+   (SETTINGS, PING, GOAWAY, RST_STREAM, WINDOW_UPDATE) from a form.</p>
+
+<section>
+  <h2>Parse</h2>
+  <form method="post" class="stack">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <p>
+      <label for="hex">Frame hex (whitespace + 0x are stripped)</label><br>
+      <textarea id="hex" name="hex" rows="8" cols="80">{{ hex_text }}</textarea>
+    </p>
+    <p><button type="submit" name="action" value="parse">Parse frames</button></p>
+  </form>
+</section>
+
+{% if builder_err %}<p class="flash flash-err">{{ builder_err }}</p>{% endif %}
+
+{% if stream %}
+  <h3>Parsed {{ stream.frames | length }} frame(s){% if stream.preface_seen %} (preface present){% endif %}</h3>
+  {% if stream.trailing_bytes %}<p>Trailing bytes: {{ stream.trailing_bytes }}.</p>{% endif %}
+  <table>
+    <caption>One row per H/2 frame</caption>
+    <thead>
+      <tr><th scope="col">#</th><th scope="col">offset</th>
+          <th scope="col">type</th><th scope="col">len</th>
+          <th scope="col">flags</th><th scope="col">stream</th>
+          <th scope="col">detail</th></tr>
+    </thead>
+    <tbody>
+      {% for f in stream.frames %}
+        <tr{% if f.error %} class="row-warn"{% endif %}>
+          <td>{{ f.index }}</td>
+          <td>{{ f.offset }}</td>
+          <td><code>{{ f.type }}</code></td>
+          <td>{{ f.length }}</td>
+          <td>{{ f.flags | join(", ") }}</td>
+          <td>{{ f.stream_id }}</td>
+          <td>{% if f.error %}<strong>{{ f.error }}</strong>{% else %}<code>{{ f.detail }}</code>{% endif %}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+
+<section>
+  <h2>Build</h2>
+  <form method="post" class="stack">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <p>
+      <label for="frame">Frame type</label>
+      <select id="frame" name="frame">
+        <option value="settings">SETTINGS</option>
+        <option value="ping">PING</option>
+        <option value="goaway">GOAWAY</option>
+        <option value="rst">RST_STREAM</option>
+        <option value="winupdate">WINDOW_UPDATE</option>
+      </select>
+    </p>
+    <fieldset>
+      <legend>SETTINGS parameters (id, value)</legend>
+      {% for n in range(1, 7) %}
+        <p>
+          <label for="sid{{ n }}">id #{{ n }}</label>
+          <input id="sid{{ n }}" name="sid{{ n }}" size="6">
+          <label for="sval{{ n }}">value</label>
+          <input id="sval{{ n }}" name="sval{{ n }}" size="12">
+        </p>
+      {% endfor %}
+      <p><label><input type="checkbox" name="ack"> ACK</label></p>
+    </fieldset>
+    <fieldset>
+      <legend>PING / GOAWAY / RST_STREAM / WINDOW_UPDATE</legend>
+      <p><label for="opaque">PING opaque (8 bytes)</label>
+         <input id="opaque" name="opaque" value="reqlore!"></p>
+      <p><label for="last_stream_id">GOAWAY last_stream_id</label>
+         <input id="last_stream_id" name="last_stream_id" type="number" value="0"></p>
+      <p><label for="error_code">error_code (GOAWAY / RST)</label>
+         <input id="error_code" name="error_code" type="number" value="0"></p>
+      <p><label for="debug">GOAWAY debug data</label>
+         <input id="debug" name="debug"></p>
+      <p><label for="stream_id">RST/WINDOW stream_id</label>
+         <input id="stream_id" name="stream_id" type="number" value="0"></p>
+      <p><label for="increment">WINDOW_UPDATE increment</label>
+         <input id="increment" name="increment" type="number" value="65535"></p>
+    </fieldset>
+    <p><button type="submit" name="action" value="build">Build frame</button></p>
+  </form>
+</section>
+
+{% if built_hex %}
+  <h3>Built frame (hex)</h3>
+  <pre>{{ built_hex }}</pre>
+{% endif %}
+{% endblock %}

@@ -1,5 +1,5 @@
 @echo off
-rem Weblore installer for Windows.
+rem Reqlore installer for Windows.
 rem
 rem Usage (from inside the cloned repo, in cmd or PowerShell):
 rem   install.bat
@@ -7,13 +7,13 @@ rem
 rem What it does:
 rem   1. Finds Python 3.12+ (prefers the `py` launcher, falls back to `python`).
 rem   2. Creates a virtual environment in .venv\.
-rem   3. Installs Weblore into the venv.
+rem   3. Installs Reqlore into the venv.
 rem   4. Prints instructions to run it.
 
 setlocal enableextensions
 
 if not exist "pyproject.toml" (
-    echo error: run this from the Weblore repository root ^(pyproject.toml not found^).
+    echo error: run this from the Reqlore repository root ^(pyproject.toml not found^).
     exit /b 1
 )
 
@@ -53,7 +53,7 @@ rem ---- 4. install ----------------------------------------------------------
 echo ==^> upgrading pip
 "%VENV%\Scripts\python.exe" -m pip install --upgrade pip >nul
 
-echo ==^> installing Weblore ^(pulls mitmproxy, ~150 MB; first run can take a few minutes^)
+echo ==^> installing Reqlore ^(pulls mitmproxy, ~150 MB; first run can take a few minutes^)
 "%VENV%\Scripts\pip.exe" install .
 if errorlevel 1 (
     echo error: pip install failed. See messages above.
@@ -64,17 +64,17 @@ rem ---- 5. done -------------------------------------------------------------
 echo.
 echo ==^> done.
 echo.
-echo Weblore is installed into the venv at: %VENV%
+echo Reqlore is installed into the venv at: %VENV%
 echo.
 echo Run it without activating ^(simplest^):
-echo   %VENV%\Scripts\weblore.exe init demo.weblore
-echo   %VENV%\Scripts\weblore.exe both --project demo.weblore
+echo   %VENV%\Scripts\reqlore.exe init demo.rlr
+echo   %VENV%\Scripts\reqlore.exe both --project demo.rlr
 echo.
 echo Or activate the venv first and use the bare command:
 echo   in cmd:        %VENV%\Scripts\activate.bat
 echo   in PowerShell: %VENV%\Scripts\Activate.ps1
-echo   then:          weblore init demo.weblore
-echo                  weblore both --project demo.weblore
+echo   then:          reqlore init demo.rlr
+echo                  reqlore both --project demo.rlr
 echo.
 echo UI:    http://127.0.0.1:8787
 echo Proxy: 127.0.0.1:8080

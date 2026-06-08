@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — History{% endblock %}
+{% block main %}
+<h1>HTTP history</h1>
+
+<form method="get" class="filter-form" role="search" aria-label="Filter history">
+  <div>
+    <label for="f-q">Search URL</label>
+    <input id="f-q" name="q" value="{{ q }}" type="search" autocomplete="off">
+  </div>
+  <div>
+    <label for="f-host">Host</label>
+    <input id="f-host" name="host" value="{{ host }}" type="search" autocomplete="off">
+  </div>
+  <div>
+    <label for="f-method">Method</label>
+    <select id="f-method" name="method">
+      <option value="">(any)</option>
+      {% for m in methods %}
+        <option value="{{ m }}"{% if method == m %} selected{% endif %}>{{ m }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <button type="submit">Apply</button>
+    <a href="{{ url_for('history.index') }}">Reset</a>
+    <a href="{{ url_for('history.export_jsonl') }}">Export JSONL</a>
+  </div>
+</form>
+
+<form method="post" action="{{ url_for('history.clear') }}" class="inline-form"
+      onsubmit="return confirm('Delete ALL {{ total }} history record(s)? This cannot be undone.');">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <button type="submit"{% if total == 0 %} disabled{% endif %}>Clear all history</button>
+</form>
+
+<p>{{ total }} total records. Showing page {{ page }} ({{ rows|length }} item{{ '' if rows|length == 1 else 's' }}).</p>
+
+{% if rows %}
+<table id="hist-table">
+  <caption class="visually-hidden">HTTP history, newest first.</caption>
+  <thead>
+    <tr>
+      <th scope="col">#</th>
+      <th scope="col">Method</th>
+      <th scope="col">Status</th>
+      <th scope="col">Host</th>
+      <th scope="col">URL</th>
+      <th scope="col">Bytes</th>
+      <th scope="col">ms</th>
+      <th scope="col">Engine</th>
+      <th scope="col">Flags</th>
+      <th scope="col">Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r, flags in rows %}
+    <tr>
+      <th scope="row"><a href="{{ url_for('history.show', hid=r.id) }}">{{ r.id }}</a></th>
+      <td>{{ r.method }}</td>
+      <td>{{ r.status }}</td>
+      <td>{{ r.host }}</td>
+      <td><span class="url">{{ r.url }}</span></td>
+      <td>{{ r.len_resp }}</td>
+      <td>{{ r.duration_ms }}</td>
+      <td>{{ r.engine }}</td>
+      <td>{{ flags|join(', ') }}</td>
+      <td>
+        <a href="{{ url_for('history.show', hid=r.id) }}">View</a>
+        <a href="{{ url_for('repeater.index', from_history=r.id) }}">Send to Repeater</a>
+        <a href="{{ url_for('comparer.index', from_a=r.id) }}">Compare A</a>
+        <a href="{{ url_for('comparer.index', from_b=r.id) }}">Compare B</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No history yet. Start the proxy, route a browser through it, or use the Repeater.</p>
+{% endif %}
+
+<nav aria-label="Pagination">
+  {% if page > 1 %}
+    <a href="?q={{ q }}&host={{ host }}&method={{ method }}&page={{ page - 1 }}">Previous</a>
+  {% endif %}
+  {% if rows|length == per_page %}
+    <a href="?q={{ q }}&host={{ host }}&method={{ method }}&page={{ page + 1 }}">Next</a>
+  {% endif %}
+</nav>
+{% endblock %}

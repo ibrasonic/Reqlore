@@ -57,13 +57,13 @@ coverage.xml
 Thumbs.db
 desktop.ini
 
-# ---------- Weblore project data ----------
+# ---------- Reqlore project data ----------
 # Local project DBs and SQLite WAL/SHM sidecars never belong in git.
-*.weblore
-*.weblore-shm
-*.weblore-wal
+*.rlr
+*.rlr-shm
+*.rlr-wal
 data/
-demo.weblore*
+demo.rlr*
 
 # ---------- Logs / scratch ----------
 *.log

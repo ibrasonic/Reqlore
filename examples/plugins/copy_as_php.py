@@ -3,7 +3,7 @@
 Only consumed by hosts that look up ``copy_as()`` (UI in Phase 6+) — the
 plugin loader will not crash if the host doesn't yet wire this up.
 """
-from weblore.plugins_sdk import CopyAsHandler, make_info
+from reqlore.plugins_sdk import CopyAsHandler, make_info
 
 PLUGIN_INFO = make_info(
     name="copy-as-php",

@@ -1,4 +1,4 @@
-# Weblore — Master Plan
+# Reqlore — Master Plan
 
 **One-line:** Burp-grade web application pentesting suite, Python-native, accessible-first, local web UI.
 
@@ -10,7 +10,7 @@
 
 Burp Suite is the industry standard but is a Java Swing desktop application. Screen readers cope with it badly: focus traps in custom-painted tables, inaccessible tabs, no semantic structure, no keyboard-discoverable bindings. ZAP is more accessible but still a JavaFX desktop UI with the same class of issues.
 
-Weblore is built ground-up as a **server-rendered local web app**, where every screen is plain semantic HTML5 + Jinja2. That surface is the most reliable substrate for NVDA, JAWS, Orca, and VoiceOver. Burp-equivalent functionality lives behind it, implemented in pure Python.
+Reqlore is built ground-up as a **server-rendered local web app**, where every screen is plain semantic HTML5 + Jinja2. That surface is the most reliable substrate for NVDA, JAWS, Orca, and VoiceOver. Burp-equivalent functionality lives behind it, implemented in pure Python.
 
 ## Goals
 
@@ -23,7 +23,7 @@ Weblore is built ground-up as a **server-rendered local web app**, where every s
 
 ## Non-goals
 
-- Cloud / SaaS deployment. Weblore is a local tool.
+- Cloud / SaaS deployment. Reqlore is a local tool.
 - A native desktop GUI (Qt, GTK, etc.). The web UI is the GUI, in your default browser, where the OS accessibility stack already works.
 - Replacing every Burp BApp / Pro feature in v1. Plugin API ships in Phase 3 so the community can extend.
 

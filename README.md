@@ -1,8 +1,8 @@
-# Weblore
+# Reqlore
 
 Burp-grade web application pentesting suite. Python-native. Accessible-first. Local web UI.
 
-> **Status:** Phase 8 complete — 333/333 unit tests pass. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status:** Phase 8 complete — 346/346 unit tests pass. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## What it is
 
@@ -16,14 +16,14 @@ A local web app on `http://127.0.0.1:8787` that gives you:
 - A passive + active scanner (with built-in OAST-SSRF check), a Sequencer, a Macro engine.
 - A Decoder/Encoder, JWT workbench, Comparer, Sitemap, Match-and-replace, Reporter.
 - A Scheduler for recurring passive scans (APScheduler optional, thread fallback).
-- A HAR importer (`weblore import-har`), an opt-in update check, a plugin API.
+- A HAR importer (`reqlore import-har`), an opt-in update check, a plugin API.
 - A Settings page with themes (light / dark / high-contrast), verbosity profiles, audio cues, and a remappable keyboard map.
 
 Full per-module walkthrough: [`docs/USAGE.md`](docs/USAGE.md).
 
 ## Why
 
-Burp Suite is the industry standard but its Java Swing UI is a barrier for screen-reader users. Weblore is built ground-up as plain semantic HTML5 + Jinja2, which is the most reliable substrate for NVDA, JAWS, Orca, and VoiceOver. Targets **WCAG 2.2 AA**; details in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md).
+Burp Suite is the industry standard but its Java Swing UI is a barrier for screen-reader users. Reqlore is built ground-up as plain semantic HTML5 + Jinja2, which is the most reliable substrate for NVDA, JAWS, Orca, and VoiceOver. Targets **WCAG 2.2 AA**; details in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md).
 
 ## Install
 
@@ -33,30 +33,30 @@ Requires **Python 3.12+**. Pick the path that matches your platform.
 
 ```bash
 # Linux / macOS
-git clone https://github.com/ibrasonic/Weblore.git
-cd Weblore
+git clone https://github.com/ibrasonic/Reqlore.git
+cd Reqlore
 sh install.sh
 ```
 
 ```bat
 :: Windows (cmd or PowerShell)
-git clone https://github.com/ibrasonic/Weblore.git
-cd Weblore
+git clone https://github.com/ibrasonic/Reqlore.git
+cd Reqlore
 install.bat
 ```
 
-The installer creates a virtual environment in `.venv/`, installs Weblore
-into it, and prints how to run the `weblore` command. On Linux/macOS the
+The installer creates a virtual environment in `.venv/`, installs Reqlore
+into it, and prints how to run the `reqlore` command. On Linux/macOS the
 script tries to install [`pipx`](https://pipx.pypa.io) automatically via your
 system package manager (`apt`/`dnf`/`pacman`/`zypper`/`apk`/`brew`, with
-`sudo` if needed) so you get a global `weblore` command with no activation
-step; set `WEBLORE_NO_PIPX=1` to skip and go straight to the venv path.
+`sudo` if needed) so you get a global `reqlore` command with no activation
+step; set `REQLORE_NO_PIPX=1` to skip and go straight to the venv path.
 
 Then:
 
 ```
-weblore init demo.weblore
-weblore both --project demo.weblore   # UI on http://127.0.0.1:8787, proxy on 127.0.0.1:8080
+reqlore init demo.rlr
+reqlore both --project demo.rlr   # UI on http://127.0.0.1:8787, proxy on 127.0.0.1:8080
 ```
 
 (On Windows, prefix the command with `.venv\Scripts\` or activate the venv with `.venv\Scripts\activate.bat`.)
@@ -64,22 +64,22 @@ weblore both --project demo.weblore   # UI on http://127.0.0.1:8787, proxy on 12
 ### Manual install (contributors / hacking)
 
 ```powershell
-git clone https://github.com/ibrasonic/Weblore.git
-cd Weblore
+git clone https://github.com/ibrasonic/Reqlore.git
+cd Reqlore
 py -m venv .venv
 .venv\Scripts\Activate.ps1            # Linux/macOS: source .venv/bin/activate
 py -m pip install -e ".[dev]"         # editable install + test/lint tools
-py -m pytest weblore/tests/unit -q    # should be 346 passed
-weblore init demo.weblore
-weblore both --project demo.weblore
+py -m pytest reqlore/tests/unit -q    # should be 346 passed
+reqlore init demo.rlr
+reqlore both --project demo.rlr
 ```
 
 Other subcommands:
 
 ```
-weblore ui    --project demo.weblore   # UI only
-weblore proxy --project demo.weblore   # MITM only
-weblore browser                        # spawn Firefox pre-pointed at the proxy
+reqlore ui    --project demo.rlr   # UI only
+reqlore proxy --project demo.rlr   # MITM only
+reqlore browser                        # spawn Firefox pre-pointed at the proxy
 ```
 
 Optional extras: `[h3]`, `[impersonate]`, `[report]`, `[plugins]`, `[yaml]`, `[a11y]`, `[schedule]` — see [`docs/USAGE.md`](docs/USAGE.md#install).
@@ -90,7 +90,7 @@ Optional extras: `[h3]`, `[impersonate]`, `[report]`, `[plugins]`, `[yaml]`, `[a
 
 ```bash
 sh uninstall.sh                 # Linux / macOS
-sh uninstall.sh --purge-data    # also drop ./data and demo.weblore* files
+sh uninstall.sh --purge-data    # also drop ./data and demo.rlr* files
 ```
 
 ```bat
@@ -99,7 +99,7 @@ uninstall.bat
 uninstall.bat --purge-data
 ```
 
-Removes the pipx-installed `weblore` and/or the local `.venv/`. Does **not** remove pipx itself, Python, or the mitmproxy CA you may have trusted in your browser/OS keystore — those are kept because you might want them for other tools.
+Removes the pipx-installed `reqlore` and/or the local `.venv/`. Does **not** remove pipx itself, Python, or the mitmproxy CA you may have trusted in your browser/OS keystore — those are kept because you might want them for other tools.
 
 ## Run with Docker
 
@@ -109,7 +109,7 @@ docker compose up --build
 # Proxy: 127.0.0.1:8080
 ```
 
-Project file persists in `./data/my.weblore`. Both listeners are pinned to loopback on the host. Details: [`docs/USAGE.md`](docs/USAGE.md#docker).
+Project file persists in `./data/my.rlr`. Both listeners are pinned to loopback on the host. Details: [`docs/USAGE.md`](docs/USAGE.md#docker).
 
 ## Documentation
 
@@ -128,12 +128,12 @@ Project file persists in `./data/my.weblore`. Both listeners are pinned to loopb
 
 ## License
 
-**Source-available, noncommercial.** Weblore is released under the
+**Source-available, noncommercial.** Reqlore is released under the
 [PolyForm Noncommercial License 1.0.0](LICENSE). You're free to use,
 modify, study, and contribute it for any noncommercial purpose —
 research, learning, hobby work, education, charity, public safety,
 etc. Pull requests are very welcome. Commercial use (selling it,
-re-selling derivatives, paid consulting *built around* Weblore as the
+re-selling derivatives, paid consulting *built around* Reqlore as the
 product) is not permitted under this license; contact the author
 (`ibrahim.badawy@aucegypt.edu`) if you need a commercial arrangement.
 

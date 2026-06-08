@@ -1,20 +1,20 @@
 #!/usr/bin/env sh
-# Weblore uninstaller — Linux / macOS.
+# Reqlore uninstaller — Linux / macOS.
 #
 # Usage (from inside the cloned repo):
 #   sh uninstall.sh
 #
 # What it removes:
-#   - The pipx-installed `weblore` (if present).
-#   - The local ./.venv (or $WEBLORE_VENV) created by install.sh.
+#   - The pipx-installed `reqlore` (if present).
+#   - The local ./.venv (or $REQLORE_VENV) created by install.sh.
 #
 # What it does NOT remove (you have to opt in):
-#   - Your project files (*.weblore SQLite DBs) — pass --purge-data.
+#   - Your project files (*.rlr SQLite DBs) — pass --purge-data.
 #   - The pipx tool itself — that's the system package manager's job.
 #   - The mitmproxy CA you may have trusted in your browser/OS keystore.
 #
 # Environment overrides:
-#   WEBLORE_VENV=.venv      where the venv lives (matches install.sh)
+#   REQLORE_VENV=.venv      where the venv lives (matches install.sh)
 set -eu
 
 PURGE_DATA=0
@@ -33,18 +33,18 @@ warn() { printf 'warn: %s\n' "$*" >&2; }
 
 removed_any=0
 
-# ---- 1. pipx-installed weblore --------------------------------------------
+# ---- 1. pipx-installed reqlore --------------------------------------------
 if command -v pipx >/dev/null 2>&1; then
-    if pipx list 2>/dev/null | grep -q '^   package weblore '; then
-        info "removing pipx-installed weblore"
-        pipx uninstall weblore && removed_any=1
+    if pipx list 2>/dev/null | grep -q '^   package reqlore '; then
+        info "removing pipx-installed reqlore"
+        pipx uninstall reqlore && removed_any=1
     fi
 fi
 
 # ---- 2. local venv ---------------------------------------------------------
-VENV="${WEBLORE_VENV:-.venv}"
+VENV="${REQLORE_VENV:-.venv}"
 if [ -d "$VENV" ]; then
-    # Best-effort: stop processes holding files in the venv (mitmproxy, weblore
+    # Best-effort: stop processes holding files in the venv (mitmproxy, reqlore
     # itself). Failure is fine — rm -rf will report what's locked.
     if command -v pkill >/dev/null 2>&1; then
         pkill -f "$PWD/$VENV/bin/" 2>/dev/null || true
@@ -60,13 +60,13 @@ if [ "$PURGE_DATA" = "1" ]; then
         rm -rf data && removed_any=1
     fi
     # Common name from the README quickstart.
-    for f in demo.weblore demo.weblore-journal demo.weblore-wal demo.weblore-shm; do
+    for f in demo.rlr demo.rlr-journal demo.rlr-wal demo.rlr-shm; do
         [ -e "$f" ] && { info "removing $f"; rm -f "$f"; removed_any=1; }
     done
 fi
 
 if [ "$removed_any" = "0" ]; then
-    info "nothing to remove — Weblore doesn't appear to be installed here."
+    info "nothing to remove — Reqlore doesn't appear to be installed here."
     exit 0
 fi
 
@@ -75,4 +75,4 @@ echo
 echo "Not touched by this script (remove manually if you want):"
 echo "  - pipx itself (apt remove pipx / dnf remove pipx / brew uninstall pipx)"
 echo "  - the mitmproxy CA you installed in your browser/OS keystore"
-[ "$PURGE_DATA" = "0" ] && echo "  - your *.weblore project files (re-run with --purge-data to also drop these)"
+[ "$PURGE_DATA" = "0" ] && echo "  - your *.rlr project files (re-run with --purge-data to also drop these)"

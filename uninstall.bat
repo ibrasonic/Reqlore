@@ -1,9 +1,9 @@
 @echo off
-rem Weblore uninstaller for Windows.
+rem Reqlore uninstaller for Windows.
 rem
 rem Usage (from inside the cloned repo):
 rem   uninstall.bat              remove .venv\ (and any pipx install)
-rem   uninstall.bat --purge-data  also remove ./data and demo.weblore* files
+rem   uninstall.bat --purge-data  also remove ./data and demo.rlr* files
 rem
 rem What it does NOT remove (you have to do these manually):
 rem   - The Python interpreter.
@@ -20,13 +20,13 @@ if /I "%~1"=="/?" goto :help
 
 set "REMOVED=0"
 
-rem ---- 1. pipx-installed weblore ------------------------------------------
+rem ---- 1. pipx-installed reqlore ------------------------------------------
 where pipx >nul 2>&1
 if not errorlevel 1 (
-    pipx list 2>nul | findstr /R /C:"package weblore " >nul
+    pipx list 2>nul | findstr /R /C:"package reqlore " >nul
     if not errorlevel 1 (
-        echo ==^> removing pipx-installed weblore
-        pipx uninstall weblore
+        echo ==^> removing pipx-installed reqlore
+        pipx uninstall reqlore
         if not errorlevel 1 set "REMOVED=1"
     )
 )
@@ -38,7 +38,7 @@ if exist "%VENV%\" (
     rem Best-effort: stop processes that may hold venv files open. We use
     rem taskkill with the venv-absolute python.exe path so we don't kill
     rem unrelated python processes on the box.
-    taskkill /F /FI "IMAGENAME eq python.exe" /FI "WINDOWTITLE eq weblore*" >nul 2>&1
+    taskkill /F /FI "IMAGENAME eq python.exe" /FI "WINDOWTITLE eq reqlore*" >nul 2>&1
     for /f "tokens=2" %%P in ('tasklist /FI "IMAGENAME eq python.exe" /FO LIST ^| findstr /B "PID:"') do (
         rem fall through — taskkill above handles the obvious case
     )
@@ -54,7 +54,7 @@ if "%PURGE_DATA%"=="1" (
         rmdir /s /q "data"
         set "REMOVED=1"
     )
-    for %%F in (demo.weblore demo.weblore-journal demo.weblore-wal demo.weblore-shm) do (
+    for %%F in (demo.rlr demo.rlr-journal demo.rlr-wal demo.rlr-shm) do (
         if exist "%%F" (
             echo ==^> removing %%F
             del /f /q "%%F"
@@ -64,7 +64,7 @@ if "%PURGE_DATA%"=="1" (
 )
 
 if "%REMOVED%"=="0" (
-    echo ==^> nothing to remove — Weblore doesn't appear to be installed here.
+    echo ==^> nothing to remove — Reqlore doesn't appear to be installed here.
     exit /b 0
 )
 
@@ -74,17 +74,17 @@ echo.
 echo Not touched by this script ^(remove manually if you want^):
 echo   - pipx itself
 echo   - the mitmproxy CA you installed in your browser/Windows cert store
-if "%PURGE_DATA%"=="0" echo   - your *.weblore project files ^(re-run with --purge-data to drop these^)
+if "%PURGE_DATA%"=="0" echo   - your *.rlr project files ^(re-run with --purge-data to drop these^)
 
 endlocal
 exit /b 0
 
 :help
-echo Weblore uninstaller.
+echo Reqlore uninstaller.
 echo.
 echo Usage:
 echo   uninstall.bat              remove .venv\ and any pipx install
-echo   uninstall.bat --purge-data also remove .\data and demo.weblore* files
+echo   uninstall.bat --purge-data also remove .\data and demo.rlr* files
 echo.
 echo Does NOT remove: Python, pipx, or the mitmproxy CA in your cert store.
 endlocal

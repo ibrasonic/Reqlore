@@ -1,8 +1,8 @@
-# Weblore — Architecture
+# Reqlore — Architecture
 
 ## Process model
 
-Weblore runs as **one Python process** with three concurrent surfaces:
+Reqlore runs as **one Python process** with three concurrent surfaces:
 
 ```
                   +--------------------+
@@ -62,7 +62,7 @@ class Response:
 
 Built on `mitmproxy` library (not the binaries). We use it for:
 
-- TLS Certificate Authority generation + rotation (stored under `~/.weblore/ca/`, 0600 perms).
+- TLS Certificate Authority generation + rotation (stored under `~/.reqlore/ca/`, 0600 perms).
 - HTTP/1.1 + HTTP/2 transparent and explicit proxy modes.
 - WebSocket frame interception.
 
@@ -74,7 +74,7 @@ On top we layer:
 
 ## Storage
 
-A `.weblore` project file is a SQLite database with these tables:
+A `.rlr` project file is a SQLite database with these tables:
 
 ```sql
 project        (id, name, created_at, schema_version, settings_json)
@@ -102,12 +102,12 @@ Large binary blobs (`req_blob`, `resp_blob`, attachments) are LZ4-compressed bef
   - Skip-link, header with module nav, main with `id="main"`, footer.
   - Live region (`<div id="sr-live" aria-live="polite" aria-atomic="true">`) for announcements.
   - Theme + verbosity controls (form posts; persisted per project).
-- No client-side routing. No build step. `weblore.js` is small and progressive (sortable tables, copy-to-clipboard helper, keyboard-shortcut handler, audio-cue player) — every action works without it.
+- No client-side routing. No build step. `reqlore.js` is small and progressive (sortable tables, copy-to-clipboard helper, keyboard-shortcut handler, audio-cue player) — every action works without it.
 - All forms submit POST → 303 redirect (PRG pattern) to avoid double-submit prompts.
 
 ## Plugin system
 
-- Plugins are Python modules in `~/.weblore/plugins/*.py` *or* installed via pip (entry point `weblore.plugins`).
+- Plugins are Python modules in `~/.reqlore/plugins/*.py` *or* installed via pip (entry point `reqlore.plugins`).
 - `plugins/api.py` exposes a stable API: `on_request(ctx)`, `on_response(ctx)`, `add_passive_check(fn)`, `add_active_check(fn)`, `add_payload_processor(name, fn)`, `add_menu_item(label, path, handler)`, `add_template(path, content)`.
 - `watchdog` hot-reloads plugins on file change in dev mode.
 - Per-plugin enable/disable in the Settings UI; signature optional but recommended (Ed25519).
@@ -117,12 +117,12 @@ Large binary blobs (`req_blob`, `resp_blob`, attachments) are LZ4-compressed bef
 - UI: Flask + `waitress` WSGI server (Windows-friendly, no eventlet).
 - Proxy: mitmproxy's asyncio loop in its own thread.
 - Engines: a `concurrent.futures.ThreadPoolExecutor` per module for parallel jobs (Intruder, scanner, discovery).
-- Rate limiter: token-bucket per host (`weblore.engines.rate.HostRateLimiter`) used by all engines.
+- Rate limiting: per-request `delay_ms` knob on Intruder and Param-Miner workbenches; `ActiveScanner` enforces a per-scan throttle through its injected sender. Engines themselves do not rate-limit; callers are expected to space requests or cap concurrency.
 
 ## Configuration
 
 - Defaults baked into `config.py`.
 - Per-project overrides in `project_state` table.
-- Per-user overrides in `~/.weblore/config.toml`.
+- Per-user overrides in `~/.reqlore/config.toml`.
 - CLI flags override everything.
 - Resolution order: CLI > env > user > project > defaults.

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en" data-theme="{{ theme }}" data-verbosity="{{ verbosity }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Reqlore{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='reqlore.css') }}">
+  <link rel="icon" href="data:,">
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to main content</a>
+
+  <header role="banner" class="topbar">
+    <p class="brand"><a href="{{ url_for('dashboard.index') }}"><img class="brand-icon" src="{{ url_for('static', filename='reqlore-icon.svg') }}" alt="Reqlore logo" width="28" height="28">Reqlore</a></p>
+    <nav aria-label="Modules">
+      <ul class="nav">
+        <li><a href="{{ url_for('dashboard.index') }}" accesskey="1">Dashboard</a></li>
+        <li><a href="{{ url_for('proxy.index') }}" accesskey="2">
+          Proxy <span class="badge" aria-label="held items">{{ intercept_count }}</span>
+        </a></li>
+        <li><a href="{{ url_for('history.index') }}" accesskey="3">
+          History <span class="badge" aria-label="recorded requests">{{ history_count }}</span>
+        </a></li>
+        <li><a href="{{ url_for('repeater.index') }}" accesskey="4">Repeater</a></li>
+        <li><a href="{{ url_for('intruder.index') }}" accesskey="5">Intruder</a></li>
+        <li><a href="{{ url_for('scanner.index') }}" accesskey="6">
+          Scanner <span class="badge" aria-label="findings recorded">{{ findings_count }}</span>
+        </a></li>
+        <li><a href="{{ url_for('comparer.index') }}">Comparer</a></li>
+        <li><a href="{{ url_for('decoder.index') }}" accesskey="7">Decoder</a></li>
+        <li><a href="{{ url_for('jwt.index') }}" accesskey="8">JWT</a></li>
+        <li><a href="{{ url_for('sitemap.index') }}">Sitemap</a></li>
+        <li><a href="{{ url_for('matchreplace.index') }}">Match&amp;Replace</a></li>
+        <li><a href="{{ url_for('search.index') }}">Search</a></li>
+        <li><a href="{{ url_for('graphql.index') }}">GraphQL</a></li>
+        <li><a href="{{ url_for('ws.index') }}">WebSocket</a></li>
+        <li><a href="{{ url_for('saml.index') }}">SAML</a></li>
+        <li><a href="{{ url_for('poc.index') }}">PoC</a></li>
+        <li><a href="{{ url_for('macros.index') }}">Macros</a></li>
+        <li><a href="{{ url_for('sequencer.index') }}">Sequencer</a></li>
+        <li><a href="{{ url_for('oast.index') }}">OAST</a></li>
+        <li><a href="{{ url_for('h2.index') }}">H2</a></li>
+        <li><a href="{{ url_for('smuggling.index') }}">Smuggling</a></li>
+        <li><a href="{{ url_for('param_miner.index') }}">Param miner</a></li>
+        <li><a href="{{ url_for('schedule.index') }}">Schedule</a></li>
+        <li><a href="{{ url_for('reporter.index') }}">Reporter</a></li>
+        <li><a href="{{ url_for('plugins.index') }}">Plugins</a></li>
+        <li><a href="{{ url_for('cues.index') }}">Cues</a></li>
+        <li><a href="{{ url_for('settings.index') }}" accesskey="9">Settings</a></li>
+        <li><a href="{{ url_for('help.index') }}" accesskey="0">Help</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main id="main" tabindex="-1">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <ul class="flashes" role="status" data-cues="{% if cues_on %}1{% endif %}">
+          {% for cat, m in messages %}<li class="flash flash-{{ cat }}" data-cue="{{ cat }}">{{ m }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+    {% block main %}{% endblock %}
+  </main>
+
+  <footer role="contentinfo">
+    <p>Proxy: <span>{{ proxy_endpoint }}</span>
+       — <span>{{ 'running' if proxy_running else 'stopped' }}</span></p>
+    <p><a href="{{ url_for('help.index') }}">Keyboard map</a> &middot; <a href="https://github.com/ibrasonic/Reqlore" rel="noopener noreferrer external">About</a></p>
+  </footer>
+
+  <div id="sr-live" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="{{ url_for('static', filename='reqlore.js') }}" defer></script>
+</body>
+</html>

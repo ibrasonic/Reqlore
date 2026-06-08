@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Intruder{% endblock %}
+{% block main %}
+<h1>Intruder</h1>
+<p>Replay a request many times, substituting payloads at marked positions, and inspect the results.</p>
+
+<p><a class="button-like" href="{{ url_for('intruder.new') }}">New attack</a></p>
+
+<table>
+  <caption>Attacks</caption>
+  <thead>
+    <tr><th scope="col">ID</th><th scope="col">Name</th><th scope="col">Type</th>
+        <th scope="col">URL</th><th scope="col">Engine</th><th scope="col">Status</th>
+        <th scope="col">Actions</th></tr>
+  </thead>
+  <tbody>
+  {% for a in attacks %}
+    <tr>
+      <td>{{ a.id }}</td>
+      <td>{{ a.name }}</td>
+      <td>{{ a.attack_type }}</td>
+      <td class="url">{{ a.url }}</td>
+      <td>{{ a.engine }}</td>
+      <td>{{ a.status }}</td>
+      <td><a href="{{ url_for('intruder.detail', aid=a.id) }}">Open</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7">No attacks yet. Start with “New attack”.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

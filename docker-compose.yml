@@ -1,31 +1,31 @@
-# Weblore — UI + MITM proxy in a single container.
+# Reqlore — UI + MITM proxy in a single container.
 #
 # Usage:
 #   docker compose up --build
 #   then point your browser at  http://127.0.0.1:8787
 #   and set its HTTP proxy to   127.0.0.1:8080
 #
-# The project file lives in ./data/my.weblore on the host. On first run the
+# The project file lives in ./data/my.rlr on the host. On first run the
 # `init` service creates it; subsequent `up`s reuse it.
 
 services:
   init:
     build: .
-    image: weblore:latest
-    command: ["init", "/data/my.weblore"]
+    image: reqlore:latest
+    command: ["init", "/data/my.rlr"]
     volumes:
       - ./data:/data
     restart: "no"
 
-  weblore:
-    image: weblore:latest
+  reqlore:
+    image: reqlore:latest
     depends_on:
       init:
         condition: service_completed_successfully
     command:
       - "both"
       - "--project"
-      - "/data/my.weblore"
+      - "/data/my.rlr"
       - "--host"
       - "0.0.0.0"
       - "--ui-port"

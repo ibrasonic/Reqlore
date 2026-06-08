@@ -1,6 +1,6 @@
-# Weblore — Accessibility Specification
+# Reqlore — Accessibility Specification
 
-Weblore targets **WCAG 2.2 Level AA** as a minimum and intentionally exceeds it where the pentesting workflow demands it (long sessions, dense data, time-sensitive prompts).
+Reqlore targets **WCAG 2.2 Level AA** as a minimum and intentionally exceeds it where the pentesting workflow demands it (long sessions, dense data, time-sensitive prompts).
 
 ## Conformance commitments
 
@@ -19,7 +19,7 @@ Weblore targets **WCAG 2.2 Level AA** as a minimum and intentionally exceeds it 
   <body>
     <a class="skip" href="#main">Skip to main content</a>
     <header role="banner">
-      <h1>Weblore</h1>
+      <h1>Reqlore</h1>
       <nav aria-label="Modules">...</nav>
     </header>
     <main id="main" tabindex="-1">{% block main %}{% endblock %}</main>
@@ -110,7 +110,7 @@ Weblore targets **WCAG 2.2 Level AA** as a minimum and intentionally exceeds it 
 | NVDA full run | manual | every release |
 | Orca full run | manual | every release |
 | VoiceOver full run | manual | every release |
-| Contrast | automated via `weblore.a11y.contrast` | every theme change |
+| Contrast | automated via `reqlore.a11y.contrast` | every theme change |
 | Reduced motion | manual | every animation change |
 
 ## What we will refuse to ship

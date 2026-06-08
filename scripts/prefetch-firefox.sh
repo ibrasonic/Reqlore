@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Pre-download the official Firefox portable archive into Weblore's cache.
+# Pre-download the official Firefox portable archive into Reqlore's cache.
 #
 # Usage:
 #   ./scripts/prefetch-firefox.sh                 # latest version
@@ -21,7 +21,7 @@ fi
 
 set -x
 if [ -n "$VERSION" ]; then
-    "$PYTHON" -m weblore.cli prefetch-firefox --firefox-version "$VERSION" $FORCE_FLAG
+    "$PYTHON" -m reqlore.cli prefetch-firefox --firefox-version "$VERSION" $FORCE_FLAG
 else
-    "$PYTHON" -m weblore.cli prefetch-firefox $FORCE_FLAG
+    "$PYTHON" -m reqlore.cli prefetch-firefox $FORCE_FLAG
 fi

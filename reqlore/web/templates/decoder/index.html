@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Decoder{% endblock %}
+{% block main %}
+<h1>Decoder / Encoder</h1>
+<p>Convert between URL, HTML, base64, hex, gzip, JWT, JSON, hashes, and more.</p>
+
+<form method="post" class="stack">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <div>
+    <label for="d-op">Operation</label>
+    <select id="d-op" name="op">
+      {% for v, label in ops %}
+        <option value="{{ v }}" {% if v == op %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label for="d-in">Input</label>
+    <textarea id="d-in" name="text_in" rows="10" autocomplete="off">{{ text_in }}</textarea>
+  </div>
+
+  <div>
+    <button type="submit">Run</button>
+  </div>
+</form>
+
+{% if error %}
+  <p role="alert"><strong>Error:</strong> {{ error }}</p>
+{% endif %}
+
+{% if text_out %}
+<section aria-labelledby="out-h">
+  <h2 id="out-h">Output ({{ text_out|length }} characters)</h2>
+  <pre class="block"><code>{{ text_out }}</code></pre>
+</section>
+{% endif %}
+{% endblock %}

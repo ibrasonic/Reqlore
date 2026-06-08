@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Weblore installer — Linux / macOS.
+# Reqlore installer — Linux / macOS.
 #
 # Usage (from inside the cloned repo):
 #   sh install.sh        # or: ./install.sh after `chmod +x install.sh`
@@ -9,13 +9,13 @@
 #   2. Ensures pipx is installed — tries (in order) the system package
 #      manager (apt/dnf/pacman/zypper/apk/brew) then `pip install --user pipx`.
 #      Uses sudo automatically if present.
-#   3. Runs `pipx install .` so you get a global `weblore` command.
+#   3. Runs `pipx install .` so you get a global `reqlore` command.
 #   4. If steps 2-3 all fail, falls back to a local ./.venv install.
 #
 # Environment overrides:
 #   PYTHON=python3.12       pick a specific interpreter
-#   WEBLORE_VENV=.venv      venv location for the fallback path
-#   WEBLORE_NO_PIPX=1       skip pipx entirely; go straight to venv
+#   REQLORE_VENV=.venv      venv location for the fallback path
+#   REQLORE_NO_PIPX=1       skip pipx entirely; go straight to venv
 set -eu
 
 PYTHON="${PYTHON:-python3}"
@@ -38,9 +38,9 @@ maybe_sudo() {
 # Refuse to install from the wrong directory — pip would silently grab the PyPI
 # package (or fail) if pyproject.toml is missing, which is exactly the trap we
 # wrote this script to avoid.
-[ -f "pyproject.toml" ] || die "run this from the Weblore repository root (pyproject.toml not found)."
-grep -q '^name = "weblore"' pyproject.toml \
-    || die "this directory's pyproject.toml is not Weblore's. Are you in the right folder?"
+[ -f "pyproject.toml" ] || die "run this from the Reqlore repository root (pyproject.toml not found)."
+grep -q '^name = "reqlore"' pyproject.toml \
+    || die "this directory's pyproject.toml is not Reqlore's. Are you in the right folder?"
 
 # ---- 1. Python ----
 command -v "$PYTHON" >/dev/null 2>&1 \
@@ -92,7 +92,7 @@ install_pipx() {
 }
 
 use_pipx() {
-    if [ "${WEBLORE_NO_PIPX:-0}" = "1" ]; then
+    if [ "${REQLORE_NO_PIPX:-0}" = "1" ]; then
         return 1
     fi
     if ! command -v pipx >/dev/null 2>&1; then
@@ -107,16 +107,16 @@ use_pipx() {
     PATH="$HOME/.local/bin:$PATH"
     export PATH
 
-    info "installing Weblore with pipx (isolated CLI on PATH)"
+    info "installing Reqlore with pipx (isolated CLI on PATH)"
     pipx install --force .
     info "done."
     echo
     echo "Try it:"
-    echo "  weblore --help"
-    echo "  weblore init demo.weblore"
-    echo "  weblore both --project demo.weblore"
+    echo "  reqlore --help"
+    echo "  reqlore init demo.rlr"
+    echo "  reqlore both --project demo.rlr"
     echo
-    echo "If 'weblore' is not found, open a new shell (so PATH picks up ~/.local/bin)."
+    echo "If 'reqlore' is not found, open a new shell (so PATH picks up ~/.local/bin)."
     return 0
 }
 
@@ -125,7 +125,7 @@ if use_pipx; then
 fi
 
 # ---- 3. venv fallback ------------------------------------------------------
-VENV="${WEBLORE_VENV:-.venv}"
+VENV="${REQLORE_VENV:-.venv}"
 
 if [ ! -d "$VENV" ]; then
     info "creating virtual environment at $VENV"
@@ -141,18 +141,18 @@ fi
 info "upgrading pip"
 "$VENV/bin/pip" install --upgrade pip >/dev/null
 
-info "installing Weblore (this pulls mitmproxy and is ~150 MB; first run can take a few minutes)"
+info "installing Reqlore (this pulls mitmproxy and is ~150 MB; first run can take a few minutes)"
 "$VENV/bin/pip" install .
 
 info "done."
 echo
-echo "Weblore is installed into the venv at: $VENV"
+echo "Reqlore is installed into the venv at: $VENV"
 echo
 echo "Run it without activating (simplest):"
-echo "  ./$VENV/bin/weblore init demo.weblore"
-echo "  ./$VENV/bin/weblore both --project demo.weblore"
+echo "  ./$VENV/bin/reqlore init demo.rlr"
+echo "  ./$VENV/bin/reqlore both --project demo.rlr"
 echo
 echo "Or activate the venv first and use the bare command:"
 echo "  source $VENV/bin/activate"
-echo "  weblore init demo.weblore"
-echo "  weblore both --project demo.weblore"
+echo "  reqlore init demo.rlr"
+echo "  reqlore both --project demo.rlr"

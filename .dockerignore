@@ -23,9 +23,9 @@ dist/
 *.tar.gz
 
 # Project files / runtime artifacts that must never end up in an image
-*.weblore
-*.weblore-shm
-*.weblore-wal
+*.rlr
+*.rlr-shm
+*.rlr-wal
 _ui.out
 _ui.err
 _pytest.log
@@ -35,8 +35,8 @@ _b.log
 docs/
 examples/
 scripts/
-weblore/tests/
-weblore/tests/**
+reqlore/tests/
+reqlore/tests/**
 
 # Editor / OS junk
 .DS_Store

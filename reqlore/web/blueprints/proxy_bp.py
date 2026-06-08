@@ -1,0 +1,370 @@
+"""Proxy control panel + intercept queue."""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+from flask import (
+    Blueprint, abort, flash, g, jsonify, redirect, render_template, request,
+    url_for, send_file,
+)
+
+from ...proxy.rules import (
+    DEFAULT_NOISE_HOST_REGEX, DEFAULT_NOISE_PATH_REGEX, SUPPORTED_METHODS,
+    InterceptConfig,
+)
+
+bp = Blueprint("proxy", __name__)
+
+
+# ---------------------------------------------------------------------------
+# Send-to dispatch
+# ---------------------------------------------------------------------------
+#
+# Each held request can be copied into one of the other Reqlore tools
+# (Repeater, Intruder, Comparer, PoC, JWT, Decoder). The flow itself
+# stays held — "Send to" never decides forward/drop, mirroring Burp's
+# behaviour where the Action menu is non-destructive.
+#
+# Mechanism: we materialise the held bytes into the `http_history` table
+# as an `intercept-snapshot` row, then redirect to the target tool with
+# the `?from_history=<hid>` (or tool-specific) query param. Every target
+# already knows how to hydrate itself from a history row.
+
+# Targets the "Send to" menu can dispatch to. Order is the order shown
+# in the UI. Each entry also carries a single-letter `accesskey` so the
+# button can be activated from anywhere on the page via the browser's
+# native access-key modifier (Alt on Chrome/Edge, Alt+Shift on Firefox,
+# Ctrl+Alt on macOS). Letters were chosen to be mnemonic, unique across
+# the page, and to avoid Alt+D (which focuses the browser address bar).
+_SEND_TARGETS: list[tuple[str, str, str]] = [
+    # (slug, label, accesskey)
+    ("repeater", "Repeater",          "r"),
+    ("intruder", "Intruder",          "i"),
+    ("comparer", "Comparer (side A)", "m"),
+    ("poc",      "PoC builder",       "b"),
+    ("jwt",      "JWT workbench",     "j"),
+    ("decoder",  "Decoder",           "o"),
+]
+
+
+def _parse_raw_request(raw: bytes) -> tuple[str, str, str, list[tuple[str, str]], bytes]:
+    """Best-effort parse of a raw HTTP request blob.
+    Returns (method, path, host, headers, body). Never raises — falls
+    back to safe defaults if the blob is mangled.
+    """
+    sep = raw.find(b"\r\n\r\n")
+    head = raw[:sep] if sep >= 0 else raw
+    body = raw[sep + 4:] if sep >= 0 else b""
+    lines = head.decode("latin-1", errors="replace").split("\r\n")
+    rl = lines[0].split(" ", 2) if lines else []
+    method = rl[0] if rl else "GET"
+    path = rl[1] if len(rl) > 1 else "/"
+    host = ""
+    headers: list[tuple[str, str]] = []
+    for line in lines[1:]:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            k, v = k.strip(), v.strip()
+            headers.append((k, v))
+            if k.lower() == "host":
+                host = v
+    return method, path, host, headers, body
+
+
+def _bearer_token(headers: list[tuple[str, str]]) -> str:
+    """Return the JWT-looking string from any Authorization: Bearer
+    header, or '' if none / not JWT-shaped."""
+    for k, v in headers:
+        if k.lower() == "authorization" and v.lower().startswith("bearer "):
+            tok = v.split(" ", 1)[1].strip()
+            if re.match(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$", tok):
+                return tok
+    return ""
+
+
+def _snapshot_intercept_to_history(item) -> int:
+    """Copy a held intercept's raw bytes into `http_history` so the
+    other tools (which all key off a history id) can hydrate from it.
+    Engine is tagged `intercept-snapshot` for traceability.
+    """
+    raw = item.req_blob
+    method, path, host, _, _ = _parse_raw_request(raw)
+    url = f"http://{host}{path}" if host else path
+    return g.project.add_history(
+        host=host, method=method, url=url, status=0, duration_ms=0,
+        engine="intercept-snapshot",
+        raw_req=raw, raw_resp=b"",
+        flags="", tags=f"intercept:{item.id}",
+    )
+
+
+def _underline_first(text: str, ch: str) -> str:
+    """Wrap the first case-insensitive occurrence of ``ch`` in ``text``
+    in <u>…</u>. Used to visually mark the access-key letter in a
+    button label, matching how desktop menus show their mnemonics.
+    Returns Markup-safe HTML; falls back to plain text if no match.
+    """
+    i = text.lower().find(ch.lower())
+    if i < 0:
+        return text
+    return f"{text[:i]}<u>{text[i]}</u>{text[i + 1:]}"
+
+
+def _available_targets(item) -> list[dict]:
+    """Build the menu list for an intercept-detail page.
+    Filters out targets that wouldn't have anything useful to do (e.g.
+    JWT only appears when an Authorization: Bearer header is present,
+    Decoder only when there's a body to decode).
+    """
+    raw = item.req_blob
+    _, _, _, headers, body = _parse_raw_request(raw)
+    bearer = _bearer_token(headers)
+    out: list[dict] = []
+    for slug, label, key in _SEND_TARGETS:
+        if slug == "jwt" and not bearer:
+            continue
+        if slug == "decoder" and not body:
+            continue
+        out.append({
+            "slug": slug,
+            "label": label,
+            "key": key,
+            "html": _underline_first(f"Send to {label}", key),
+        })
+    return out
+
+
+def _send_redirect(item, slug: str):
+    """Dispatch a held item to a tool. Materialises a history snapshot
+    first (so the tool gets a stable hid) and then redirects.
+    Returns a Flask response. The held flow is left untouched.
+    """
+    raw = item.req_blob
+    _, _, _, headers, _ = _parse_raw_request(raw)
+    hid = _snapshot_intercept_to_history(item)
+    if slug == "repeater":
+        target = url_for("repeater.index", from_history=hid)
+    elif slug == "intruder":
+        target = url_for("intruder.new", from_history=hid)
+    elif slug == "comparer":
+        target = url_for("comparer.index", from_a=hid)
+    elif slug == "poc":
+        target = url_for("poc.index", from_history=hid)
+    elif slug == "jwt":
+        target = url_for("jwt.index", token=_bearer_token(headers))
+    elif slug == "decoder":
+        # Decoder operates on text; send the body decoded best-effort.
+        _, _, _, _, body = _parse_raw_request(raw)
+        target = url_for("decoder.index",
+                         text=body.decode("utf-8", errors="replace"))
+    else:
+        abort(404, description=f"Unknown send target: {slug!r}")
+    label = next((t[1] for t in _SEND_TARGETS if t[0] == slug), slug)
+    flash(f"Sent intercept #{item.id} to {label} (history #{hid}). "
+          f"Flow is still held \u2014 Forward or Drop when ready.", "ok")
+    return redirect(target)
+
+
+@bp.route("/")
+def index():
+    items = g.project.list_intercept()
+    # Filter to only pending (decision IS NULL) for the queue view
+    pending = [i for i in items if g.project.get_intercept_decision(i.id)[0] is None]
+    # `get_intercept_config` is missing on test stubs and older injected
+    # proxies; fall back to defaults so the panel still renders.
+    cfg = InterceptConfig()
+    if g.proxy is not None:
+        getter = getattr(g.proxy, "get_intercept_config", None)
+        if callable(getter):
+            cfg = getter()
+    return render_template("proxy/index.html", items=pending,
+                           intercept_cfg=cfg,
+                           supported_methods=SUPPORTED_METHODS)
+
+
+@bp.route("/intercept/count")
+def intercept_count():
+    """Cheap polling endpoint: how many requests are currently held.
+    The Proxy panel polls this when intercept is ON and reloads the
+    page only when the number changes — quieter for screen readers
+    than a meta-refresh."""
+    items = g.project.list_intercept()
+    pending = sum(1 for i in items
+                  if g.project.get_intercept_decision(i.id)[0] is None)
+    return jsonify({"count": pending})
+
+
+@bp.route("/start", methods=["POST"])
+def start():
+    if not g.proxy:
+        abort(503, description="Proxy controller not configured.")
+    g.proxy.start()
+    return redirect(url_for(".index"))
+
+
+@bp.route("/stop", methods=["POST"])
+def stop():
+    if not g.proxy:
+        abort(503, description="Proxy controller not configured.")
+    g.proxy.stop()
+    return redirect(url_for(".index"))
+
+
+@bp.route("/intercept/toggle", methods=["POST"])
+def toggle_intercept():
+    """Burp-style global intercept on/off. Persists across restarts.
+    When the form was submitted from the checkbox (hidden `from=checkbox`),
+    the absence of the `on` field means unchecked → OFF. Otherwise
+    (legacy / external callers), simply flip the current state.
+    """
+    if not g.proxy:
+        abort(503, description="Proxy controller not configured.")
+    if request.form.get("from") == "checkbox":
+        on = request.form.get("on") == "1"
+    else:
+        on = g.project.get_state("intercept_on", "0") != "1"
+    g.proxy.set_intercept(on)
+    g.project.set_state("intercept_on", "1" if on else "0")
+    flash(f"Intercept {'ON' if on else 'OFF'}.", "ok")
+    return redirect(url_for(".index"))
+
+
+@bp.route("/intercept/config", methods=["POST"])
+def set_intercept_config():
+    """Update the filter that decides which requests get held when
+    intercept is ON. Methods come in as repeated form fields; the
+    regexes are plain strings; the noise checkbox is a single bool.
+    Stays effective immediately and persists across restarts.
+    """
+    if not g.proxy:
+        abort(503, description="Proxy controller not configured.")
+    methods = [m for m in request.form.getlist("method")
+               if m in SUPPORTED_METHODS]
+    cfg = InterceptConfig(
+        methods=methods,
+        host_regex=request.form.get("host_regex", "").strip(),
+        path_regex=request.form.get("path_regex", "").strip(),
+        exclude_host_regex=(request.form.get(
+            "exclude_host_regex", "").strip() or DEFAULT_NOISE_HOST_REGEX),
+        exclude_path_regex=(request.form.get(
+            "exclude_path_regex", "").strip() or DEFAULT_NOISE_PATH_REGEX),
+    )
+    g.proxy.set_intercept_config(cfg)
+    g.project.set_state("intercept_config", json.dumps(cfg.to_dict()))
+    flash("Intercept filter updated.", "ok")
+    return redirect(url_for(".index"))
+
+
+@bp.route("/intercept/<int:iid>")
+def show_intercept(iid: int):
+    item = g.project.get_intercept(iid)
+    if item is None:
+        abort(404)
+    return render_template("proxy/intercept_detail.html", item=item,
+                           body_text=_safe_text(item.req_blob),
+                           send_targets=_available_targets(item))
+
+
+@bp.route("/intercept/<int:iid>/drop", methods=["POST"])
+def drop_intercept(iid: int):
+    g.project.decide_intercept(iid, "drop")
+    flash("Intercept dropped.", "ok")
+    return redirect(url_for(".index"))
+
+
+@bp.route("/intercept/<int:iid>/forward", methods=["POST"])
+def forward_intercept(iid: int):
+    g.project.decide_intercept(iid, "forward")
+    flash("Intercept forwarded.", "ok")
+    return redirect(url_for(".index"))
+
+
+@bp.route("/intercept/forward_all", methods=["POST"])
+def forward_all():
+    """Forward every currently-pending intercept as-is. Handy when the
+    queue piled up while you were away, or you've finished testing one
+    flow and just want everything else to fly through.
+    """
+    n = 0
+    for it in g.project.list_intercept():
+        decision, _ = g.project.get_intercept_decision(it.id)
+        if decision is None:
+            g.project.decide_intercept(it.id, "forward")
+            n += 1
+    flash(f"Forwarded {n} held item{'s' if n != 1 else ''}.", "ok")
+    return redirect(url_for(".index"))
+
+
+@bp.route("/intercept/drop_all", methods=["POST"])
+def drop_all():
+    """Drop every currently-pending intercept. Use when the queue has
+    irrelevant traffic you don't want to deal with one at a time.
+    """
+    n = 0
+    for it in g.project.list_intercept():
+        decision, _ = g.project.get_intercept_decision(it.id)
+        if decision is None:
+            g.project.decide_intercept(it.id, "drop")
+            n += 1
+    flash(f"Dropped {n} held item{'s' if n != 1 else ''}.", "ok")
+    return redirect(url_for(".index"))
+
+
+@bp.route("/intercept/<int:iid>/send/<slug>", methods=["POST"])
+def send_to(iid: int, slug: str):
+    """Copy a held request into the named tool and redirect there.
+    The intercepted flow stays in the queue — the operator still has
+    to Forward or Drop it explicitly. Mirrors Burp's Action menu.
+    """
+    item = g.project.get_intercept(iid)
+    if item is None:
+        abort(404)
+    return _send_redirect(item, slug)
+
+
+@bp.route("/intercept/send_all/repeater", methods=["POST"])
+def send_all_to_repeater():
+    """Bulk-copy every pending held request into history snapshots so
+    they all become available in Repeater for replay. Flows stay held.
+    """
+    last_hid = 0
+    n = 0
+    for it in g.project.list_intercept():
+        decision, _ = g.project.get_intercept_decision(it.id)
+        if decision is None:
+            last_hid = _snapshot_intercept_to_history(it)
+            n += 1
+    if n == 0:
+        flash("No pending intercepts to send.", "warn")
+        return redirect(url_for(".index"))
+    flash(f"Sent {n} held item{'s' if n != 1 else ''} to Repeater "
+          f"(latest history #{last_hid}). Flows are still held.", "ok")
+    # Land the operator in Repeater on the most recent snapshot so they
+    # can start replaying immediately; History view has the rest.
+    return redirect(url_for("repeater.index", from_history=last_hid))
+
+
+@bp.route("/intercept/<int:iid>/forward_edited", methods=["POST"])
+def forward_edited(iid: int):
+    raw = request.form.get("raw", "")
+    g.project.decide_intercept(iid, "forward_edited", raw.encode("utf-8", errors="replace"))
+    flash("Edited intercept forwarded.", "ok")
+    return redirect(url_for(".index"))
+
+
+@bp.route("/ca")
+def ca_download():
+    cert = Path(g.settings.ca_dir) / "reqlore-ca.pem"
+    if not cert.exists():
+        abort(404, description="No CA generated yet. Start the proxy once.")
+    return send_file(cert, mimetype="application/x-pem-file",
+                     as_attachment=True, download_name="reqlore-ca.pem")
+
+
+def _safe_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("latin-1", errors="replace")

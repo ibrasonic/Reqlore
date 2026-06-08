@@ -1,23 +1,23 @@
-# Contributing to Weblore
+# Contributing to Reqlore
 
 ## Dev setup
 
 ```powershell
-git clone https://github.com/ibrasonic/Weblore.git
-cd Weblore
+git clone https://github.com/ibrasonic/Reqlore.git
+cd Reqlore
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 py -m pip install -e .[dev]
-py -m weblore.cli init demo.weblore
-py -m weblore.cli ui --project demo.weblore
+py -m reqlore.cli init demo.rlr
+py -m reqlore.cli ui --project demo.rlr
 ```
 
 ## Running tests
 
 ```powershell
-py -m pytest weblore/tests/unit -q
-py -m pytest weblore/tests/integration -q     # needs vuln-bank/shop/social
-py -m pytest weblore/tests/a11y -q            # needs playwright + browsers
+py -m pytest reqlore/tests/unit -q
+py -m pytest reqlore/tests/integration -q     # needs vuln-bank/shop/social
+py -m pytest reqlore/tests/a11y -q            # needs playwright + browsers
 ```
 
 ## Adding a feature

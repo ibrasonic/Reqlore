@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Reporter{% endblock %}
+{% block main %}
+<h1>Reporter</h1>
+<p>Export the current finding set as a stand-alone report.</p>
+
+<table>
+  <caption>Open findings ({{ total }} total)</caption>
+  <thead><tr><th scope="col">Severity</th><th scope="col">Count</th></tr></thead>
+  <tbody>
+    {% for sev in ['critical','high','medium','low','info'] %}
+      <tr><th scope="row">{{ sev.title() }}</th><td>{{ summary.get(sev, 0) }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Download</h2>
+<ul>
+  <li><a href="{{ url_for('.export', fmt='md') }}">Markdown (.md)</a> — CommonMark, opens in any text editor or pull-request preview.</li>
+  <li><a href="{{ url_for('.export', fmt='html') }}">HTML (.html)</a> — self-contained, no JavaScript, prints cleanly.</li>
+  <li>
+    {% if docx_available %}
+      <a href="{{ url_for('.export', fmt='docx') }}">Word (.docx)</a> — drop into a deliverables folder.
+    {% else %}
+      <strong>Word (.docx)</strong> — requires <code>python-docx</code>. Install with
+      <code>pip install python-docx</code> and reload this page.
+    {% endif %}
+  </li>
+</ul>
+
+<h2>Filter the export</h2>
+<form method="get" action="{{ url_for('.export', fmt='md') }}" class="stack">
+  <p>
+    <label for="esev">Only severity</label>
+    <select id="esev" name="severity">
+      <option value="">(any)</option>
+      <option value="critical">critical</option>
+      <option value="high">high</option>
+      <option value="medium">medium</option>
+      <option value="low">low</option>
+      <option value="info">info</option>
+    </select>
+  </p>
+  <p>
+    <label for="estat">Only status</label>
+    <select id="estat" name="status">
+      <option value="">(any)</option>
+      <option value="open">open</option>
+      <option value="triaged">triaged</option>
+      <option value="false_positive">false_positive</option>
+      <option value="fixed">fixed</option>
+    </select>
+  </p>
+  <p><button type="submit">Download filtered Markdown</button></p>
+</form>
+{% endblock %}

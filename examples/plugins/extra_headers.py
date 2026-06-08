@@ -1,12 +1,12 @@
 """Example: add an extra passive rule that flags missing 'Server-Timing'."""
-from weblore.plugins_sdk import make_info, make_passive_rule
-from weblore.scanner.findings import Finding
+from reqlore.plugins_sdk import make_info, make_passive_rule
+from reqlore.scanner.findings import Finding
 
 PLUGIN_INFO = make_info(
     name="extra-headers",
     version="1.0",
     description="Adds a passive rule for the Server-Timing header.",
-    author="Weblore examples",
+    author="Reqlore examples",
 )
 
 
