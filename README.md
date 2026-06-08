@@ -86,6 +86,21 @@ Optional extras: `[h3]`, `[impersonate]`, `[report]`, `[plugins]`, `[yaml]`, `[a
 
 > **Debian/Ubuntu/Kali users:** `pip install .` against system Python is blocked by [PEP 668](https://peps.python.org/pep-0668/). Use `install.sh` (recommended), or `python3 -m venv .venv && source .venv/bin/activate` first. If `venv` is missing, `sudo apt install python3-venv`.
 
+### Uninstall
+
+```bash
+sh uninstall.sh                 # Linux / macOS
+sh uninstall.sh --purge-data    # also drop ./data and demo.weblore* files
+```
+
+```bat
+:: Windows
+uninstall.bat
+uninstall.bat --purge-data
+```
+
+Removes the pipx-installed `weblore` and/or the local `.venv/`. Does **not** remove pipx itself, Python, or the mitmproxy CA you may have trusted in your browser/OS keystore — those are kept because you might want them for other tools.
+
 ## Run with Docker
 
 ```powershell
