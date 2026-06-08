@@ -279,6 +279,12 @@ def test_launch_invokes_popen_with_profile(tmp_path, monkeypatch):
 
     class FakeProc:
         pid = 4242
+        returncode = None
+
+        def poll(self):
+            # Pretend the process is still running so launch() doesn't
+            # try to read stderr and explain a crash.
+            return None
 
     def fake_popen(args, *a, **kw):
         captured["args"] = list(args)
@@ -286,7 +292,7 @@ def test_launch_invokes_popen_with_profile(tmp_path, monkeypatch):
 
     monkeypatch.setattr(fxmod.subprocess, "Popen", fake_popen)
     res = fxmod.launch(exe=fake_exe, profile_dir=profile, url="http://x/",
-                       wait=False)
+                       wait=False, warmup_seconds=0.1)
     assert res.pid == 4242
     assert "--no-remote" in captured["args"]
     assert "--profile" in captured["args"]

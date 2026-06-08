@@ -28,6 +28,8 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -683,10 +685,71 @@ class LaunchResult:
     pid: int | None
 
 
+# Firefox writes a profile lock named `lock` (POSIX) / `parent.lock` (Windows)
+# in the profile dir. If we try to launch a second instance pointed at the
+# same profile, Firefox prints "Firefox is already running" and exits 1.
+_FIREFOX_ALREADY_RUNNING_RE = re.compile(
+    r"firefox is already running|profile is in use", re.IGNORECASE,
+)
+_FIREFOX_XPCOM_RE = re.compile(
+    r"XPCOMGlueLoad|libxul\.so", re.IGNORECASE,
+)
+
+
+def _explain_firefox_exit(returncode: int, stderr_text: str) -> str:
+    """Turn a Firefox crash into something a human can act on."""
+    text = stderr_text.strip()
+    snippet = text[-400:] if text else ""
+
+    if _FIREFOX_ALREADY_RUNNING_RE.search(text):
+        return (
+            "Firefox is already running against the Weblore profile.\n"
+            "  Close the existing Weblore-Firefox window, then re-run "
+            "`weblore browser`.\n"
+            "  (Profile dir: " + str(profile_root()) + ")"
+        )
+
+    if _FIREFOX_XPCOM_RE.search(text):
+        # Try to enumerate exactly what's missing so the message is concrete.
+        # We can't reach `exe` here cleanly without plumbing it through, so
+        # parse the soname out of the stderr itself.
+        m = re.search(r"([A-Za-z0-9_.+-]+\.so(?:\.\d+)+):\s+cannot open",
+                      text)
+        missing_hint = f" (missing {m.group(1)})" if m else ""
+        if platform.system() == "Linux":
+            return (
+                "Firefox can't start: required system libraries are missing"
+                f"{missing_hint}.\n"
+                "  Weblore tries to install these automatically, but the "
+                "step failed or was skipped.\n"
+                "  Re-run with sudo on PATH (or as root), or install "
+                "manually:\n"
+                "    sudo apt install -y libasound2t64 libdbus-glib-1-2 "
+                "libgtk-3-0 libx11-xcb1 libxt6 libpci3\n"
+                "  (Use libasound2 instead of libasound2t64 on Ubuntu < 24.04.)"
+            )
+        return (
+            f"Firefox can't load its runtime libraries{missing_hint}.\n"
+            "  Last stderr lines:\n    "
+            + snippet.replace("\n", "\n    ")
+        )
+
+    base = f"Firefox exited with code {returncode}."
+    if snippet:
+        return base + "\n  Last stderr:\n    " + snippet.replace("\n", "\n    ")
+    return base
+
+
 def launch(*, exe: Path, profile_dir: Path, url: str,
            extra_args: list[str] | None = None,
-           wait: bool = False) -> LaunchResult:
-    """Spawn Firefox pointed at our managed profile."""
+           wait: bool = False,
+           warmup_seconds: float = 2.0) -> LaunchResult:
+    """Spawn Firefox pointed at our managed profile.
+
+    Raises RuntimeError with an actionable message if Firefox dies within
+    `warmup_seconds` (typical for missing-libs / locked-profile / corrupt-
+    install failures).
+    """
     args = [
         str(exe),
         "--no-remote",
@@ -697,16 +760,55 @@ def launch(*, exe: Path, profile_dir: Path, url: str,
     if extra_args:
         args.extend(extra_args)
     log.info("launching: %s", " ".join(args))
+
     if wait:
         proc = subprocess.run(args, check=False)  # noqa: S603
-        pid = None
-    else:
-        proc = subprocess.Popen(args)  # noqa: S603
-        pid = proc.pid
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"Firefox exited with code {proc.returncode}."
+            )
+        return LaunchResult(
+            exe=exe, profile=profile_dir,
+            policies=_policies_target_dir(exe) / "policies.json",
+            pid=None,
+        )
+
+    # Capture stderr to a temp file so we can surface a useful message if
+    # Firefox dies during startup. We don't keep it past the warmup window
+    # — once Firefox is up, its stderr stays attached to the file but the
+    # browser keeps running fine.
+    fd, log_path = tempfile.mkstemp(prefix="weblore-firefox-", suffix=".log")
+    os.close(fd)
+    log_file = Path(log_path)
+    try:
+        with log_file.open("wb") as ferr:
+            proc = subprocess.Popen(args, stderr=ferr)  # noqa: S603
+
+        deadline = time.monotonic() + max(0.1, warmup_seconds)
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.1)
+
+        if proc.poll() is not None:
+            try:
+                err = log_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                err = ""
+            raise RuntimeError(_explain_firefox_exit(proc.returncode, err))
+    finally:
+        # If Firefox is still running, leave the log file on disk for the
+        # operator; otherwise clean it up.
+        if proc.poll() is not None:
+            try:
+                log_file.unlink()
+            except OSError:
+                pass
+
     return LaunchResult(
         exe=exe, profile=profile_dir,
         policies=_policies_target_dir(exe) / "policies.json",
-        pid=pid,
+        pid=proc.pid,
     )
 
 
@@ -728,7 +830,15 @@ def run_browser(*, ca_path: Path,
     exe = find_firefox(prefer_cache=prefer_cache)
     if exe is None:
         exe = download_firefox(version=version, archive_path=archive_path)
-    ensure_linux_runtime(exe)
+    leftover = ensure_linux_runtime(exe)
+    if leftover:
+        # ensure_linux_runtime already printed a friendly message; abort
+        # before we waste time launching a Firefox that will just die.
+        raise RuntimeError(
+            "Firefox runtime libraries are missing and could not be "
+            "installed automatically: " + ", ".join(leftover) +
+            ". See message above for the install command."
+        )
     install_policies(
         exe=exe, ca_path=ca_path,
         proxy_host=proxy_host, proxy_port=proxy_port,

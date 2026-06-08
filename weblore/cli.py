@@ -11,6 +11,8 @@ import argparse
 import logging
 import os
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 
 from . import __version__
@@ -68,6 +70,35 @@ def _resolve_project(arg: str | None) -> Path:
     return p
 
 
+def _port_in_use(host: str, port: int) -> bool:
+    """Try to bind (host, port) for half a second; return True if occupied."""
+    import socket
+    if port <= 0:
+        return False  # OS-assigned ports never collide
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except OSError:
+            pass
+        try:
+            s.bind((host, port))
+        except OSError:
+            return True
+    return False
+
+
+def _abort_if_port_busy(label: str, host: str, port: int) -> int | None:
+    """Return an exit code to bubble up if the port is already taken."""
+    if _port_in_use(host, port):
+        print(
+            f"error: {label} port {host}:{port} is already in use. "
+            "Is another `weblore` instance running?",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     path = _resolve_project(args.project_path)
     Project(path).close()
@@ -86,6 +117,13 @@ def cmd_ui(args: argparse.Namespace, *, proxy: ProxyController | None = None) ->
         print("refusing to bind non-loopback without --unsafe-bind", file=sys.stderr)
         return 2
 
+    # Skip the port pre-check when we were chained from `cmd_both` — the proxy
+    # already owns its port and we own the UI port from the same process.
+    if proxy is None:
+        rc = _abort_if_port_busy("UI", settings.ui_host, settings.ui_port)
+        if rc is not None:
+            return rc
+
     from .web import create_app
     project_path = _resolve_project(args.project)
     app = create_app(project_path, settings, proxy=proxy)
@@ -102,7 +140,24 @@ def cmd_ui(args: argparse.Namespace, *, proxy: ProxyController | None = None) ->
         serve(app, host=settings.ui_host, port=settings.ui_port, threads=8,
               ident="Weblore")
     except ImportError:
-        app.run(host=settings.ui_host, port=settings.ui_port)
+        try:
+            app.run(host=settings.ui_host, port=settings.ui_port)
+        except OSError as exc:
+            print(f"error: could not start UI on {settings.ui_host}:{settings.ui_port}: {exc}",
+                  file=sys.stderr)
+            return 1
+    except OSError as exc:
+        print(f"error: could not start UI on {settings.ui_host}:{settings.ui_port}: {exc}",
+              file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\nShutting down.", file=sys.stderr)
+    finally:
+        if proxy is not None:
+            try:
+                proxy.stop()
+            except Exception:  # noqa: BLE001
+                pass
     return 0
 
 
@@ -115,17 +170,39 @@ def cmd_proxy(args: argparse.Namespace) -> int:
         proxy_port=args.port or Settings().proxy_port,
         ui_port=args.ui_port or Settings().ui_port,
     ))
+    rc = _abort_if_port_busy("proxy", settings.proxy_host, settings.proxy_port)
+    if rc is not None:
+        return rc
     project = Project(project_path)
     ctrl = ProxyController(project, settings.proxy_host, settings.proxy_port, settings.ca_dir,
                            ui_port=settings.ui_port)
     ctrl.start()
+
+    # Give the proxy thread a moment to actually bind. If it died (mitmproxy
+    # couldn't load, bad CA dir, etc.) report it cleanly instead of dropping
+    # the user into a silent join().
+    import time as _time
+    for _ in range(20):
+        if ctrl.is_running():
+            break
+        _time.sleep(0.1)
+    if not ctrl.is_running():
+        print("error: proxy failed to start (run again with --verbose for details)",
+              file=sys.stderr)
+        return 1
+
     _print_banner(project_path=project_path,
                   proxy_endpoint=f"{settings.proxy_host}:{settings.proxy_port}")
     log.debug("Proxy listening on %s:%d", settings.proxy_host, settings.proxy_port)
     try:
         ctrl._thread.join()  # noqa: SLF001
     except KeyboardInterrupt:
-        ctrl.stop()
+        print("\nShutting down.", file=sys.stderr)
+    finally:
+        try:
+            ctrl.stop()
+        except Exception:  # noqa: BLE001
+            pass
     return 0
 
 
@@ -139,10 +216,30 @@ def cmd_both(args: argparse.Namespace) -> int:
         proxy_host="127.0.0.1",
         proxy_port=args.proxy_port or 8080,
     ))
+    # Check both ports up front — failing after the proxy has started would
+    # leak a thread and leave port 8080 held.
+    rc = _abort_if_port_busy("UI", settings.ui_host, settings.ui_port)
+    if rc is not None:
+        return rc
+    rc = _abort_if_port_busy("proxy", settings.proxy_host, settings.proxy_port)
+    if rc is not None:
+        return rc
+
     project = Project(project_path)
     ctrl = ProxyController(project, settings.proxy_host, settings.proxy_port, settings.ca_dir,
                            ui_port=settings.ui_port)
     ctrl.start()
+
+    import time as _time
+    for _ in range(20):
+        if ctrl.is_running():
+            break
+        _time.sleep(0.1)
+    if not ctrl.is_running():
+        print("error: proxy failed to start (run again with --verbose for details)",
+              file=sys.stderr)
+        return 1
+
     _print_banner(
         project_path=project_path,
         ui_url=f"http://{settings.ui_host}:{settings.ui_port}/",
@@ -271,9 +368,32 @@ def cmd_browser(args: argparse.Namespace) -> int:
             prefer_cache=not args.use_system,
             wait=args.wait,
         )
+    except KeyboardInterrupt:
+        print("\nCancelled.", file=sys.stderr)
+        return 130
     except RuntimeError as exc:
+        # Friendly, multi-line messages from launch()/run_browser/download.
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except FileNotFoundError as exc:
+        print(f"error: required file not found: {exc}", file=sys.stderr)
+        return 2
+    except PermissionError as exc:
+        print(f"error: permission denied: {exc}\n"
+              "  Check write access to ~/.local/share/weblore (or %APPDATA%\\weblore).",
+              file=sys.stderr)
+        return 2
+    except OSError as exc:
+        # Covers network errors during download (urllib raises URLError <- OSError),
+        # disk-full, etc.
+        print(f"error: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        return 1
+    except (zipfile.BadZipFile, tarfile.TarError, EOFError) as exc:
+        print(f"error: Firefox archive is corrupt or incomplete: {exc}\n"
+              "  Re-run with --firefox-version to force a fresh download.",
+              file=sys.stderr)
+        return 1
+
     log.info("Firefox launched (pid=%s)", result.pid)
     log.info("  exe      : %s", result.exe)
     log.info("  profile  : %s", result.profile)
@@ -293,9 +413,19 @@ def cmd_prefetch_firefox(args: argparse.Namespace) -> int:
                 if args.firefox_zip else None,
             force=args.force,
         )
+    except KeyboardInterrupt:
+        print("\nCancelled.", file=sys.stderr)
+        return 130
     except RuntimeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    except (zipfile.BadZipFile, tarfile.TarError, EOFError) as exc:
+        print(f"error: Firefox archive is corrupt or incomplete: {exc}",
+              file=sys.stderr)
+        return 1
+    except OSError as exc:
+        print(f"error: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        return 1
     log.info("Firefox ready at %s", exe)
     return 0
 
@@ -401,7 +531,21 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        print("\nCancelled.", file=sys.stderr)
+        return 130
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Last-resort safety net: unexpected exceptions become a one-line
+        # error instead of a traceback. Re-raise under WEBLORE_VERBOSE=1
+        # so developers can debug them.
+        if os.environ.get("WEBLORE_VERBOSE") == "1":
+            raise
+        print(f"error: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
