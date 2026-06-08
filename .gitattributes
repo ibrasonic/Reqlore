@@ -1,0 +1,25 @@
+# Default: let git decide based on auto-detection.
+* text=auto
+
+# Shell scripts must keep LF endings, even when checked out on Windows —
+# otherwise `#!/usr/bin/env sh` becomes `#!/usr/bin/env sh\r` and Linux
+# refuses to exec them ("no such file or directory").
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# Windows scripts get CRLF.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Treat these as binary so git doesn't try to "fix" their line endings.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.weblore binary
+*.whl   binary
+*.gz    binary
+*.zip   binary
