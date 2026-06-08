@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
+     role="img" aria-label="Weblore">
+  <title>Weblore</title>
+  <polygon points="32,4 56,18 56,46 32,60 8,46 8,18"
+           fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M 16 20 L 24 44 L 30.5 31" fill="none" stroke="currentColor" stroke-width="5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 48 20 L 40 44 L 33.5 31" fill="none" stroke="currentColor" stroke-width="5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32" cy="29.5" r="4" fill="currentColor"/>
+</svg>
