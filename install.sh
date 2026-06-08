@@ -6,20 +6,34 @@
 #
 # What it does:
 #   1. Verifies Python 3.12+ is present.
-#   2. If pipx is installed, uses it (preferred — isolates Weblore in its own
-#      venv and puts `weblore` on your PATH).
-#   3. Otherwise creates a venv in ./.venv and installs into it; you'll need
-#      to activate the venv (or call the absolute path) to run `weblore`.
+#   2. Ensures pipx is installed — tries (in order) the system package
+#      manager (apt/dnf/pacman/zypper/apk/brew) then `pip install --user pipx`.
+#      Uses sudo automatically if present.
+#   3. Runs `pipx install .` so you get a global `weblore` command.
+#   4. If steps 2-3 all fail, falls back to a local ./.venv install.
 #
 # Environment overrides:
-#   PYTHON=python3.12     pick a specific interpreter
-#   WEBLORE_VENV=.venv    venv location for the fallback path
+#   PYTHON=python3.12       pick a specific interpreter
+#   WEBLORE_VENV=.venv      venv location for the fallback path
+#   WEBLORE_NO_PIPX=1       skip pipx entirely; go straight to venv
 set -eu
 
 PYTHON="${PYTHON:-python3}"
 
 die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 info() { printf '==> %s\n' "$*"; }
+warn() { printf 'warn: %s\n' "$*" >&2; }
+
+# Run a command with sudo if we're not already root and sudo exists.
+maybe_sudo() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        return 127
+    fi
+}
 
 # Refuse to install from the wrong directory — pip would silently grab the PyPI
 # package (or fail) if pyproject.toml is missing, which is exactly the trap we
@@ -35,22 +49,82 @@ command -v "$PYTHON" >/dev/null 2>&1 \
 "$PYTHON" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' \
     || die "Python 3.12+ required (have: $("$PYTHON" --version 2>&1))."
 
-# ---- 2. pipx fast path ----
-if command -v pipx >/dev/null 2>&1; then
-    info "pipx detected — installing Weblore as an isolated CLI"
+# ---- 2. pipx: install if missing, then use it ------------------------------
+
+install_pipx() {
+    # Try the system package manager appropriate to this host. Return 0 on
+    # success, non-zero if no path worked.
+    if command -v apt-get >/dev/null 2>&1; then
+        info "installing pipx via apt"
+        maybe_sudo apt-get update -y >/dev/null 2>&1 || true
+        maybe_sudo apt-get install -y pipx && return 0
+    fi
+    if command -v dnf >/dev/null 2>&1; then
+        info "installing pipx via dnf"
+        maybe_sudo dnf install -y pipx && return 0
+    fi
+    if command -v pacman >/dev/null 2>&1; then
+        info "installing pipx via pacman"
+        maybe_sudo pacman -S --noconfirm python-pipx && return 0
+    fi
+    if command -v zypper >/dev/null 2>&1; then
+        info "installing pipx via zypper"
+        maybe_sudo zypper install -y python3-pipx && return 0
+    fi
+    if command -v apk >/dev/null 2>&1; then
+        info "installing pipx via apk"
+        maybe_sudo apk add --no-cache pipx && return 0
+    fi
+    if command -v brew >/dev/null 2>&1; then
+        info "installing pipx via Homebrew"
+        brew install pipx && return 0
+    fi
+    # Last resort: pip --user. Works on any platform with Python+pip.
+    info "no system package manager matched; installing pipx via pip --user"
+    "$PYTHON" -m pip install --user pipx && {
+        # pip --user puts scripts in a directory that may not be on PATH yet.
+        # Try the canonical spot so the very next `command -v pipx` finds it.
+        PATH="$HOME/.local/bin:$PATH"
+        export PATH
+        return 0
+    }
+    return 1
+}
+
+use_pipx() {
+    if [ "${WEBLORE_NO_PIPX:-0}" = "1" ]; then
+        return 1
+    fi
+    if ! command -v pipx >/dev/null 2>&1; then
+        if ! install_pipx; then
+            warn "couldn't install pipx automatically — falling back to local venv"
+            return 1
+        fi
+    fi
+    # pipx ensurepath is idempotent and quiet on second run; do it once so the
+    # user's shells pick up ~/.local/bin without them having to know about it.
+    pipx ensurepath >/dev/null 2>&1 || true
+    PATH="$HOME/.local/bin:$PATH"
+    export PATH
+
+    info "installing Weblore with pipx (isolated CLI on PATH)"
     pipx install --force .
     info "done."
-    info ""
-    info "Try it:"
-    info "  weblore --help"
-    info "  weblore init demo.weblore"
-    info "  weblore both --project demo.weblore"
-    info ""
-    info "If 'weblore' isn't found, run: pipx ensurepath  (then open a new shell)"
+    echo
+    echo "Try it:"
+    echo "  weblore --help"
+    echo "  weblore init demo.weblore"
+    echo "  weblore both --project demo.weblore"
+    echo
+    echo "If 'weblore' is not found, open a new shell (so PATH picks up ~/.local/bin)."
+    return 0
+}
+
+if use_pipx; then
     exit 0
 fi
 
-# ---- 3. venv fallback ----
+# ---- 3. venv fallback ------------------------------------------------------
 VENV="${WEBLORE_VENV:-.venv}"
 
 if [ ! -d "$VENV" ]; then
@@ -82,6 +156,3 @@ echo "Or activate the venv first and use the bare command:"
 echo "  source $VENV/bin/activate"
 echo "  weblore init demo.weblore"
 echo "  weblore both --project demo.weblore"
-echo
-echo "Tip: 'pipx install .' (after 'sudo apt install pipx') gives you a global"
-echo "     'weblore' command without the activation step."

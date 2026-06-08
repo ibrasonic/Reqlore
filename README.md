@@ -46,9 +46,11 @@ install.bat
 ```
 
 The installer creates a virtual environment in `.venv/`, installs Weblore
-into it, and prints how to run the `weblore` command. On Linux/macOS, if
-[`pipx`](https://pipx.pypa.io) is available it's used instead (preferred
-— you get a global `weblore` command with no activation step).
+into it, and prints how to run the `weblore` command. On Linux/macOS the
+script tries to install [`pipx`](https://pipx.pypa.io) automatically via your
+system package manager (`apt`/`dnf`/`pacman`/`zypper`/`apk`/`brew`, with
+`sudo` if needed) so you get a global `weblore` command with no activation
+step; set `WEBLORE_NO_PIPX=1` to skip and go straight to the venv path.
 
 Then:
 
