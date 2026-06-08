@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -18,12 +19,45 @@ from .proxy.mitm import ProxyController
 from .storage import Project
 
 
-def _logger() -> logging.Logger:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-    )
+def _logger(*, verbose: bool = False) -> logging.Logger:
+    """Configure root logging once. Verbose mode keeps the noisy long format
+    with timestamps and logger names; the default mode is quiet and only shows
+    warnings/errors (the startup banner already covers the "what is listening
+    where" question)."""
+    if verbose:
+        level = logging.INFO
+        fmt = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
+    else:
+        level = logging.WARNING
+        fmt = "%(levelname)s: %(message)s"
+    logging.basicConfig(level=level, format=fmt, force=True)
+    # waitress prints its own "Serving on http://..." INFO line that duplicates
+    # the banner — silence it unless the user explicitly asked for verbose.
+    if not verbose:
+        logging.getLogger("waitress").setLevel(logging.WARNING)
     return logging.getLogger("weblore")
+
+
+def _verbose_from(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "verbose", False)) or os.environ.get("WEBLORE_VERBOSE") == "1"
+
+
+def _print_banner(*, project_path: Path | str | None = None,
+                  ui_url: str | None = None,
+                  proxy_endpoint: str | None = None) -> None:
+    """Print a clean, screen-reader-friendly startup banner."""
+    title = f"Weblore {__version__}"
+    bar = "=" * len(title)
+    lines = [title, bar]
+    if project_path is not None:
+        lines.append(f"  Project:  {project_path}")
+    if ui_url is not None:
+        lines.append(f"  UI:       {ui_url}")
+    if proxy_endpoint is not None:
+        lines.append(f"  Proxy:    {proxy_endpoint}  (set this in your browser)")
+    lines.append("")
+    lines.append("Press Ctrl+C to stop.")
+    print("\n".join(lines), flush=True)
 
 
 def _resolve_project(arg: str | None) -> Path:
@@ -42,7 +76,8 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_ui(args: argparse.Namespace, *, proxy: ProxyController | None = None) -> int:
-    log = _logger()
+    verbose = _verbose_from(args)
+    log = _logger(verbose=verbose)
     settings = settings_from_env(Settings(
         ui_host=args.host or Settings().ui_host,
         ui_port=args.port or Settings().ui_port,
@@ -55,9 +90,15 @@ def cmd_ui(args: argparse.Namespace, *, proxy: ProxyController | None = None) ->
     project_path = _resolve_project(args.project)
     app = create_app(project_path, settings, proxy=proxy)
 
+    # When called from cmd_both the banner is already on screen with both
+    # endpoints — skip the solo banner to avoid duplication.
+    if proxy is None:
+        _print_banner(project_path=project_path,
+                      ui_url=f"http://{settings.ui_host}:{settings.ui_port}/")
+
     try:
         from waitress import serve
-        log.info("Serving Weblore UI on http://%s:%d/", settings.ui_host, settings.ui_port)
+        log.debug("Serving Weblore UI on http://%s:%d/", settings.ui_host, settings.ui_port)
         serve(app, host=settings.ui_host, port=settings.ui_port, threads=8,
               ident="Weblore")
     except ImportError:
@@ -66,7 +107,8 @@ def cmd_ui(args: argparse.Namespace, *, proxy: ProxyController | None = None) ->
 
 
 def cmd_proxy(args: argparse.Namespace) -> int:
-    log = _logger()
+    verbose = _verbose_from(args)
+    log = _logger(verbose=verbose)
     project_path = _resolve_project(args.project)
     settings = settings_from_env(Settings(
         proxy_host="127.0.0.1",
@@ -77,8 +119,9 @@ def cmd_proxy(args: argparse.Namespace) -> int:
     ctrl = ProxyController(project, settings.proxy_host, settings.proxy_port, settings.ca_dir,
                            ui_port=settings.ui_port)
     ctrl.start()
-    log.info("Proxy listening on %s:%d", settings.proxy_host, settings.proxy_port)
-    log.info("Press Ctrl+C to stop.")
+    _print_banner(project_path=project_path,
+                  proxy_endpoint=f"{settings.proxy_host}:{settings.proxy_port}")
+    log.debug("Proxy listening on %s:%d", settings.proxy_host, settings.proxy_port)
     try:
         ctrl._thread.join()  # noqa: SLF001
     except KeyboardInterrupt:
@@ -87,7 +130,8 @@ def cmd_proxy(args: argparse.Namespace) -> int:
 
 
 def cmd_both(args: argparse.Namespace) -> int:
-    log = _logger()
+    verbose = _verbose_from(args)
+    log = _logger(verbose=verbose)
     project_path = _resolve_project(args.project)
     settings = settings_from_env(Settings(
         ui_host=args.host or "127.0.0.1",
@@ -99,11 +143,17 @@ def cmd_both(args: argparse.Namespace) -> int:
     ctrl = ProxyController(project, settings.proxy_host, settings.proxy_port, settings.ca_dir,
                            ui_port=settings.ui_port)
     ctrl.start()
-    log.info("Proxy on %s:%d", settings.proxy_host, settings.proxy_port)
+    _print_banner(
+        project_path=project_path,
+        ui_url=f"http://{settings.ui_host}:{settings.ui_port}/",
+        proxy_endpoint=f"{settings.proxy_host}:{settings.proxy_port}",
+    )
+    log.debug("Proxy on %s:%d", settings.proxy_host, settings.proxy_port)
     return cmd_ui(argparse.Namespace(
         project=str(project_path),
         host=settings.ui_host, port=settings.ui_port,
         unsafe_bind=bool(getattr(args, "unsafe_bind", False)),
+        verbose=verbose,
     ), proxy=ctrl)
 
 
@@ -265,6 +315,8 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument("--port", type=int, default=None)
     pu.add_argument("--unsafe-bind", action="store_true",
                     help="Allow binding non-loopback addresses (dangerous).")
+    pu.add_argument("-v", "--verbose", action="store_true",
+                    help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pu.set_defaults(func=cmd_ui)
 
     pp = sub.add_parser("proxy", help="Start the MITM proxy only.")
@@ -274,6 +326,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Port the Weblore UI listens on; the proxy will "
                          "never hold requests to localhost:<this port> so "
                          "the operator's own UI tab can't get stuck.")
+    pp.add_argument("-v", "--verbose", action="store_true",
+                    help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pp.set_defaults(func=cmd_proxy)
 
     pb = sub.add_parser("both", help="Start UI + proxy in the same process.")
@@ -283,6 +337,8 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--proxy-port", type=int, default=None)
     pb.add_argument("--unsafe-bind", action="store_true",
                     help="Allow binding non-loopback addresses (dangerous).")
+    pb.add_argument("-v", "--verbose", action="store_true",
+                    help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pb.set_defaults(func=cmd_both)
 
     psc = sub.add_parser("scan", help="Run the passive scanner on recorded history.")
