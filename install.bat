@@ -5,23 +5,38 @@ rem Usage (from inside the cloned repo, in cmd or PowerShell):
 rem   install.bat
 rem
 rem What it does:
-rem   1. Finds Python 3.12+ (prefers the `py` launcher, falls back to `python`).
-rem   2. Creates a virtual environment in .venv\.
-rem   3. Installs Reqlore into the venv.
-rem   4. Prints instructions to run it.
+rem   1. Verifies Python 3.12+ is present (prefers `py` launcher, then `python`).
+rem   2. Ensures pipx is installed (installs it via `pip install --user pipx`
+rem      if missing) and uses it to install Reqlore globally so `reqlore`
+rem      lands permanently on your PATH and survives across new shells.
+rem   3. If pipx can't be used, falls back to a local .venv install.
+rem
+rem Environment overrides:
+rem   PYTHON=py             pick a specific launcher/interpreter
+rem   REQLORE_VENV=.venv    venv location for the fallback path
+rem   REQLORE_NO_PIPX=1     skip pipx entirely; go straight to venv
 
-setlocal enableextensions
+setlocal enableextensions enabledelayedexpansion
 
 if not exist "pyproject.toml" (
     echo error: run this from the Reqlore repository root ^(pyproject.toml not found^).
     exit /b 1
 )
 
-rem ---- 1. find Python ------------------------------------------------------
-set "PY="
-where py >nul 2>&1 && set "PY=py"
-if not defined PY where python >nul 2>&1 && set "PY=python"
+findstr /b /c:"name = \"reqlore\"" pyproject.toml >nul
+if errorlevel 1 (
+    echo error: this directory's pyproject.toml is not Reqlore's. Are you in the right folder?
+    exit /b 1
+)
 
+rem ---- 1. find Python ------------------------------------------------------
+set "PY=%PYTHON%"
+if not defined PY (
+    where py >nul 2>&1 && set "PY=py"
+)
+if not defined PY (
+    where python >nul 2>&1 && set "PY=python"
+)
 if not defined PY (
     echo error: Python not found on PATH.
     echo Install Python 3.12+ from https://www.python.org/downloads/
@@ -29,7 +44,6 @@ if not defined PY (
     exit /b 1
 )
 
-rem ---- 2. version check ----------------------------------------------------
 %PY% -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)"
 if errorlevel 1 (
     echo error: Python 3.12+ required.
@@ -37,8 +51,60 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem ---- 3. venv -------------------------------------------------------------
-set "VENV=.venv"
+rem ---- 2. pipx path (permanent, global) -----------------------------------
+if "%REQLORE_NO_PIPX%"=="1" goto :venv
+
+call :try_pipx
+if not errorlevel 1 (
+    endlocal
+    exit /b 0
+)
+
+echo warn: couldn't install via pipx -- falling back to local venv
+goto :venv
+
+rem ----------------------------------------------------------------------
+:try_pipx
+    %PY% -m pipx --version >nul 2>&1
+    if errorlevel 1 (
+        echo ==^> installing pipx ^(per-user, no admin needed^)
+        %PY% -m pip install --user --upgrade pipx
+        if errorlevel 1 exit /b 1
+        %PY% -m pipx --version >nul 2>&1
+        if errorlevel 1 (
+            echo error: pipx still not importable after install
+            exit /b 1
+        )
+    )
+
+    echo ==^> registering pipx scripts directory on PATH ^(persistent^)
+    %PY% -m pipx ensurepath >nul 2>&1
+
+    echo ==^> installing Reqlore with pipx ^(isolated, permanent, ~150 MB^)
+    %PY% -m pipx install --force .
+    if errorlevel 1 exit /b 1
+
+    echo.
+    echo ==^> done.
+    echo.
+    echo Reqlore is permanently installed and `reqlore` is on your PATH.
+    echo.
+    echo Open a NEW PowerShell or cmd window ^(so PATH refreshes^), then:
+    echo   reqlore --help
+    echo   reqlore init demo.rlr
+    echo   reqlore both --project demo.rlr
+    echo.
+    echo UI:    http://127.0.0.1:8787
+    echo Proxy: 127.0.0.1:8080
+    echo.
+    echo To upgrade later from this repo:  pipx reinstall reqlore
+    echo To remove:                        uninstall.bat
+    exit /b 0
+
+rem ----------------------------------------------------------------------
+:venv
+set "VENV=%REQLORE_VENV%"
+if not defined VENV set "VENV=.venv"
 
 if not exist "%VENV%\Scripts\python.exe" (
     echo ==^> creating virtual environment at %VENV%
@@ -49,7 +115,6 @@ if not exist "%VENV%\Scripts\python.exe" (
     )
 )
 
-rem ---- 4. install ----------------------------------------------------------
 echo ==^> upgrading pip
 "%VENV%\Scripts\python.exe" -m pip install --upgrade pip >nul
 
@@ -60,7 +125,6 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem ---- 5. done -------------------------------------------------------------
 echo.
 echo ==^> done.
 echo.
