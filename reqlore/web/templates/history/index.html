@@ -37,7 +37,9 @@
 <p>{{ total }} total records. Showing page {{ page }} ({{ rows|length }} item{{ '' if rows|length == 1 else 's' }}).</p>
 
 {% if rows %}
-<table id="hist-table">
+<p id="cmp-status" class="cmp-status" hidden aria-live="polite"></p>
+<table id="hist-table"
+       data-comparer-url="{{ url_for('comparer.index') }}">
   <caption class="visually-hidden">HTTP history, newest first.</caption>
   <thead>
     <tr>
@@ -66,11 +68,19 @@
       <td>{{ r.engine }}</td>
       <td>{{ flags|join(', ') }}</td>
       <td>
-        <a href="{{ url_for('history.show', hid=r.id) }}">View</a>
-        <a href="{{ url_for('repeater.index', from_history=r.id) }}">Send to Repeater</a>
-        <a href="{{ url_for('intruder.new', from_history=r.id) }}">Send to Intruder</a>
-        <a href="{{ url_for('comparer.index', from_a=r.id) }}">Compare A</a>
-        <a href="{{ url_for('comparer.index', from_b=r.id) }}">Compare B</a>
+        <details class="row-actions">
+          <summary aria-label="Actions for request #{{ r.id }}">Actions</summary>
+          <ul class="row-actions-list">
+            <li><a href="{{ url_for('history.show', hid=r.id) }}">View</a></li>
+            <li><a href="{{ url_for('repeater.index', from_history=r.id) }}">Send to Repeater</a></li>
+            <li><a href="{{ url_for('intruder.new', from_history=r.id) }}">Send to Intruder</a></li>
+            <li><a href="{{ url_for('comparer.index', from_a=r.id) }}"
+                   class="cmp-pick"
+                   data-hid="{{ r.id }}"
+                   data-label-a="Compare A"
+                   data-label-b="Compare B">Compare A</a></li>
+          </ul>
+        </details>
       </td>
     </tr>
     {% endfor %}

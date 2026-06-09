@@ -97,4 +97,80 @@
     };
     setInterval(poll, 2000);
   }
+
+  // History: 2-step Comparer pick.
+  // No JS: each row's "Compare A" link goes straight to /comparer?from_a=<id>.
+  // With JS: first click on any row records that row as A and re-labels
+  // every other row's link to "Compare B"; the second click (on a different
+  // row) navigates to /comparer?from_a=<A>&from_b=<B>. Clicking the row
+  // that holds A again clears the selection.
+  (function () {
+    var picks = document.querySelectorAll("a.cmp-pick");
+    if (!picks.length) return;
+    var table = document.getElementById("hist-table");
+    var baseUrl = (table && table.getAttribute("data-comparer-url")) || "/comparer/";
+    var status = document.getElementById("cmp-status");
+    var KEY = "reqloreCompareA";
+
+    function setStatus(msg) {
+      if (!status) return;
+      status.textContent = msg || "";
+      status.hidden = !msg;
+    }
+
+    function relabel() {
+      var a = sessionStorage.getItem(KEY);
+      picks.forEach(function (el) {
+        var hid = el.getAttribute("data-hid");
+        var labelA = el.getAttribute("data-label-a") || "Compare A";
+        var labelB = el.getAttribute("data-label-b") || "Compare B";
+        if (a && a === hid) {
+          el.textContent = "Compare (A picked)";
+          el.setAttribute("aria-label",
+            "Request #" + hid + " is picked as A. Click again to clear, or pick another row as B.");
+        } else if (a) {
+          el.textContent = labelB;
+          el.setAttribute("aria-label", "Compare with A (A is request #" + a + ")");
+        } else {
+          el.textContent = labelA;
+          el.removeAttribute("aria-label");
+        }
+      });
+      if (a) {
+        setStatus("Compare A = #" + a + ". Click Compare B on another row to open the comparer.");
+      } else {
+        setStatus("");
+      }
+    }
+
+    picks.forEach(function (el) {
+      el.addEventListener("click", function (ev) {
+        var hid = el.getAttribute("data-hid");
+        var a = sessionStorage.getItem(KEY);
+        if (!a) {
+          ev.preventDefault();
+          sessionStorage.setItem(KEY, hid);
+          relabel();
+          announce("Picked request #" + hid +
+            " as A. Click Compare on another row to pick B.");
+          return;
+        }
+        if (a === hid) {
+          ev.preventDefault();
+          sessionStorage.removeItem(KEY);
+          relabel();
+          announce("Cleared compare A.");
+          return;
+        }
+        ev.preventDefault();
+        sessionStorage.removeItem(KEY);
+        var sep = baseUrl.indexOf("?") >= 0 ? "&" : "?";
+        window.location.href = baseUrl + sep +
+          "from_a=" + encodeURIComponent(a) +
+          "&from_b=" + encodeURIComponent(hid);
+      });
+    });
+
+    relabel();
+  })();
 })();
