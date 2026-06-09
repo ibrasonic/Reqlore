@@ -8,9 +8,12 @@ from flask import (
     Blueprint, abort, flash, g, redirect, render_template, request, url_for,
 )
 
+from .._prg import PRGCache
 from ...macros import Macro, run as run_macro
 
 bp = Blueprint("macros", __name__)
+
+_run_cache = PRGCache()
 
 
 @bp.route("/")
@@ -62,6 +65,10 @@ def show(mid: int):
             last_run = run_macro(macro)
             flash(f"Ran {len(last_run.steps)} step(s) in {last_run.elapsed_ms} ms.",
                   "ok" if not any(s.error for s in last_run.steps) else "warn")
+            tok = _run_cache.put(last_run)
+            return redirect(url_for(".show", mid=mid, t=tok))
+    if tok := request.args.get("t"):
+        last_run = _run_cache.get(tok)
     return render_template("macros/show.html", mid=mid, macro=macro,
                             definition=macro.to_json(), last_run=last_run)
 

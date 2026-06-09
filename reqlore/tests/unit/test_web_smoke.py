@@ -50,7 +50,7 @@ def test_decoder_b64_encode(client):
         token = sess.get("csrf", "")
     r = client.post("/decoder/", data={
         "op": "b64_encode", "text_in": "hello", "_csrf": token,
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"aGVsbG8=" in r.data
 
@@ -65,7 +65,7 @@ def test_decoder_jwt_decode(client):
     )
     r = client.post("/decoder/", data={
         "op": "jwt_decode", "text_in": jwt, "_csrf": token,
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"alice" in r.data
 
@@ -168,7 +168,7 @@ def test_repeater_urlencode_body_button(client):
         "method": "POST", "url": "http://x.test/login", "engine": "httpx",
         "http_version": "1.1", "headers_text": "",
         "body": "username=' OR 1=1-- &password=anything",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     # Outer '=' kept literal; '&' kept (but HTML-escaped to '&amp;' in the
     # textarea). Apostrophe, spaces, and the inner 1=1 '=' ARE encoded.
@@ -185,7 +185,7 @@ def test_repeater_urlencode_body_non_form_falls_back(client):
         "method": "POST", "url": "http://x.test/api", "engine": "httpx",
         "http_version": "1.1", "headers_text": "",
         "body": '{"username":"alice"}',
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"%7B%22username%22%3A%22alice%22%7D" in r.data
 
@@ -199,7 +199,7 @@ def test_repeater_urldecode_body_button(client):
         "method": "POST", "url": "http://x.test/login", "engine": "httpx",
         "http_version": "1.1", "headers_text": "",
         "body": "username=%27+OR+1%3D1--+&password=anything",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     # Apostrophe → &#39;, '&' → &amp; inside the textarea.
     assert b"username=&#39; OR 1=1-- &amp;password=anything" in r.data
@@ -217,7 +217,7 @@ def test_repeater_send_with_unreachable_host_does_not_500(client):
         "url": "http://127.0.0.1:1/",  # nothing listens on port 1
         "engine": "httpx", "http_version": "1.1",
         "headers_text": "", "body": "",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"<strong>Error:</strong>" in r.data
 
@@ -240,7 +240,7 @@ def test_repeater_send_strips_stale_content_length(client):
         "engine": "httpx", "http_version": "1.1",
         "headers_text": "Content-Length: 5\nTransfer-Encoding: chunked",
         "body": long_body,
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     # We expect a connection error (port 1 is closed), NOT a
     # LocalProtocolError about Content-Length. The mere absence of that
@@ -274,7 +274,7 @@ def test_repeater_response_body_has_raw_and_decoded_views(client, monkeypatch):
         "_csrf": token, "action": "send",
         "method": "GET", "url": "http://x.test/", "engine": "httpx",
         "http_version": "1.1", "headers_text": "", "body": "",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     html = r.data
     # Single toggle button is present and starts un-pressed (raw view).

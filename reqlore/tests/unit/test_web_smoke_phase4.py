@@ -63,7 +63,8 @@ def test_saml_decode_post(client):
     client.get("/saml/")
     with client.session_transaction() as sess:
         token = sess.get("csrf", "")
-    r = client.post("/saml/", data={"blob": blob, "_csrf": token})
+    r = client.post("/saml/", data={"blob": blob, "_csrf": token},
+                      follow_redirects=True)
     assert r.status_code == 200
     assert b"http-post" in r.data
     assert b"idp" in r.data

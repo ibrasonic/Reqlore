@@ -283,7 +283,7 @@ def test_decoder_post_url_decode_form_body(client):
     r = client.post("/decoder/", data={
         "op": "url_decode", "text_in": "name=jane+doe&note=hi%21",
         "_csrf": csrf,
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"name=jane doe&amp;note=hi!" in r.data \
         or b"name=jane doe&note=hi!" in r.data

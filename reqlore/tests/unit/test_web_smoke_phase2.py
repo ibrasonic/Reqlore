@@ -49,7 +49,7 @@ def test_comparer_runs_diff(client):
     r = client.post("/comparer/", data={
         "a": "alpha\nbeta\ngamma", "b": "alpha\nBETA\ngamma\ndelta",
         "view": "request", "from_a": "", "from_b": "", "_csrf": token,
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"changed" in r.data or b"only in" in r.data
 
@@ -70,7 +70,7 @@ def test_jwt_decode_round_trip(client):
         "action": "decode", "token": jwt, "_csrf": token,
         "header_text": "", "payload_text": "", "alg": "HS256",
         "secret": "", "private_key": "", "public_key": "", "kid_values": "",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"alice" in r.data
     assert b"alg=none" in r.data  # warning surfaces

@@ -38,7 +38,7 @@ def test_sequencer_post_analyses_tokens(client):
     r = client.post("/sequencer/", data={
         "_csrf": token,
         "tokens": "abc123\ndef456\nghi789\njkl012",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"Result &mdash;" in r.data or b"Result" in r.data
     assert b"sample(s)" in r.data
@@ -86,7 +86,7 @@ def test_h2_parse_hex(client):
     r = client.post("/h2/", data={
         "_csrf": token, "action": "parse",
         "hex": "00 00 00 04 01 00 00 00 00",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"SETTINGS" in r.data
     assert b"ACK" in r.data
@@ -97,7 +97,7 @@ def test_h2_build_ping(client):
     r = client.post("/h2/", data={
         "_csrf": token, "action": "build",
         "frame": "ping", "opaque": "reqlore!",
-    })
+    }, follow_redirects=True)
     assert r.status_code == 200
     assert b"Built frame (hex)" in r.data
 

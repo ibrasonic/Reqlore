@@ -4,8 +4,11 @@ from __future__ import annotations
 import time
 from dataclasses import asdict
 
-from flask import Blueprint, g, render_template, request
+from flask import (
+    Blueprint, g, redirect, render_template, request, url_for,
+)
 
+from .._prg import PRGCache
 from ...a11y import (
     ResponseSummaryInput, render_curl, render_fetch,
     render_httpx, render_raw_http, render_requests, summarise_response,
@@ -14,6 +17,14 @@ from ...engines import Request
 from ...engines import curl_cffi_engine, h3_engine, httpx_engine, raw_engine
 
 bp = Blueprint("repeater", __name__)
+
+_cache = PRGCache()
+
+
+_EMPTY_FORM = {
+    "method": "GET", "url": "http://127.0.0.1/", "headers_text": "",
+    "body": "", "engine": "httpx", "http_version": "1.1",
+}
 
 
 def _load_from_history(hid: int) -> dict:
@@ -57,16 +68,20 @@ def _parse_raw(raw: bytes, fallback_url: str, fallback_method: str):
 
 @bp.route("/", methods=["GET", "POST"])
 def index():
-    form = {
-        "method": "GET", "url": "http://127.0.0.1/", "headers_text": "",
-        "body": "", "engine": "httpx", "http_version": "1.1",
-    }
+    form = dict(_EMPTY_FORM)
     resp_obj = None
     summary = ""
     render_blocks: dict[str, str] = {}
 
     if request.method == "GET":
-        if hid := request.args.get("from_history"):
+        if tok := request.args.get("t"):
+            stashed = _cache.get(tok)
+            if stashed:
+                form = stashed["form"]
+                resp_obj = stashed["resp_obj"]
+                summary = stashed["summary"]
+                render_blocks = stashed["render_blocks"]
+        elif hid := request.args.get("from_history"):
             try:
                 form.update(_load_from_history(int(hid)))
             except ValueError:
@@ -81,7 +96,7 @@ def index():
                 form[k] = request.form[k]
 
         # Body transforms short-circuit: no network, no history, just
-        # re-render the form with the transformed body. We intentionally
+        # stash the transformed form and redirect. We intentionally
         # do this BEFORE building Request so an empty/invalid URL doesn't
         # block the user from encoding a payload first.
         if action in ("urlencode_body", "urldecode_body"):
@@ -90,11 +105,11 @@ def index():
                 form["body"] = _smart_url_encode_body(form["body"])
             else:
                 form["body"] = unquote_plus(form["body"])
-            return render_template(
-                "repeater/index.html",
-                form=form, resp=None, resp_dict=None,
-                summary="", render_blocks={},
-            )
+            tok = _cache.put({
+                "form": form, "resp_obj": None,
+                "summary": "", "render_blocks": {},
+            })
+            return redirect(url_for(".index", t=tok))
 
         headers = _parse_header_block(form["headers_text"])
         req = Request(
@@ -172,6 +187,12 @@ def index():
                 "raw": render_raw_http(req.method, req.url, req.headers, req.body or None,
                                        req.http_version),
             }
+
+        tok = _cache.put({
+            "form": form, "resp_obj": resp_obj,
+            "summary": summary, "render_blocks": render_blocks,
+        })
+        return redirect(url_for(".index", t=tok))
 
     return render_template(
         "repeater/index.html",

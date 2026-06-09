@@ -1,8 +1,9 @@
 """HTTP/2 frame inspector + crafter blueprint."""
 from __future__ import annotations
 
-from flask import Blueprint, render_template, request
+from flask import Blueprint, redirect, render_template, request, url_for
 
+from .._prg import PRGCache
 from ...h2_tool import (
     build_goaway, build_ping, build_rst_stream, build_settings,
     build_window_update, parse_frames, parse_hex, to_hex,
@@ -10,31 +11,39 @@ from ...h2_tool import (
 
 bp = Blueprint("h2", __name__)
 
+_cache = PRGCache()
+
 
 @bp.route("/", methods=["GET", "POST"])
 def index():
-    hex_text = request.form.get("hex", "")
-    action = request.form.get("action", "")
-    stream = None
-    built_hex = ""
-    builder_err = ""
-
-    if action == "parse" and hex_text.strip():
-        try:
-            data = parse_hex(hex_text)
-            stream = parse_frames(data)
-        except Exception as exc:
-            builder_err = f"parse failed: {exc}"
-
-    if action == "build":
-        try:
-            built_hex = _build_from_form(request.form)
-        except Exception as exc:
-            builder_err = f"build failed: {exc}"
-
+    if request.method == "POST":
+        hex_text = request.form.get("hex", "")
+        action = request.form.get("action", "")
+        stream = None
+        built_hex = ""
+        builder_err = ""
+        if action == "parse" and hex_text.strip():
+            try:
+                data = parse_hex(hex_text)
+                stream = parse_frames(data)
+            except Exception as exc:
+                builder_err = f"parse failed: {exc}"
+        elif action == "build":
+            try:
+                built_hex = _build_from_form(request.form)
+            except Exception as exc:
+                builder_err = f"build failed: {exc}"
+        token = _cache.put({
+            "hex_text": hex_text, "stream": stream,
+            "built_hex": built_hex, "builder_err": builder_err,
+        })
+        return redirect(url_for(".index", t=token))
+    stashed = _cache.get(request.args.get("t")) or {}
     return render_template("h2/index.html",
-                            hex_text=hex_text, stream=stream,
-                            built_hex=built_hex, builder_err=builder_err)
+                            hex_text=stashed.get("hex_text", ""),
+                            stream=stashed.get("stream"),
+                            built_hex=stashed.get("built_hex", ""),
+                            builder_err=stashed.get("builder_err", ""))
 
 
 def _build_from_form(form) -> str:

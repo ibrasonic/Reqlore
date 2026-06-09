@@ -12,9 +12,13 @@ import urllib.parse
 import zlib
 
 import jwt as pyjwt
-from flask import Blueprint, render_template, request
+from flask import Blueprint, redirect, render_template, request, url_for
+
+from .._prg import PRGCache
 
 bp = Blueprint("decoder", __name__)
+
+_cache = PRGCache()
 
 
 OPERATIONS = [
@@ -216,15 +220,28 @@ def _printable(s: str) -> bool:
 
 @bp.route("/", methods=["GET", "POST"])
 def index():
-    op = request.form.get("op", "url_encode") if request.method == "POST" else "url_encode"
-    text_in = request.form.get("text_in", "") if request.method == "POST" else ""
-    # Pre-fill from GET param when arriving via "Send to Decoder".
-    if request.method == "GET":
+    if request.method == "POST":
+        op = request.form.get("op", "url_encode")
+        text_in = request.form.get("text_in", "")
+        text_out = ""
+        error = None
+        if text_in:
+            text_out, error = _encode(op, text_in)
+        token = _cache.put({"op": op, "text_in": text_in,
+                             "text_out": text_out, "error": error})
+        return redirect(url_for(".index", t=token))
+    stashed = _cache.get(request.args.get("t"))
+    if stashed:
+        op = stashed.get("op", "url_encode")
+        text_in = stashed.get("text_in", "")
+        text_out = stashed.get("text_out", "")
+        error = stashed.get("error")
+    else:
+        op = "url_encode"
+        # Pre-fill from GET param when arriving via "Send to Decoder".
         text_in = request.args.get("text", "")
-    text_out = ""
-    error = None
-    if request.method == "POST" and text_in:
-        text_out, error = _encode(op, text_in)
+        text_out = ""
+        error = None
     return render_template("decoder/index.html",
                            ops=OPERATIONS, op=op,
                            text_in=text_in, text_out=text_out, error=error)
