@@ -341,6 +341,28 @@ def byte_diff_summary(a: bytes, b: bytes) -> str:
             f"(delta {len(b) - len(a):+d}).")
 
 
+def unified_diff(a: str, b: str, *, label_a: str = "A", label_b: str = "B",
+                  context: int = 3) -> str:
+    """Return a standard unified-diff patch for ``a`` vs ``b``.
+
+    Thin wrapper around :func:`difflib.unified_diff` that normalises the
+    output for downloads: trailing newline guaranteed, no trailing
+    whitespace per line, and identical inputs yield ``""`` (so callers
+    can decide whether to surface a "no changes" notice instead of
+    serving an empty file).
+    """
+    import difflib
+    al = a.splitlines()
+    bl = b.splitlines()
+    lines = list(difflib.unified_diff(
+        al, bl, fromfile=label_a, tofile=label_b,
+        lineterm="", n=max(0, context),
+    ))
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
 # ---------- JWT plain-language summary ----------
 
 def summarise_jwt(header: dict, payload: dict) -> str:

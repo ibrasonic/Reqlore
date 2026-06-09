@@ -54,6 +54,60 @@ def test_comparer_runs_diff(client):
     assert b"changed" in r.data or b"only in" in r.data
 
 
+def test_comparer_download_diff(client):
+    """POST a manual compare, follow PRG to extract the stash token, then
+    fetch /comparer/export.diff?t=... and assert a valid unified-diff
+    attachment comes back."""
+    from urllib.parse import parse_qs, urlsplit
+    client.get("/comparer/")
+    with client.session_transaction() as sess:
+        token = sess.get("csrf", "")
+    r = client.post("/comparer/", data={
+        "a": "alpha\nbeta\ngamma", "b": "alpha\nBETA\ngamma\ndelta",
+        "view": "request", "from_a": "", "from_b": "", "_csrf": token,
+    })
+    assert r.status_code == 302
+    qs = parse_qs(urlsplit(r.headers["Location"]).query)
+    assert "t" in qs and qs["t"][0]
+    t = qs["t"][0]
+
+    # Download link is rendered on the results page.
+    page = client.get(f"/comparer/?t={t}")
+    assert page.status_code == 200
+    assert b"Download unified diff" in page.data
+    assert f"/comparer/export.diff?t={t}".encode() in page.data
+
+    dl = client.get(f"/comparer/export.diff?t={t}")
+    assert dl.status_code == 200
+    assert dl.mimetype == "text/x-diff"
+    cd = dl.headers["Content-Disposition"]
+    assert "attachment" in cd and ".diff" in cd
+    body = dl.data.decode("utf-8")
+    assert body.startswith("--- A\n+++ B\n")
+    assert "-beta" in body and "+BETA" in body and "+delta" in body
+
+
+def test_comparer_export_404_when_empty(client):
+    """No token, no from_a/from_b → 404 (nothing to export)."""
+    r = client.get("/comparer/export.diff")
+    assert r.status_code == 404
+
+
+def test_comparer_export_identical_inputs_serves_notice(client):
+    from urllib.parse import parse_qs, urlsplit
+    client.get("/comparer/")
+    with client.session_transaction() as sess:
+        token = sess.get("csrf", "")
+    r = client.post("/comparer/", data={
+        "a": "same\ntext", "b": "same\ntext",
+        "view": "request", "from_a": "", "from_b": "", "_csrf": token,
+    })
+    t = parse_qs(urlsplit(r.headers["Location"]).query)["t"][0]
+    dl = client.get(f"/comparer/export.diff?t={t}")
+    assert dl.status_code == 200
+    assert b"No differences" in dl.data
+
+
 def test_jwt_index(client):
     r = client.get("/jwt/")
     assert r.status_code == 200

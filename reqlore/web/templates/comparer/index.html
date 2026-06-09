@@ -53,6 +53,21 @@
   <h2 id="cmp-sum">Summary</h2>
   <p><strong>Lines:</strong> {{ summary }}</p>
   <p><strong>Bytes:</strong> {{ byte_summary }}</p>
+  {% set export_args = {} %}
+  {% if token %}{% set _ = export_args.update(t=token) %}
+  {% elif form.from_a or form.from_b %}
+    {% set _ = export_args.update(from_a=form.from_a or none,
+                                   from_b=form.from_b or none,
+                                   view=form.view) %}
+  {% endif %}
+  {% if export_args %}
+  <p>
+    <a class="btn-download" download
+       href="{{ url_for('comparer.export_diff', **export_args) }}">
+      Download unified diff (.diff)
+    </a>
+  </p>
+  {% endif %}
 </section>
 
 <section aria-labelledby="cmp-diff">

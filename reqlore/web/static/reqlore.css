@@ -595,3 +595,16 @@ html[data-theme="high-contrast"] .login-error {
 .diff-row.diff-add .diff-b { background: var(--ok-bg);  }
 .diff-row.diff-chg .diff-a { background: var(--err-bg); }
 .diff-row.diff-chg .diff-b { background: var(--ok-bg);  }
+
+.btn-download {
+  display: inline-block;
+  font: inherit;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  padding: 0.4rem 0.9rem;
+  text-decoration: none;
+}
+.btn-download:hover { filter: brightness(0.95); }
+.btn-download:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }

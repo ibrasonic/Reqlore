@@ -5,6 +5,7 @@ from reqlore.a11y import (
     diff_summary,
     pair_diff_lines,
     summarise_jwt,
+    unified_diff,
 )
 
 
@@ -76,3 +77,24 @@ def test_byte_diff_summary_length_change():
 def test_jwt_summary_alg_none_warning():
     s = summarise_jwt({"alg": "none", "typ": "JWT"}, {"sub": "alice"})
     assert "alg=none" in s
+
+
+def test_unified_diff_emits_standard_format():
+    patch = unified_diff("alpha\nbeta\ngamma", "alpha\nBETA\ngamma\ndelta",
+                          label_a="A", label_b="B")
+    assert patch.startswith("--- A\n+++ B\n")
+    assert "@@" in patch
+    assert "-beta" in patch
+    assert "+BETA" in patch
+    assert "+delta" in patch
+    assert patch.endswith("\n")
+
+
+def test_unified_diff_identical_returns_empty():
+    assert unified_diff("same\ntext", "same\ntext") == ""
+
+
+def test_unified_diff_custom_labels():
+    patch = unified_diff("x", "y", label_a="history-7", label_b="history-9")
+    assert "--- history-7" in patch
+    assert "+++ history-9" in patch
