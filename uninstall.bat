@@ -21,6 +21,10 @@ if /I "%~1"=="/?" goto :help
 set "REMOVED=0"
 
 rem ---- 1. pipx-installed reqlore ------------------------------------------
+rem Stop processes that hold venv/shim files open BEFORE we call
+rem `pipx uninstall`. Otherwise the uninstall can leave a half-deleted venv.
+call :stop_reqlore_procs
+
 where pipx >nul 2>&1
 if not errorlevel 1 (
     pipx list 2>nul | findstr /R /C:"package reqlore " >nul
@@ -51,13 +55,10 @@ rem ---- 2. local venv ------------------------------------------------------
 set "VENV=.venv"
 
 if exist "%VENV%\" (
-    rem Best-effort: stop processes that may hold venv files open. We use
-    rem taskkill with the venv-absolute python.exe path so we don't kill
-    rem unrelated python processes on the box.
-    taskkill /F /FI "IMAGENAME eq python.exe" /FI "WINDOWTITLE eq reqlore*" >nul 2>&1
-    for /f "tokens=2" %%P in ('tasklist /FI "IMAGENAME eq python.exe" /FO LIST ^| findstr /B "PID:"') do (
-        rem fall through — taskkill above handles the obvious case
-    )
+    rem Best-effort: stop processes holding venv files open. Scoped to the
+    rem absolute python.exe path inside the venv so we never touch unrelated
+    rem python processes on the box. ONE line: see stop_reqlore_procs note.
+    powershell -NoProfile -Command "$v = Resolve-Path '%VENV%'; Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and $_.Path -like ($v.Path + '*') } catch { $false } } | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }" >nul 2>&1
     echo ==^> removing venv at %VENV%
     rmdir /s /q "%VENV%"
     if not exist "%VENV%\" set "REMOVED=1"
@@ -94,6 +95,15 @@ if "%PURGE_DATA%"=="0" echo   - your *.rlr project files ^(re-run with --purge-d
 
 endlocal
 exit /b 0
+
+rem ----------------------------------------------------------------------
+rem stop_reqlore_procs — kill any reqlore.exe / pipx-venv python.exe that
+rem holds files open, so the pipx uninstall below can fully remove them.
+rem Kept on ONE line: cmd's `^` continuation conflicts with `|` inside the
+rem powershell pipeline and silently drops the script body.
+:stop_reqlore_procs
+    powershell -NoProfile -Command "$venv = Join-Path $env:USERPROFILE 'pipx\venvs\reqlore'; $shim = Join-Path $env:USERPROFILE '.local\bin\reqlore.exe'; Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($_.Path -like ($venv + '*') -or $_.Path -eq $shim) } catch { $false } } | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+    exit /b 0
 
 :help
 echo Reqlore uninstaller.

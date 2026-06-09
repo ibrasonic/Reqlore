@@ -85,8 +85,29 @@ rem ----------------------------------------------------------------------
     echo ==^> registering pipx scripts directory on PATH ^(persistent^)
     %PY% -m pipx ensurepath >nul 2>&1
 
+    rem Kill any running reqlore.exe / venv python.exe so we can replace the
+    rem files. `pipx install --force` is not reliable on Windows when these
+    rem are locked or when the version string hasn't bumped — the install
+    rem silently no-ops. The full uninstall + install dance below is the
+    rem only sequence that's guaranteed to actually replace the venv.
+    call :stop_reqlore_procs
+
+    rem Clear pipx's trash dir. pipx 1.x "uninstalls" by moving the venv to
+    rem ~/pipx/trash/ and tries to rmdir() it on the next invocation. If a
+    rem prior reqlore process locked a native module (aioquic/_buffer.pyd,
+    rem cffi, etc.) the rmdir aborts with WinError 5 and the next install
+    rem fails before it starts. Wipe trash now that processes are dead.
+    call :clear_pipx_trash
+
+    rem Uninstall any previous reqlore so install is a clean overwrite.
+    rem `pipx uninstall` is idempotent (succeeds if not installed).
+    %PY% -m pipx uninstall reqlore >nul 2>&1
+
+    rem Trash again after uninstall: pipx just moved the venv into trash.
+    call :clear_pipx_trash
+
     echo ==^> installing Reqlore with pipx ^(isolated, permanent, ~150 MB^)
-    %PY% -m pipx install --force .
+    %PY% -m pipx install .
     if errorlevel 1 exit /b 1
 
     echo.
@@ -102,8 +123,29 @@ rem ----------------------------------------------------------------------
     echo UI:    http://127.0.0.1:8787
     echo Proxy: 127.0.0.1:8080
     echo.
-    echo To upgrade later from this repo:  pipx reinstall reqlore
+    echo To upgrade later from this repo:  upgrade.bat
     echo To remove:                        uninstall.bat
+    exit /b 0
+
+rem ----------------------------------------------------------------------
+rem stop_reqlore_procs — kill any reqlore.exe / pipx-venv python.exe that
+rem would hold files open and make the next install silently no-op.
+rem Scoped: only matches PIDs whose ExecutablePath is inside the reqlore
+rem pipx venv, so unrelated python processes on the box are untouched.
+rem Kept on ONE line: cmd's `^` continuation conflicts with `|` inside the
+rem powershell pipeline and silently drops the script body.
+:stop_reqlore_procs
+    powershell -NoProfile -Command "$venv = Join-Path $env:USERPROFILE 'pipx\venvs\reqlore'; $shim = Join-Path $env:USERPROFILE '.local\bin\reqlore.exe'; Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -and ($_.Path -like ($venv + '*') -or $_.Path -eq $shim) } catch { $false } } | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+    exit /b 0
+
+rem ----------------------------------------------------------------------
+rem clear_pipx_trash — force-delete ~/pipx/trash with up to 3 retries.
+rem pipx aborts on startup if it can't rmtree() trash, so a locked PYD
+rem from a dead-but-not-yet-released process can permanently block all
+rem future pipx commands until the user reboots. We give Windows a moment
+rem to release file handles between retries.
+:clear_pipx_trash
+    powershell -NoProfile -Command "$t = Join-Path $env:USERPROFILE 'pipx\trash'; if (Test-Path $t) { 1..3 | ForEach-Object { try { Remove-Item $t -Recurse -Force -ErrorAction Stop; return } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue }" >nul 2>&1
     exit /b 0
 
 rem ----------------------------------------------------------------------

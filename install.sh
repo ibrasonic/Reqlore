@@ -113,8 +113,26 @@ use_pipx() {
     # we move on so `reqlore` resolves cleanly.
     "$PYTHON" -m pip uninstall -y reqlore >/dev/null 2>&1 || true
 
+    # Kill any running reqlore / pipx-venv python so files unlock. Otherwise
+    # `pipx install --force` can silently no-op when the version string
+    # hasn't bumped — full uninstall + install is the only reliable sequence.
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -f "$HOME/pipx/venvs/reqlore/bin/" 2>/dev/null || true
+        pkill -x reqlore                          2>/dev/null || true
+    fi
+
+    # Clear pipx's trash dir. pipx "uninstalls" by moving the venv into
+    # ~/pipx/trash/ and tries to rmtree it on the next invocation. If any
+    # native module was open (rare on Linux but possible on macOS) the
+    # cleanup aborts and the next install fails before it starts.
+    rm -rf "$HOME/pipx/trash" 2>/dev/null || true
+
+    # Uninstall any previous pipx-managed reqlore (idempotent).
+    pipx uninstall reqlore >/dev/null 2>&1 || true
+    rm -rf "$HOME/pipx/trash" 2>/dev/null || true
+
     info "installing Reqlore with pipx (isolated CLI on PATH)"
-    pipx install --force .
+    pipx install .
     info "done."
     echo
     echo "Try it:"

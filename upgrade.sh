@@ -64,7 +64,23 @@ upgrade_pipx() {
     "$PYTHON" -m pip uninstall -y reqlore >/dev/null 2>&1 || true
 
     pipx ensurepath >/dev/null 2>&1 || true
-    pipx install --force .
+
+    # Kill any running reqlore / pipx-venv python so files unlock. Then do
+    # a full uninstall before reinstalling. `pipx install --force` can
+    # silently no-op when the version string hasn't bumped or when venv
+    # files are locked — full uninstall + install is the only reliable
+    # sequence.
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -f "$HOME/pipx/venvs/reqlore/bin/" 2>/dev/null || true
+        pkill -x reqlore                          2>/dev/null || true
+    fi
+
+    # Clear pipx's trash (same reasoning as in install.sh).
+    rm -rf "$HOME/pipx/trash" 2>/dev/null || true
+    pipx uninstall reqlore >/dev/null 2>&1 || true
+    rm -rf "$HOME/pipx/trash" 2>/dev/null || true
+
+    pipx install .
 
     echo
     info "upgraded."
