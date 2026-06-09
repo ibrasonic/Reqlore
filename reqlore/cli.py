@@ -21,6 +21,43 @@ from .proxy.mitm import ProxyController
 from .storage import Project
 
 
+class _MitmNoiseFilter(logging.Filter):
+    """Drop the per-connection TLS-trust noise mitmproxy emits whenever a
+    client (Firefox, curl, Python requests, OS telemetry, ...) refuses the
+    Reqlore CA. These are *expected* and not actionable: the operator either
+    needs to install the CA or accept that pinned endpoints can't be MITM'd.
+    The signal is one banner line at startup, not a wall of tracebacks per
+    handshake. Verbose mode bypasses this filter."""
+
+    _DROP_SUBSTRINGS = (
+        "Client TLS handshake failed",
+        "tlsv1 alert unknown ca",
+        "tlsv13 alert unknown ca",
+        "TLS Error:",
+        "mitmproxy has crashed",
+        "OpenSSL.SSL.Error: []",
+        # Pinned-cert sites (Mozilla telemetry, etc.) can't be MITM'd — same
+        # category of expected noise.
+        "tlsv1 alert bad certificate",
+        "tlsv1 alert certificate unknown",
+        "tlsv1 alert internal error",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+        msg = record.getMessage()
+        for needle in self._DROP_SUBSTRINGS:
+            if needle in msg:
+                return False
+        # Also drop the multi-line tracebacks attached to the above messages.
+        if record.exc_info:
+            exc = record.exc_info[1]
+            if exc is not None:
+                txt = repr(exc)
+                if "OpenSSL.SSL.Error" in txt and "[]" in txt:
+                    return False
+        return True
+
+
 def _logger(*, verbose: bool = False) -> logging.Logger:
     """Configure root logging once. Verbose mode keeps the noisy long format
     with timestamps and logger names; the default mode is quiet and only shows
@@ -37,6 +74,12 @@ def _logger(*, verbose: bool = False) -> logging.Logger:
     # the banner — silence it unless the user explicitly asked for verbose.
     if not verbose:
         logging.getLogger("waitress").setLevel(logging.WARNING)
+        # Install the mitmproxy noise filter on every existing handler. We
+        # attach to handlers (not loggers) so it catches records propagated
+        # from any mitmproxy submodule.
+        noise_filter = _MitmNoiseFilter()
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(noise_filter)
     return logging.getLogger("reqlore")
 
 

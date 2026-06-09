@@ -795,7 +795,15 @@ def launch(*, exe: Path, profile_dir: Path, url: str,
                 err = log_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 err = ""
-            raise RuntimeError(_explain_firefox_exit(proc.returncode, err))
+            # Exit code 0 within the warmup window is *not* a failure:
+            # on Windows, firefox.exe is a launcher stub that spawns a
+            # worker firefox.exe and exits cleanly. The visible browser
+            # window is now owned by the worker process, which we don't
+            # track. Treat exit-0 as successful hand-off.
+            if proc.returncode == 0:
+                log.info("firefox launcher exited 0 (handed off to worker process)")
+            else:
+                raise RuntimeError(_explain_firefox_exit(proc.returncode, err))
     finally:
         # If Firefox is still running, leave the log file on disk for the
         # operator; otherwise clean it up.
