@@ -98,6 +98,149 @@
     setInterval(poll, 2000);
   }
 
+  // History: row Actions menu button (WAI-ARIA APG Menu Button pattern).
+  // No JS: button stays [hidden]; the <ul> renders as a flat list of links.
+  // With JS: button is shown, list is hidden until activated. We add
+  // role=menu / menuitem, roving focus with arrow keys, Home/End, Esc,
+  // a Tab focus-trap, click-outside-to-close, and 500ms type-ahead.
+  (function () {
+    var widgets = document.querySelectorAll("[data-row-actions]");
+    if (!widgets.length) return;
+    var openWidget = null;
+
+    function items(w) {
+      return Array.prototype.slice.call(
+        w.querySelectorAll('a[role="menuitem"]'));
+    }
+
+    function openFor(w, where) {
+      if (openWidget && openWidget !== w) closeFor(openWidget, false);
+      var btn = w.querySelector(".row-actions-toggle");
+      var list = w.querySelector(".row-actions-list");
+      if (!btn || !list) return;
+      btn.setAttribute("aria-expanded", "true");
+      list.hidden = false;
+      openWidget = w;
+      var all = items(w);
+      if (!all.length) return;
+      var idx = where === "last" ? all.length - 1
+              : (typeof where === "number" ? where : 0);
+      if (idx < 0 || idx >= all.length) idx = 0;
+      all[idx].focus();
+    }
+
+    function closeFor(w, returnFocus) {
+      var btn = w.querySelector(".row-actions-toggle");
+      var list = w.querySelector(".row-actions-list");
+      if (!btn || !list) return;
+      if (btn.getAttribute("aria-expanded") !== "true") return;
+      btn.setAttribute("aria-expanded", "false");
+      list.hidden = true;
+      if (returnFocus) btn.focus();
+      if (openWidget === w) openWidget = null;
+    }
+
+    function focusBy(w, delta) {
+      var all = items(w);
+      if (!all.length) return;
+      var cur = all.indexOf(document.activeElement);
+      if (cur < 0) cur = 0;
+      all[(cur + delta + all.length) % all.length].focus();
+    }
+
+    function focusEdge(w, which) {
+      var all = items(w);
+      if (!all.length) return;
+      all[which === "first" ? 0 : all.length - 1].focus();
+    }
+
+    var typeBuf = "", typeTimer = null;
+    function typeAhead(w, ch) {
+      clearTimeout(typeTimer);
+      typeBuf += ch.toLowerCase();
+      typeTimer = setTimeout(function () { typeBuf = ""; }, 500);
+      var all = items(w);
+      var start = Math.max(0, all.indexOf(document.activeElement));
+      for (var i = 1; i <= all.length; i++) {
+        var el = all[(start + i) % all.length];
+        if ((el.textContent || "").trim().toLowerCase().indexOf(typeBuf) === 0) {
+          el.focus();
+          return;
+        }
+      }
+    }
+
+    widgets.forEach(function (w) {
+      var btn = w.querySelector(".row-actions-toggle");
+      var list = w.querySelector(".row-actions-list");
+      if (!btn || !list) return;
+
+      // Upgrade the markup to the menu pattern.
+      w.setAttribute("data-enhanced", "");
+      btn.hidden = false;
+      list.hidden = true;
+      list.setAttribute("role", "menu");
+      list.querySelectorAll("li").forEach(function (li) {
+        li.setAttribute("role", "none");
+      });
+      list.querySelectorAll("li > a").forEach(function (a) {
+        a.setAttribute("role", "menuitem");
+        a.setAttribute("tabindex", "-1");
+      });
+
+      btn.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        if (btn.getAttribute("aria-expanded") === "true") {
+          closeFor(w, true);
+        } else {
+          openFor(w, 0);
+        }
+      });
+
+      btn.addEventListener("keydown", function (ev) {
+        if (ev.key === "ArrowDown" || ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault(); openFor(w, 0);
+        } else if (ev.key === "ArrowUp") {
+          ev.preventDefault(); openFor(w, "last");
+        }
+      });
+
+      list.addEventListener("keydown", function (ev) {
+        if (btn.getAttribute("aria-expanded") !== "true") return;
+        switch (ev.key) {
+          case "ArrowDown": ev.preventDefault(); focusBy(w, +1); break;
+          case "ArrowUp":   ev.preventDefault(); focusBy(w, -1); break;
+          case "Home":      ev.preventDefault(); focusEdge(w, "first"); break;
+          case "End":       ev.preventDefault(); focusEdge(w, "last");  break;
+          case "Escape":    ev.preventDefault(); closeFor(w, true); break;
+          case "Tab":
+            // Strict focus trap: keep focus inside the menu until the
+            // user presses Esc or activates a menuitem.
+            ev.preventDefault();
+            focusBy(w, ev.shiftKey ? -1 : +1);
+            break;
+          default:
+            if (ev.key.length === 1 && /\S/.test(ev.key) &&
+                !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+              typeAhead(w, ev.key);
+            }
+        }
+      });
+    });
+
+    // Click outside any open menu closes it (no focus return per APG).
+    document.addEventListener("mousedown", function (ev) {
+      if (!openWidget) return;
+      if (!openWidget.contains(ev.target)) closeFor(openWidget, false);
+    });
+
+    window.Reqlore = window.Reqlore || {};
+    window.Reqlore.closeRowActionsFor = function (el, returnFocus) {
+      var w = el.closest && el.closest("[data-row-actions]");
+      if (w) closeFor(w, !!returnFocus);
+    };
+  })();
+
   // History: 2-step Comparer pick.
   // No JS: each row's "Compare A" link goes straight to /comparer?from_a=<id>.
   // With JS: first click on any row records that row as A and re-labels
@@ -153,6 +296,9 @@
           relabel();
           announce("Picked request #" + hid +
             " as A. Click Compare on another row to pick B.");
+          if (window.Reqlore && window.Reqlore.closeRowActionsFor) {
+            window.Reqlore.closeRowActionsFor(el, true);
+          }
           return;
         }
         if (a === hid) {
@@ -160,6 +306,9 @@
           sessionStorage.removeItem(KEY);
           relabel();
           announce("Cleared compare A.");
+          if (window.Reqlore && window.Reqlore.closeRowActionsFor) {
+            window.Reqlore.closeRowActionsFor(el, true);
+          }
           return;
         }
         ev.preventDefault();

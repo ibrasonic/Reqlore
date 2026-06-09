@@ -68,9 +68,15 @@
       <td>{{ r.engine }}</td>
       <td>{{ flags|join(', ') }}</td>
       <td>
-        <details class="row-actions">
-          <summary aria-label="Actions for request #{{ r.id }}">Actions</summary>
-          <ul class="row-actions-list">
+        <div class="row-actions" data-row-actions data-hid="{{ r.id }}">
+          <button type="button"
+                  class="row-actions-toggle"
+                  hidden
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  aria-controls="row-actions-menu-{{ r.id }}"
+                  aria-label="Actions for request #{{ r.id }}">Actions</button>
+          <ul id="row-actions-menu-{{ r.id }}" class="row-actions-list">
             <li><a href="{{ url_for('history.show', hid=r.id) }}">View</a></li>
             <li><a href="{{ url_for('repeater.index', from_history=r.id) }}">Send to Repeater</a></li>
             <li><a href="{{ url_for('intruder.new', from_history=r.id) }}">Send to Intruder</a></li>
@@ -80,7 +86,7 @@
                    data-label-a="Compare A"
                    data-label-b="Compare B">Compare A</a></li>
           </ul>
-        </details>
+        </div>
       </td>
     </tr>
     {% endfor %}

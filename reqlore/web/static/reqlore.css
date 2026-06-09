@@ -447,41 +447,69 @@ html[data-theme="high-contrast"] .login-error {
   outline-offset: 2px;
 }
 
-/* History row actions: a per-row <details> disclosure that keeps the
-   action column compact. Uses native HTML so it works without JS. */
-.row-actions { display: inline-block; }
-.row-actions > summary {
+/* History row actions.
+   Two presentations, decided by JS:
+   - No JS:   <button hidden> stays hidden; <ul> renders as a flat list of
+              links — accessible, just verbose.
+   - With JS: button is unhidden (data-enhanced is set) and the list is
+              hidden until activated. JS upgrades the list to the WAI-ARIA
+              Menu Button pattern (role=menu, menuitem, focus trap, arrow
+              keys, Esc, Home/End, click-outside, type-ahead). */
+.row-actions { position: relative; display: inline-block; }
+.row-actions-toggle {
   cursor: pointer;
-  padding: 0.1rem 0.4rem;
+  padding: 0.1rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--bg);
   color: var(--fg);
-  list-style: none;
+  font: inherit;
   white-space: nowrap;
 }
-.row-actions > summary::-webkit-details-marker { display: none; }
-.row-actions > summary::marker { content: ""; }
-.row-actions > summary::after {
-  content: " \25BE";  /* downward triangle */
+.row-actions-toggle::after {
+  content: " \25BE";
   color: var(--muted);
 }
-.row-actions[open] > summary::after { content: " \25B4"; }
-.row-actions > summary:focus {
+.row-actions-toggle[aria-expanded="true"]::after { content: " \25B4"; }
+.row-actions-toggle:focus {
   outline: 3px solid var(--focus);
   outline-offset: 1px;
 }
 .row-actions-list {
   list-style: none;
-  padding: 0.25rem 0.5rem;
-  margin: 0.25rem 0 0 0;
+  padding: 0.25rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+/* When JS has enhanced the menu, the list is positioned as a popover
+   beneath the button and toggled via the [hidden] attribute. */
+.row-actions[data-enhanced] .row-actions-list {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  margin-top: 0.25rem;
+  min-width: 14rem;
   border: 1px solid var(--border);
   border-radius: 3px;
   background: var(--bg);
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  min-width: 12rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+.row-actions-list a {
+  display: block;
+  padding: 0.3rem 0.6rem;
+  text-decoration: none;
+  color: var(--fg);
+  border-radius: 2px;
+}
+.row-actions-list a:hover,
+.row-actions-list a:focus {
+  background: var(--focus);
+  color: var(--bg);
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
 }
 
 /* Live status banner for the 2-step Comparer pick. */
