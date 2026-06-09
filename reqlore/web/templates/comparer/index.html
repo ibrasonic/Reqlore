@@ -2,17 +2,46 @@
 {% block title %}Reqlore — Comparer{% endblock %}
 {% block main %}
 <h1>Comparer</h1>
-<p>Paste two payloads (or send two history items here) and see a line-level diff plus a plain-language summary.</p>
+<p>Paste two payloads (or send two history items here) and see a line-level diff
+   plus a plain-language summary.</p>
 
-<form method="post" action="{{ url_for('comparer.index') }}" class="stack" aria-label="Compare A and B">
+{% if from_history %}
+<nav class="cmp-view" aria-label="What to compare">
+  <span id="cmp-view-label">Comparing:</span>
+  <ul class="cmp-view-list" aria-labelledby="cmp-view-label">
+    {% for v in views %}
+    <li>
+      <a href="{{ url_for('comparer.index',
+                            from_a=form.from_a or none,
+                            from_b=form.from_b or none,
+                            view=v) }}"
+         {% if v == form.view %}aria-current="page"{% endif %}>
+        {{ v|capitalize }}{% if v == 'both' %} (request + response){% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="help">
+    From-history mode. Switching reloads A and B from the saved history rows
+    (#{{ form.from_a or '—' }} and #{{ form.from_b or '—' }}); manual edits
+    below will be discarded.
+  </p>
+</nav>
+{% endif %}
+
+<form method="post" action="{{ url_for('comparer.index') }}" class="stack"
+      aria-label="Compare A and B">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <input type="hidden" name="from_a" value="{{ form.from_a }}">
+  <input type="hidden" name="from_b" value="{{ form.from_b }}">
+  <input type="hidden" name="view" value="{{ form.view }}">
   <div class="row">
     <div class="grow">
-      <label for="cmp-a">A</label>
+      <label for="cmp-a">A{% if form.from_a %} (history #{{ form.from_a }}){% endif %}</label>
       <textarea id="cmp-a" name="a" rows="12" autocomplete="off">{{ form.a }}</textarea>
     </div>
     <div class="grow">
-      <label for="cmp-b">B</label>
+      <label for="cmp-b">B{% if form.from_b %} (history #{{ form.from_b }}){% endif %}</label>
       <textarea id="cmp-b" name="b" rows="12" autocomplete="off">{{ form.b }}</textarea>
     </div>
   </div>
@@ -27,23 +56,42 @@
 </section>
 
 <section aria-labelledby="cmp-diff">
-  <h2 id="cmp-diff">Line-by-line diff</h2>
-  <table>
-    <caption>Differences between A and B (only changed lines + context anchors)</caption>
-    <thead><tr><th scope="col">A line</th><th scope="col">B line</th><th scope="col">Tag</th><th scope="col">Content</th></tr></thead>
+  <h2 id="cmp-diff">Side-by-side diff</h2>
+  {% if paired %}
+  <table class="diff-table">
+    <caption>Only changed lines are shown. Each row is one line pair.</caption>
+    <thead>
+      <tr>
+        <th scope="col" class="diff-num">A&nbsp;#</th>
+        <th scope="col">A</th>
+        <th scope="col" class="diff-num">B&nbsp;#</th>
+        <th scope="col">B</th>
+        <th scope="col">Change</th>
+      </tr>
+    </thead>
     <tbody>
-      {% for tag, la, lb, text in lines %}
-        {% if tag != 'same' %}
-        <tr>
-          <td>{{ la or '—' }}</td>
-          <td>{{ lb or '—' }}</td>
-          <td>{% if tag == 'add' %}only in B{% elif tag == 'del' %}only in A{% else %}changed{% endif %}</td>
-          <td><code>{{ text }}</code></td>
-        </tr>
-        {% endif %}
+      {% for tag, la, atext, lb, btext in paired %}
+      <tr class="diff-row diff-{{ tag }}">
+        <td class="diff-num">{{ la if la is not none else '—' }}</td>
+        <td class="diff-cell diff-a">
+          {% if atext %}<code>{{ atext }}</code>{% else %}<span class="diff-empty">(none)</span>{% endif %}
+        </td>
+        <td class="diff-num">{{ lb if lb is not none else '—' }}</td>
+        <td class="diff-cell diff-b">
+          {% if btext %}<code>{{ btext }}</code>{% else %}<span class="diff-empty">(none)</span>{% endif %}
+        </td>
+        <td>
+          {% if tag == 'add' %}only in B
+          {% elif tag == 'del' %}only in A
+          {% else %}changed{% endif %}
+        </td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>
+  {% else %}
+  <p>No differences.</p>
+  {% endif %}
 </section>
 {% endif %}
 {% endblock %}

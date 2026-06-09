@@ -520,3 +520,78 @@ html[data-theme="high-contrast"] .login-error {
   border-radius: 3px;
   background: var(--bg);
 }
+
+/* Comparer view toggle (request / response / both). */
+.cmp-view {
+  margin: 0.5rem 0 1rem 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.cmp-view-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.25rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.cmp-view-list a {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  text-decoration: none;
+  color: var(--fg);
+}
+.cmp-view-list a[aria-current="page"] {
+  background: var(--focus);
+  color: var(--bg);
+  font-weight: 600;
+}
+.cmp-view-list a:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* Side-by-side diff table.
+   - One row per line pair (paired by a11y.pair_diff_lines).
+   - A/B cells are color-coded by tag using existing semantic vars.
+   - Long content wraps with overflow-wrap so the table stays usable
+     at narrow widths; horizontal scroll kicks in only for very wide
+     payloads via the wrapping <pre><code>. */
+.diff-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.diff-table th, .diff-table td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.4rem;
+  vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.diff-table th.diff-num, .diff-table td.diff-num {
+  width: 3.5rem;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.diff-table code {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono",
+               monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.diff-empty { color: var(--muted); font-style: italic; }
+
+/* Tag-driven cell tints. We tint the A cell on del/chg and the B cell
+   on add/chg so the user's eye lands on the side that actually carries
+   the difference (the matching cell on the other side is empty or the
+   prior value). */
+.diff-row.diff-del .diff-a { background: var(--err-bg); }
+.diff-row.diff-add .diff-b { background: var(--ok-bg);  }
+.diff-row.diff-chg .diff-a { background: var(--err-bg); }
+.diff-row.diff-chg .diff-b { background: var(--ok-bg);  }

@@ -284,6 +284,52 @@ def diff_lines(a: str, b: str) -> list[tuple[str, int | None, int | None, str]]:
     return out
 
 
+def pair_diff_lines(
+    lines: list[tuple[str, int | None, int | None, str]],
+) -> list[tuple[str, int | None, str, int | None, str]]:
+    """Re-shape :func:`diff_lines` output into side-by-side rows.
+
+    Input rows are flat — a ``replace`` opcode appears as several ``del``
+    rows followed by several ``add`` rows. This helper pairs each block
+    of consecutive dels/adds into ``chg`` rows so the UI can render one
+    line per change instead of two.
+
+    Each output row is ``(tag, la, a_text, lb, b_text)`` where ``tag`` is
+    one of ``"same" | "add" | "del" | "chg"``. Missing sides use ``None``
+    for the line number and ``""`` for the text.
+    """
+    out: list[tuple[str, int | None, str, int | None, str]] = []
+    i, n = 0, len(lines)
+    while i < n:
+        tag, la, lb, text = lines[i]
+        if tag == "same":
+            out.append(("same", la, text, lb, text))
+            i += 1
+            continue
+        if tag in ("del", "add"):
+            dels: list[tuple[str, int | None, int | None, str]] = []
+            adds: list[tuple[str, int | None, int | None, str]] = []
+            while i < n and lines[i][0] == "del":
+                dels.append(lines[i]); i += 1
+            while i < n and lines[i][0] == "add":
+                adds.append(lines[i]); i += 1
+            for k in range(max(len(dels), len(adds))):
+                d = dels[k] if k < len(dels) else None
+                a = adds[k] if k < len(adds) else None
+                if d is not None and a is not None:
+                    out.append(("chg", d[1], d[3], a[2], a[3]))
+                elif d is not None:
+                    out.append(("del", d[1], d[3], None, ""))
+                else:
+                    assert a is not None
+                    out.append(("add", None, "", a[2], a[3]))
+            continue
+        # Unknown tag — emit as-is on A side, defensively.
+        out.append((tag, la, text, lb, text))
+        i += 1
+    return out
+
+
 def byte_diff_summary(a: bytes, b: bytes) -> str:
     """One-sentence byte-level summary."""
     if a == b:
