@@ -55,7 +55,7 @@ module imports, 11 CLI subcommands, plus 4 named tests). See
 
 ---
 
-## Phase 2 — WCAG AAA structural matrix `[ ]`
+## Phase 2 — WCAG AAA structural matrix `[x]`
 
 Goal: every rendered page passes the structural rules we list in
 [ACCESSIBILITY.md](ACCESSIBILITY.md). The existing
@@ -64,28 +64,35 @@ Goal: every rendered page passes the structural rules we list in
 the contrast theme and helper functions; this phase covers the
 HTML the user actually receives.
 
-- `[ ]` **One `<h1>` per page** — GET every GET-able route, parse
-  with `html.parser`, count `<h1>`. Must be exactly one. No
-  skipped heading levels (no `<h3>` before any `<h2>`).
-- `[ ]` **Landmark skeleton present** — `<a class="skip-link"
-  href="#main">`, `<main id="main" tabindex="-1">`, a polite live
-  region. Already partially covered by
-  [test_web_smoke.py](../reqlore/tests/unit/test_web_smoke.py)
-  for the dashboard — this phase generalises it.
-- `[ ]` **Every input has a real label** — every `<input>`,
+- `[x]` **One `<h1>` per page** — GET every GET-able route, parse
+  with `html.parser`, count `<h1>`. Exactly one per page.
+- `[x]` **No skipped heading levels** — walk the heading sequence,
+  fail if it ever jumps by more than +1 from the running maximum.
+- `[x]` **Base landmark skeleton** — `<a class="skip-link"
+  href="#main">`, `<main id="main" tabindex="-1">`, polite live
+  region; `aria-live="assertive"` is banned.
+- `[x]` **Every form control has a real label** — every `<input>`,
   `<select>`, `<textarea>` either carries `aria-label` /
-  `aria-labelledby` or is targeted by a `<label for=>`. No
-  placeholder-as-label.
-- `[ ]` **No `tabindex > 0`** — natural tab order only.
-- `[ ]` **Every `<button>` has a type** — `type="submit"` or
-  `type="button"`. Default `submit` inside an unrelated form is
-  a common a11y bug.
-- `[ ]` **`<table>` has `<caption>` + scoped headers** — for every
-  table on every page, `<caption>` exists and `<th>` elements
-  carry `scope="col"` or `scope="row"`.
+  `aria-labelledby`, is wrapped by an ancestor `<label>` (the
+  implicit-label pattern, valid per WCAG 2.1 SC 1.3.1), or is
+  targeted by a `<label for=>` on the same page. Hidden /
+  submit / button / image / reset inputs are exempt (no visible UI
+  or visible button text).
+- `[x]` **No `tabindex > 0`** — natural document order only.
+- `[x]` **Every `<button>` has an explicit type** — default
+  `submit` inside an unrelated form is a common a11y bug; this
+  catches it everywhere.
+- `[x]` **`<table>` has `<caption>` + scoped headers** — every
+  `<th>` on every page carries `scope=col|row|colgroup|rowgroup`;
+  every `<table>` carries a `<caption>`. Pages with no tables are
+  cleanly skipped.
 
-**Exit criteria for Phase 2:** 6 boxes, the matrix runs against
-every blueprint index, commit + push.
+**Exit criteria for Phase 2:** 7 boxes (we split off the assertive
+live-region rule into the same test as the landmarks because they
+share a parser pass), the matrix runs against every blueprint
+index, commit + push. Status: shipped, **986 → 1209 passing**
+(+223; the matrix parametrises across 51 GET-able routes). See
+[test_reliability_phase2.py](../reqlore/tests/unit/test_reliability_phase2.py).
 
 ---
 
@@ -174,6 +181,6 @@ command no longer silently fails inside WSL, commit + push.
 Progress log:
 
 - `[x]` Phase 1 — component health matrix, 884 → 986 passing.
-- `[ ]` Phase 2
+- `[x]` Phase 2 — WCAG AAA structural matrix, 986 → 1209 passing.
 - `[ ]` Phase 3
 - `[ ]` Phase 4
