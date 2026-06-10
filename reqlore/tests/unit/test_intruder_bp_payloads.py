@@ -95,3 +95,59 @@ def test_file_wordlist_missing_renders_form_error(client):
     }, content_type="multipart/form-data", follow_redirects=False)
     assert r.status_code == 200
     assert b"No wordlist file selected" in r.data
+
+
+# ---------- streaming server-path source ----------
+
+def _post_path_attack(client, *, name, path, token):
+    return client.post("/intruder/new", data={
+        "name": name, "attack_type": "sniper", "engine": "httpx",
+        "url": "http://127.0.0.1/", "template": _template_with_marker(),
+        "marker": DEFAULT_MARKER, "concurrency": "1", "delay_ms": "0",
+        "max_requests": "10", "processors": "", "grep": "",
+        "source": "wordlist_path",
+        "wordlist_path": path,
+        "payloads_text": "", "_csrf": token,
+    }, follow_redirects=False)
+
+
+def test_new_form_lists_streaming_source(client):
+    r = client.get("/intruder/new")
+    assert r.status_code == 200
+    assert b"Wordlist from server path" in r.data
+    assert b'data-source-group="wordlist_path"' in r.data
+
+
+def test_create_attack_from_server_path(client, app, tmp_path):
+    token = _csrf(client)
+    wl = tmp_path / "stream.lst"
+    wl.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    r = _post_path_attack(client, name="wl-stream", path=str(wl), token=token)
+    assert r.status_code == 302, r.data
+    proj = app.extensions["reqlore_project"]
+    detail = proj.get_intruder(proj.list_intruder()[0]["id"])
+    # Storage holds the path metadata, NOT the materialised wordlist.
+    assert detail["payloads"] == [{"kind": "path", "path": str(wl)}]
+
+
+def test_server_path_must_be_absolute(client, tmp_path):
+    token = _csrf(client)
+    # Use a relative path; on Windows this is the file name with no drive.
+    r = _post_path_attack(client, name="wl-rel", path="rel/path.lst", token=token)
+    assert r.status_code == 200
+    assert b"must be absolute" in r.data
+
+
+def test_server_path_missing_file_renders_form_error(client, tmp_path):
+    token = _csrf(client)
+    missing = tmp_path / "nope.lst"
+    r = _post_path_attack(client, name="wl-404", path=str(missing), token=token)
+    assert r.status_code == 200
+    assert b"File not found" in r.data
+
+
+def test_server_path_empty_renders_form_error(client):
+    token = _csrf(client)
+    r = _post_path_attack(client, name="wl-blank", path="   ", token=token)
+    assert r.status_code == 200
+    assert b"Server path is required" in r.data

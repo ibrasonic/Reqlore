@@ -68,6 +68,7 @@
           <option value="common_pw" {% if form.source == 'common_pw' %}selected{% endif %}>Common passwords (built-in)</option>
           <option value="wordlist" {% if form.source == 'wordlist' %}selected{% endif %}>Built-in wordlist</option>
           <option value="wordlist_file" {% if form.source == 'wordlist_file' %}selected{% endif %}>Wordlist from file (upload)</option>
+          <option value="wordlist_path" {% if form.source == 'wordlist_path' %}selected{% endif %}>Wordlist from server path (stream, no size limit)</option>
         </select>
         <p id="i-src-help" class="muted">Only the inputs for the picked source are shown. Switching the source updates them in place.</p>
       </div>
@@ -153,6 +154,22 @@
       <div class="grow">
         <label for="i-wlf">Wordlist file</label>
         <input id="i-wlf" name="wordlist_upload" type="file" accept=".txt,.lst,.dic,text/plain">
+      </div>
+    </div>
+
+    <div class="row" data-source-group="wordlist_path" role="group" aria-labelledby="wlpgroup-label"
+         {% if form.source != 'wordlist_path' %}hidden{% endif %}>
+      <p id="wlpgroup-label" class="muted">
+        Wordlist from server path — streams a file from disk on the machine running Reqlore.
+        No upload step, no size limit, constant memory regardless of file size.
+        The path must be absolute and readable by the Reqlore process.
+        Intended for large wordlists (rockyou.txt, SecLists, etc.).
+      </p>
+      <div class="grow">
+        <label for="i-wlp">Server-side path</label>
+        <input id="i-wlp" name="wordlist_path" value="{{ form.wordlist_path }}"
+               placeholder="/usr/share/wordlists/rockyou.txt" autocomplete="off"
+               aria-describedby="wlpgroup-label">
       </div>
     </div>
   </fieldset>

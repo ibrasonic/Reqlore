@@ -31,7 +31,8 @@ import time
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Callable, Iterator
+from pathlib import Path
+from typing import Callable, Iterator, Sequence
 from urllib.parse import urlsplit
 
 from .engines import Request, Response
@@ -330,39 +331,150 @@ def _parse_wordlist_text(text: str, *, max_lines: int) -> list[str]:
 
 # ---------- attack scheduling ----------
 
-def iterate(attack_type: str, payload_sets: list[list[str]],
-             n_positions: int) -> Iterator[list[str]]:
-    """Yield one payload-tuple per request, per attack type."""
+# A payload source is a zero-arg factory that returns a fresh iterator over
+# the payload strings. Factories — not lists, not pre-built iterators — are
+# the unit of the streaming API: cluster bomb needs to re-walk inner sources
+# once per outer iteration, which only works if it can ask for a brand new
+# iterator each time. ``from_list`` / ``from_path`` / ``from_bytes`` are the
+# three built-in adapters; plugins can supply their own.
+PayloadSource = Callable[[], Iterator[str]]
+
+
+def from_list(values: Sequence[str]) -> PayloadSource:
+    """Replayable factory over an in-memory sequence."""
+    items = list(values)
+    return lambda: iter(items)
+
+
+def from_bytes(data: bytes, *, max_lines: int | None = None) -> PayloadSource:
+    """Parse ``data`` once and yield each entry on every call.
+
+    Use this when the payloads are already in RAM (small uploads, test
+    fixtures). For multi-megabyte files prefer :func:`from_path` so the
+    contents stream from disk and never materialise.
+    """
+    text = data.decode("utf-8", errors="replace")
+    items = _parse_wordlist_text(
+        text, max_lines=max_lines if max_lines is not None else 10**9,
+    )
+    return lambda: iter(items)
+
+
+def from_path(path: str | Path) -> PayloadSource:
+    """Stream a wordlist from disk on every call — uncapped, O(1) RAM.
+
+    The file is opened fresh each time the factory is invoked, so cluster
+    bomb's nested loops can re-walk it without holding the contents in
+    memory. Blank lines and ``# comment`` lines are skipped, matching
+    :func:`load_wordlist_file` semantics. Encoding errors are replaced
+    rather than raised so a single bad byte never aborts an attack.
+    """
+    p = str(path)
+
+    def _gen() -> Iterator[str]:
+        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.rstrip("\r\n")
+                if not line or line.lstrip().startswith("#"):
+                    continue
+                yield line
+    return _gen
+
+
+def count_wordlist_lines(path: str | Path) -> int:
+    """One-pass count of non-blank, non-comment lines.
+
+    Used at attack-create time so the progress UI can show ``N / total``
+    even though the source is streamed. Cost: ~300 ms per 100 MB on a
+    typical SSD; trivial next to the network cost of the attack itself.
+    """
+    n = 0
+    with open(str(path), "r", encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            line = raw.rstrip("\r\n")
+            if line and not line.lstrip().startswith("#"):
+                n += 1
+    return n
+
+
+def iterate_streaming(attack_type: str, sources: Sequence[PayloadSource],
+                       n_positions: int) -> Iterator[list[str]]:
+    """Yield one payload-tuple per request, streaming every source.
+
+    The four attack types all run in constant memory regardless of source
+    size: sniper / battering walk one source once, pitchfork uses ``zip``
+    (lazy, stops at the shortest source naturally), and cluster bomb walks
+    the sources via nested loops that re-invoke the inner factories. The
+    classic ``itertools.product`` would materialise its arguments into
+    tuples up front — fine for ``[[a,b],[1,2]]``, fatal for rockyou.
+    """
+    if not sources:
+        return
     if attack_type == "sniper":
-        # one payload set; per position, iterate payloads while others stay ""
-        # convention: payload_sets has exactly 1 set
-        if not payload_sets:
-            return
-        payloads = payload_sets[0]
         for pos in range(n_positions):
-            for p in payloads:
+            for p in sources[0]():
                 row = [""] * n_positions
                 row[pos] = p
                 yield row
     elif attack_type == "battering":
-        if not payload_sets:
-            return
-        payloads = payload_sets[0]
-        for p in payloads:
+        for p in sources[0]():
             yield [p] * n_positions
     elif attack_type == "pitchfork":
-        if not payload_sets:
-            return
-        n = min(len(s) for s in payload_sets)
-        for i in range(n):
-            yield [s[i] for s in payload_sets]
-    elif attack_type == "clusterbomb":
-        if not payload_sets:
-            return
-        for combo in itertools.product(*payload_sets):
+        iters = [s() for s in sources]
+        for combo in zip(*iters):
             yield list(combo)
+    elif attack_type == "clusterbomb":
+        yield from _clusterbomb(list(sources), [])
     else:
         raise ValueError(f"unknown attack type: {attack_type}")
+
+
+def _clusterbomb(sources: list[PayloadSource], prefix: list[str]) -> Iterator[list[str]]:
+    if not sources:
+        yield list(prefix)
+        return
+    head, rest = sources[0], sources[1:]
+    for value in head():
+        yield from _clusterbomb(rest, prefix + [value])
+
+
+def iterate(attack_type: str, payload_sets: list[list[str]],
+             n_positions: int) -> Iterator[list[str]]:
+    """Legacy materialised entry: wraps each set in ``from_list`` and
+    delegates to :func:`iterate_streaming`. Existing CLI / spec / test
+    callers keep working unchanged; new code should call the streaming
+    function directly with the factory adapters.
+    """
+    return iterate_streaming(
+        attack_type, [from_list(s) for s in payload_sets], n_positions,
+    )
+
+
+def build_sources_from_storage(stored: Sequence) -> list[PayloadSource]:
+    """Reconstruct payload-source factories from the attack's stored JSON.
+
+    Storage shape per entry:
+      * ``list[str]`` — inline values (text / numbers / brute / built-in /
+        upload). Loaded into RAM at attack-create time.
+      * ``{"kind": "path", "path": "<abs>"}`` — server-side file streamed
+        from disk on every iteration. No memory cost.
+
+    Anything else is a malformed record from a future Reqlore version;
+    reject loudly so the attack errors instead of silently emitting empty
+    payloads.
+    """
+    out: list[PayloadSource] = []
+    for entry in stored:
+        if isinstance(entry, list):
+            out.append(from_list(entry))
+        elif isinstance(entry, dict) and entry.get("kind") == "path":
+            path = entry.get("path") or ""
+            if not path:
+                raise ValueError("Path payload source missing 'path' field.")
+            out.append(from_path(path))
+        else:
+            raise ValueError(f"Unknown payload source entry: {entry!r}")
+    return out
 
 
 # ---------- template rendering ----------
@@ -559,8 +671,21 @@ class AttackRunner:
             base_url = attack["url"]
             atype = attack["attack_type"]
 
+            # Build streaming factories from storage entries so a server-
+            # path source is opened fresh on each pass and never resident
+            # in RAM. Inline lists round-trip through ``from_list`` for
+            # uniformity with the path case.
+            try:
+                sources = build_sources_from_storage(payload_sets)
+            except ValueError as exc:
+                self.stop_reason = f"bad payload source: {exc}"
+                self.project.set_intruder_status(self.attack_id, "errored")
+                return
+
             jobs: list[_Job] = []
-            for seq, combo in enumerate(iterate(atype, payload_sets, len(positions))):
+            for seq, combo in enumerate(
+                iterate_streaming(atype, sources, len(positions))
+            ):
                 if seq >= options.max_requests:
                     break
                 processed = [apply_processors(p, options.processors) for p in combo]

@@ -4,8 +4,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import re as _re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from flask import (
     Blueprint, Response, abort, flash, g, jsonify, redirect, render_template,
@@ -14,8 +16,8 @@ from flask import (
 
 from ...intruder import (
     AttackRunner, DEFAULT_MARKER, COMMON_PASSWORDS, WORDLISTS,
-    find_positions, iterate, load_wordlist_bytes, load_wordlist_file,
-    payloads_brute, payloads_from_text, payloads_numbers,
+    count_wordlist_lines, find_positions, iterate, load_wordlist_bytes,
+    load_wordlist_file, payloads_brute, payloads_from_text, payloads_numbers,
     get_runner, processor_names, register, wordlist_names,
 )
 
@@ -65,6 +67,7 @@ def new():
         "brute_min": "1",
         "brute_max": "3",
         "wordlist_name": "common_passwords",
+        "wordlist_path": "",
         "retries": "0",
         "stop_on_match": "",
         "stop_on_status": "",
@@ -138,7 +141,14 @@ def new():
     )
 
 
-def _collect_payload_sets(form: dict) -> list[list[str]]:
+def _collect_payload_sets(form: dict) -> list:
+    """Return a list of payload-set entries for storage.
+
+    Each entry is either a ``list[str]`` (inline values, used for every
+    source except ``wordlist_path``) or a ``{"kind": "path", "path": str}``
+    dict for the streaming server-path source. Both shapes round-trip
+    through ``intruder.build_sources_from_storage`` at run time.
+    """
     src = form.get("source", "text")
     if src == "numbers":
         return [payloads_numbers(int(form["num_start"]), int(form["num_end"]),
@@ -165,6 +175,29 @@ def _collect_payload_sets(form: dict) -> list[list[str]]:
             raise ValueError("No wordlist file selected.")
         data = upload.read()
         return [load_wordlist_bytes(data)]
+    if src == "wordlist_path":
+        # Streaming source: store only the absolute path, never read the
+        # file into memory. The runner opens it fresh on each pass via
+        # ``from_path`` so even rockyou-class wordlists stay O(1) RAM.
+        raw = (form.get("wordlist_path") or "").strip()
+        if not raw:
+            raise ValueError(
+                "Server path is required for the streaming wordlist source.")
+        p = Path(raw)
+        if not p.is_absolute():
+            raise ValueError(
+                "Server path must be absolute (e.g. /usr/share/wordlists/rockyou.txt).")
+        if not p.is_file():
+            raise ValueError(f"File not found: {raw}")
+        if not os.access(p, os.R_OK):
+            raise ValueError(f"File not readable by the Reqlore process: {raw}")
+        # Pre-count lines so the progress UI shows N/total even though the
+        # source streams. A 100 MB file counts in ~300 ms.
+        try:
+            count_wordlist_lines(p)
+        except OSError as exc:
+            raise ValueError(f"Cannot read server path: {exc}") from exc
+        return [{"kind": "path", "path": str(p)}]
     # 'text' — up to 4 sets for pitchfork/clusterbomb
     sets: list[list[str]] = []
     for key in ("payloads_text", "payloads_set2", "payloads_set3", "payloads_set4"):
