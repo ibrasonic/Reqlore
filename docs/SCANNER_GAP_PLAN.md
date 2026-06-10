@@ -166,24 +166,37 @@ passing (1 skipped unchanged). 15 new tests in
 
 ---
 
-## Phase 4 — Tier D: heavy / optional deps `[ ]`
+## Phase 4 — Tier D: heavy / optional deps `[x]`
 
-2 items. Both gated behind `extras_require` so the default install
-stays lean.
+2 items. Both gated so the default install stays lean.
 
-- `[ ]` **3 · DOM XSS (Playwright)** — reuse the existing
-  `reqlore/browser.py` Playwright wrapper. Renders the recorded URL,
-  injects a marker into every URL/fragment/form parameter, and
-  monitors the page for `eval` / `document.write` / `innerHTML=` of
-  the marker. Skipped silently when Playwright is not installed.
-- `[ ]` **17 · S3 / Azure Blob misconfig** — for URLs that look like
-  `*.s3.amazonaws.com`, `*.s3.<region>.amazonaws.com`, or
-  `*.blob.core.windows.net`, issue an unauthenticated
-  `GET ?list-type=2` and flag a 200 + `<ListBucketResult>` /
-  `<EnumerationResults>` body. No cloud SDK required — plain HTTP.
+- `[x]` **3 · DOM XSS (Playwright)** — `DOMXSSCheck` in
+  [active.py](../reqlore/scanner/active.py). Gated on
+  `_optdeps.PLAYWRIGHT_AVAILABLE` **and** the opt-in
+  `ActiveOptions.allow_dom_xss_probes` flag (off by default because a
+  headless Chromium per probe is expensive). For each GET query
+  parameter, swaps the value for a unique marker, renders the URL in
+  headless Chromium, then asks the page whether the marker landed in
+  a DOM sink (innerHTML, location.href, inline-script body,
+  `javascript:` href). Excluded from the standard preset; cleanly
+  no-ops when Playwright is missing.
+- `[x]` **17 · S3 / Azure Blob misconfig** — `CloudBlobMisconfigCheck`
+  in [active.py](../reqlore/scanner/active.py). For hosts matching
+  `*.s3.amazonaws.com`, `*.s3.<region>.amazonaws.com`,
+  `*.s3-website*.amazonaws.com`, or `*.blob.core.windows.net`,
+  issues one unauthenticated GET (`?list-type=2` for S3,
+  `?restype=container&comp=list` for Azure) and flags a 200 + an
+  XML listing envelope (`<ListBucketResult` or
+  `<EnumerationResults`). One probe per host. No cloud SDK — plain
+  HTTP. New "Cloud" preset group; included in the standard preset
+  since it is a single safe GET.
 
 **Exit criteria for Phase 4:** 2 boxes ticked, tests pass with and
-without optional deps, commit + push.
+without optional deps, commit + push. Status: shipped, 884 passing
+(13 new in
+[test_active_gap_phase4.py](../reqlore/tests/unit/test_active_gap_phase4.py),
+including a live Playwright run against a localhost innerHTML
+sink).
 
 ---
 
@@ -203,4 +216,5 @@ Progress log:
   all 8 Tier-A gap-list items shipped.
 - `[x]` Phase 2 — 3 items (14, 13, 15), 835 → 856 passing.
 - `[x]` Phase 3 — 3 items (2, 10, 9), 856 → 871 passing.
-- `[ ]` Phase 4
+- `[x]` Phase 4 — 2 items (3, 17), 871 → 884 passing. Gap list
+  complete.

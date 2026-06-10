@@ -37,6 +37,7 @@ ACTIVE_CHECK_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "ssti", "nosqli-mongo", "xxe-classic",
         "deserialisation-reflect",
         "xss-stored",
+        "xss-dom",
     )),
     ("File / OS", (
         "path-traversal-lfi", "os-cmd-time",
@@ -61,6 +62,9 @@ ACTIVE_CHECK_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("TLS & DNS", (
         "tls-active",
         "subdomain-takeover",
+    )),
+    ("Cloud", (
+        "cloud-blob-misconfig",
     )),
 )
 
@@ -97,7 +101,8 @@ def _resolve_preset(preset: str, posted_checks: list[str]) -> list[str] | None:
     # standard (default): everything except oast
     return sorted(_all_check_names() - {"oast-ssrf", "http-smuggling",
                                           "default-creds",
-                                          "race-condition"})
+                                          "race-condition",
+                                          "xss-dom"})
 
 
 def _grouped_checks() -> list[dict]:

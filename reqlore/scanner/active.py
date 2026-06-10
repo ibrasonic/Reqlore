@@ -134,6 +134,10 @@ class ActiveOptions:
     # to swap/add when re-sending each baseline (e.g. an alternate
     # session cookie). None disables the IDOR check.
     alt_identity: dict[str, str] | None = None
+    # Phase 4 — opt-in DOM XSS probe via Playwright. Off by default
+    # because it spins up a headless browser per probe, which is
+    # slow and pulls in a heavy optional dep.
+    allow_dom_xss_probes: bool = False
 
 
 # ---- context: parsed snapshot of a recorded history row ----
@@ -3099,6 +3103,323 @@ class RaceConditionCheck(ActiveCheck):
 BUILTIN_ACTIVE_CHECKS.append(StoredXSSCheck())
 BUILTIN_ACTIVE_CHECKS.append(IDORAltIdentityCheck())
 BUILTIN_ACTIVE_CHECKS.append(RaceConditionCheck())
+
+
+# =============== Phase 4 (Tier D) — heavy / optional deps =====================
+#
+# Items #3, #17. Both are gated so the default install stays lean:
+# DOM XSS needs Playwright + a browser; the cloud-blob check is plain
+# HTTP but only meaningful for S3 / Azure hostnames.
+
+
+# Hostname patterns that look like an unbranded cloud-blob endpoint.
+# Tuple of (regex, service) — regex matches against the hostname only.
+_CLOUD_BLOB_HOSTS: tuple[tuple[str, str], ...] = (
+    (r"^[a-z0-9.-]+\.s3\.amazonaws\.com$", "Amazon S3"),
+    (r"^[a-z0-9.-]+\.s3\.[a-z0-9-]+\.amazonaws\.com$", "Amazon S3"),
+    (r"^[a-z0-9.-]+\.s3-website[.-][a-z0-9-]+\.amazonaws\.com$", "Amazon S3"),
+    (r"^[a-z0-9-]+\.blob\.core\.windows\.net$", "Azure Blob Storage"),
+)
+
+
+def _cloud_blob_service(host: str) -> str | None:
+    import re as _re
+    h = (host or "").lower()
+    for pattern, service in _CLOUD_BLOB_HOSTS:
+        if _re.match(pattern, h):
+            return service
+    return None
+
+
+# Body markers that confirm an anonymous bucket / container listing.
+# Both clouds use XML; we match the wrapping element name only so the
+# check is resilient to whitespace and attribute differences.
+_CLOUD_LISTING_MARKERS: tuple[bytes, ...] = (
+    b"<ListBucketResult",          # S3 (v1 + v2)
+    b"<EnumerationResults",        # Azure Blob list
+)
+
+
+class CloudBlobMisconfigCheck(ActiveCheck):
+    """#17 — S3 / Azure Blob anonymous listing.
+
+    Only runs when the recorded host looks like an unbranded cloud
+    blob endpoint. Issues one unauthenticated GET to the bucket /
+    container root with the cloud's listing query (``?list-type=2``
+    for S3, ``?restype=container&comp=list`` for Azure) and flags
+    when the response body is a listing XML envelope.
+
+    No SDK; just plain HTTP via the standard sender.
+    """
+
+    meta = RuleMeta(
+        id="active:cloud-blob-misconfig",
+        title="Cloud blob storage allows anonymous listing",
+        default_severity="high",
+        cwe="CWE-200",
+        owasp="A05:2021-Security Misconfiguration",
+        description=(
+            "An anonymous GET to the cloud blob endpoint returned a "
+            "listing XML envelope (S3 ListBucketResult or Azure "
+            "EnumerationResults). The bucket / container exposes its "
+            "object names without authentication, which often precedes "
+            "data exfiltration."
+        ),
+        remediation=(
+            "Disable anonymous list permission on the bucket / "
+            "container; require signed URLs or IAM credentials. For "
+            "S3 set BlockPublicAcls + IgnorePublicAcls; for Azure set "
+            "the container access level to Private."
+        ),
+        tags=("cloud", "misconfig", "infoleak"),
+    )
+    name = "cloud-blob-misconfig"
+    description = ("GET the bucket/container root with the cloud's "
+                   "listing query and flag when it returns an "
+                   "unauthenticated object listing.")
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        service = _cloud_blob_service(ctx.host)
+        if not service:
+            return
+
+        # One probe per host so a row burst on the same bucket doesn't
+        # multiply requests.
+        if not ctx.claim_probe(opts, rule_id, "host", ctx.host):
+            return
+
+        parsed = up.urlsplit(ctx.full_url)
+        scheme = parsed.scheme or "https"
+        if service == "Amazon S3":
+            probe_url = f"{scheme}://{ctx.host}/?list-type=2"
+        else:  # Azure
+            probe_url = (f"{scheme}://{ctx.host}/?restype=container"
+                          f"&comp=list")
+
+        req = Request(method="GET", url=probe_url,
+                       headers=[("Accept", "*/*")], body=b"")
+        try:
+            pr = send(req)
+        except _SAFE_NETWORK_EXC:
+            return
+
+        if pr.response.status != 200 or not pr.response.body:
+            return
+
+        body = pr.response.body[:50_000]
+        if not any(marker in body for marker in _CLOUD_LISTING_MARKERS):
+            return
+
+        yield Finding(
+            severity="high",
+            title=f"{service} container/bucket allows anonymous listing",
+            description=(
+                "An unauthenticated GET to {url} returned a {svc} "
+                "listing envelope. The container exposes its object "
+                "names without authentication, which often precedes "
+                "credential or PII exfiltration."
+            ).format(url=probe_url, svc=service),
+            remediation=(
+                "Disable anonymous list permission on the bucket / "
+                "container; require signed URLs or IAM credentials."
+            ),
+            cwe="CWE-200",
+            owasp="A05:2021-Security Misconfiguration",
+            host=ctx.host, url=probe_url,
+            request_id=ctx.history_id,
+            payload=probe_url,
+            evidence=f"response body contains {service} listing envelope",
+        )
+
+
+# DOM-sink JS snippet executed in the rendered page to look for the
+# probe marker landing in dangerous browser APIs. Returns a list of
+# sink names that contain the marker.
+_DOM_SINK_PROBE_JS = """
+(marker) => {
+    const sinks = [];
+    try {
+        if (document.documentElement && document.documentElement.outerHTML
+                && document.documentElement.outerHTML.indexOf(marker) !== -1) {
+            sinks.push("innerHTML");
+        }
+        if (document.location && (document.location.href || "")
+                .indexOf(marker) !== -1) {
+            sinks.push("location.href");
+        }
+        const inlineScripts = document.querySelectorAll("script:not([src])");
+        for (const s of inlineScripts) {
+            if ((s.textContent || "").indexOf(marker) !== -1) {
+                sinks.push("inline-script");
+                break;
+            }
+        }
+        const anchors = document.querySelectorAll("a[href]");
+        for (const a of anchors) {
+            if ((a.getAttribute("href") || "")
+                    .startsWith("javascript:" + marker)
+                || (a.getAttribute("href") || "")
+                    .indexOf("javascript:" + marker) === 0) {
+                sinks.push("anchor-javascript-href");
+                break;
+            }
+        }
+    } catch (e) { /* swallow — probe must not crash the page */ }
+    return sinks;
+}
+"""
+
+
+class DOMXSSCheck(ActiveCheck):
+    """#3 — DOM-based XSS via headless Playwright.
+
+    For each query parameter, swap the value for a unique marker,
+    render the resulting URL in a headless Chromium and ask the page
+    whether the marker landed in a dangerous DOM sink (innerHTML,
+    location.href, inline-script body, ``javascript:`` href).
+
+    Skipped silently when Playwright is not installed (the
+    ``[browser]`` extra ships it). Opt-in via
+    ``ActiveOptions.allow_dom_xss_probes`` because a headless browser
+    per probe is expensive.
+    """
+
+    meta = RuleMeta(
+        id="active:xss-dom",
+        title="DOM XSS sink reached by URL-controlled marker",
+        default_severity="high",
+        cwe="CWE-79",
+        owasp="A03:2021-Injection",
+        description=(
+            "A unique marker placed in a URL query parameter was "
+            "rendered into a dangerous DOM sink (innerHTML, "
+            "location.href, inline script, or javascript: href). "
+            "An attacker controlling that parameter can execute "
+            "arbitrary script in the victim's browser."
+        ),
+        remediation=(
+            "Encode URL-derived data before inserting it into the "
+            "DOM; prefer textContent over innerHTML; treat any "
+            "javascript: URL coming from user input as hostile."
+        ),
+        tags=("xss", "dom", "browser"),
+    )
+    name = "xss-dom"
+    description = ("Render the URL in a headless browser with a "
+                   "marker injected into each query parameter; flag "
+                   "when the marker lands in a DOM sink.")
+
+    NAV_TIMEOUT_MS = 8_000
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        if not opts.allow_dom_xss_probes:
+            return
+
+        try:
+            from .._optdeps import PLAYWRIGHT_AVAILABLE
+        except ImportError:
+            PLAYWRIGHT_AVAILABLE = False
+        if not PLAYWRIGHT_AVAILABLE:
+            return
+        if ctx.method.upper() != "GET":
+            return
+
+        pairs = ctx.query_pairs()
+        if not pairs:
+            return
+
+        rule_id = self.meta.id
+
+        # Single Playwright session for the whole row — spinning a new
+        # browser per parameter is brutally slow.
+        from playwright.sync_api import sync_playwright  # local import
+
+        try:
+            pw_ctx = sync_playwright().start()
+        except _SAFE_NETWORK_EXC:
+            return
+        try:
+            try:
+                browser = pw_ctx.chromium.launch(headless=True)
+            except _SAFE_NETWORK_EXC:
+                return
+            try:
+                for key, _ in pairs:
+                    if not ctx.claim_probe(opts, rule_id, "query", key):
+                        continue
+                    marker = "RQLDOM" + secrets.token_hex(5)
+                    probe_url = _replace_query_value(
+                        ctx.full_url, key, marker,
+                    )
+                    page = browser.new_page()
+                    try:
+                        try:
+                            page.goto(probe_url,
+                                       timeout=self.NAV_TIMEOUT_MS,
+                                       wait_until="load")
+                        except _SAFE_NETWORK_EXC:
+                            continue
+                        except Exception:                       # noqa: BLE001
+                            continue
+                        try:
+                            sinks = page.evaluate(
+                                _DOM_SINK_PROBE_JS, marker,
+                            )
+                        except _SAFE_NETWORK_EXC:
+                            continue
+                        except Exception:                       # noqa: BLE001
+                            continue
+                        if not sinks:
+                            continue
+                        sink_list = ", ".join(sorted(set(sinks)))
+                        yield Finding(
+                            severity="high",
+                            title=("DOM XSS sink reached by "
+                                    f"URL-controlled '{key}'"),
+                            description=(
+                                "A unique marker placed in the '{p}' "
+                                "query parameter of {u} landed in the "
+                                "following DOM sink(s) after the page "
+                                "rendered: {s}. An attacker controlling "
+                                "this parameter can execute arbitrary "
+                                "script in the victim's browser."
+                            ).format(p=key, u=ctx.full_url, s=sink_list),
+                            remediation=(
+                                "Encode URL-derived data before "
+                                "inserting it into the DOM; prefer "
+                                "textContent over innerHTML; reject "
+                                "javascript: URLs from user input."
+                            ),
+                            cwe="CWE-79",
+                            owasp="A03:2021-Injection",
+                            host=ctx.host, url=probe_url,
+                            request_id=ctx.history_id,
+                            payload=marker,
+                            evidence=f"DOM sinks reached: {sink_list}",
+                        )
+                    finally:
+                        try:
+                            page.close()
+                        except _SAFE_NETWORK_EXC:
+                            pass
+            finally:
+                try:
+                    browser.close()
+                except _SAFE_NETWORK_EXC:
+                    pass
+        finally:
+            try:
+                pw_ctx.stop()
+            except _SAFE_NETWORK_EXC:
+                pass
+
+
+BUILTIN_ACTIVE_CHECKS.append(CloudBlobMisconfigCheck())
+BUILTIN_ACTIVE_CHECKS.append(DOMXSSCheck())
 
 
 # ---- runner ----
