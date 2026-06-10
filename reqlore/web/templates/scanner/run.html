@@ -107,12 +107,8 @@
       </ul>
     </fieldset>
 
-    <details>
+    <details class="customise-checks">
       <summary>Customise checks</summary>
-      <p>
-        Only used when the <em>Custom</em> preset is selected above. Otherwise
-        the preset wins and these checkboxes are ignored.
-      </p>
       {% for group in groups %}
       <fieldset class="check-group">
         <legend>{{ group.label }} ({{ group.checks|length }})</legend>

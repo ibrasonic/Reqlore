@@ -113,7 +113,10 @@ def test_run_page_renders_preset_radios(client):
 
 def test_run_page_has_collapsed_customise_details(client):
     body = client.get("/scanner/run").data.decode()
-    assert "<details>" in body
+    # Still a <details> for progressive disclosure (and as a fallback when
+    # CSS :has() is unsupported); the customise-checks class is what
+    # the stylesheet hides unless the Custom preset is active.
+    assert 'class="customise-checks"' in body
     assert "<summary>Customise checks</summary>" in body
 
 

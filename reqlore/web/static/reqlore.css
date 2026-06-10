@@ -236,6 +236,16 @@ body {
   font-weight: 400;
 }
 
+/* The customise-checks block only matters for the Custom preset.
+   Hide it whenever a *non-custom* preset radio is checked, so the page
+   stays focused on what's actually in use. Uses CSS :has(), which
+   reqlore's supported browsers (current Firefox / Chrome / Safari)
+   all ship. If :has() is unsupported, the block stays visible — the
+   safer fallback (operator sees more, not less). */
+form:has(input[name="preset"]:checked:not([value="custom"])) .customise-checks {
+  display: none;
+}
+
 /* Severity badges — used in scanner findings tables and detail page.
    Colour is supplementary: the text label always carries the meaning,
    and critical/high/medium/low/info also differ by border weight so
