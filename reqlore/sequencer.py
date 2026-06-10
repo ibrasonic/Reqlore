@@ -194,3 +194,62 @@ def collect_tokens(blob: str) -> list[str]:
         if s:
             out.append(s)
     return out
+
+
+_SEVERITY_FOR_RATING = {
+    "weak":      "high",
+    "fair":      "medium",
+    "good":      "low",
+    "excellent": "info",
+}
+
+
+def record_sequencer_finding(project, result: SequencerResult, *,
+                              host: str = "", url: str = "",
+                              source_label: str = "pasted tokens"
+                              ) -> int | None:
+    """Promote a :class:`SequencerResult` into a single Finding. Only fires
+    when the verdict is below ``good`` (weak/fair) — strong tokens record a
+    skipped rule_run instead. Returns the finding id, or ``None`` when
+    suppressed / no finding warranted."""
+    from .findings_bus import record_finding, record_no_finding
+    rule_id = "sequencer:low-entropy"
+    if result.rating in ("good", "excellent"):
+        record_no_finding(project, rule_id=rule_id, host=host, url=url,
+                            reason=f"rating={result.rating}")
+        return None
+    severity = _SEVERITY_FOR_RATING.get(result.rating, "medium")
+    evidence_lines = [
+        f"Sample: {result.sample_count} tokens, common length "
+        f"{result.common_length}.",
+        f"Entropy: {result.overall_entropy_bits_per_char:.2f} bits/char, "
+        f"{result.overall_entropy_bits_per_token:.1f} bits/token.",
+        f"Rating: {result.rating}.",
+    ]
+    if result.weak_positions:
+        evidence_lines.append(
+            f"Low-entropy positions: {result.weak_positions}"
+        )
+    if result.min_hamming == 1:
+        evidence_lines.append(
+            "Consecutive tokens differ by only one character."
+        )
+    description = (
+        "Session/CSRF/anti-bot tokens analysed by Reqlore's sequencer fell "
+        f"into the \"{result.rating}\" band. Low-entropy tokens are guessable "
+        "and can be brute-forced or predicted."
+    )
+    return record_finding(
+        project, source="sequencer", rule_id=rule_id, severity=severity,
+        title=f"Weak token entropy ({result.rating})",
+        description=description,
+        remediation=(
+            "Generate tokens with a cryptographically-secure random source "
+            "(at least 128 bits of entropy) and avoid embedding counters or "
+            "timestamps in the token body."
+        ),
+        cwe="CWE-330", owasp="A02:2021-Cryptographic Failures",
+        host=host, url=url,
+        evidence=" ".join(evidence_lines),
+        payload=source_label,
+    )

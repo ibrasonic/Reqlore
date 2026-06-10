@@ -1,7 +1,7 @@
 """Unit tests for intruder module: parsing, scheduling, processors."""
 from reqlore.intruder import (
     DEFAULT_MARKER, apply_payloads, apply_processors, find_positions,
-    iterate, payloads_from_text, payloads_numbers, strip_markers,
+    grep_extract, iterate, payloads_from_text, payloads_numbers, strip_markers,
 )
 
 
@@ -76,3 +76,40 @@ def test_iterate_pitchfork():
 def test_iterate_clusterbomb():
     out = list(iterate("clusterbomb", [["a", "b"], ["1", "2"]], n_positions=2))
     assert out == [["a", "1"], ["a", "2"], ["b", "1"], ["b", "2"]]
+
+
+def test_grep_extract_first_match_returns_matched_flag():
+    hits, matched = grep_extract(b"hello world hello", ["hello"])
+    assert matched is True
+    assert "hello" in hits
+
+
+def test_grep_extract_no_match_flag_false():
+    hits, matched = grep_extract(b"nothing here", ["missing"])
+    assert hits == ""
+    assert matched is False
+
+
+def test_grep_extract_count_mode():
+    hits, matched = grep_extract(b"abc abc abc abc", ["=count:abc"])
+    assert matched is True
+    assert "4" in hits
+
+
+def test_grep_extract_all_mode_joins_matches():
+    hits, matched = grep_extract(b"a1 a2 a3", ["=all:a\\d"])
+    assert matched is True
+    assert "a1" in hits and "a2" in hits and "a3" in hits
+
+
+def test_grep_extract_invalid_regex_is_silently_skipped():
+    hits, matched = grep_extract(b"abc", ["(unclosed"])
+    assert hits == ""
+    assert matched is False
+
+
+def test_grep_extract_empty_patterns_returns_no_match():
+    hits, matched = grep_extract(b"abc", [])
+    assert hits == ""
+    assert matched is False
+

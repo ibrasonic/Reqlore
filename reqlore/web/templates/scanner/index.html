@@ -16,6 +16,10 @@
     <label for="lim">Scan most recent</label>
     <input id="lim" name="limit" type="number" value="5000" min="1" max="50000">
     <span> requests.</span>
+    <label for="full" style="margin-left:1em;">
+      <input id="full" name="full" type="checkbox" value="1">
+      Full re-scan (ignore resume marker)
+    </label>
     <button type="submit">Run passive scan</button>
   </form>
 </section>
@@ -87,6 +91,18 @@
 
 <section aria-labelledby="find-h">
   <h2 id="find-h">Findings</h2>
+  <p>
+    <a href="{{ url_for('.manual') }}" accesskey="m">Add manual finding</a>
+    — record an issue you discovered by hand.
+  </p>
+  <p>
+    <a href="{{ url_for('.suppressions') }}">Manage finding suppressions</a>
+    — review and remove false-positive triage rules.
+  </p>
+  <p>
+    <a href="{{ url_for('.coverage') }}">View scanner coverage</a>
+    — see fired-vs-evaluated counts per rule and host.
+  </p>
   <form method="get" class="inline" role="search" aria-label="Filter findings">
     <label for="sev">Severity</label>
     <select id="sev" name="severity">

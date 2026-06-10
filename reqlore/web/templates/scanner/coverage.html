@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Scanner coverage{% endblock %}
+{% block main %}
+<h1>Scanner coverage</h1>
+<p>
+  Shows what rules <em>were evaluated</em> vs what <em>actually fired</em>,
+  so you can spot rules that are silently being skipped, suppressed, or
+  excluded by scope. Data is sourced from the <code>rule_runs</code> table.
+  The <a href="{{ url_for('.suppressions') }}">suppressions list</a> is the
+  usual reason a rule has <code>fired = 0</code> on a host where it was
+  evaluated.
+</p>
+
+<form method="get" action="{{ url_for('.coverage') }}" class="filter-form">
+  <label>Rule&nbsp;contains
+    <input type="text" name="rule_id" value="{{ rule_filter }}" placeholder="passive:hsts">
+  </label>
+  <label>Host&nbsp;contains
+    <input type="text" name="host" value="{{ host_filter }}" placeholder="example.com">
+  </label>
+  <button type="submit">Filter</button>
+  {% if rule_filter or host_filter %}
+    <a href="{{ url_for('.coverage') }}">Clear</a>
+  {% endif %}
+</form>
+
+<h2>Rule totals</h2>
+{% if summary %}
+  <table>
+    <caption>{{ summary|length }} rule(s) with recorded runs</caption>
+    <thead>
+      <tr>
+        <th scope="col">Rule</th>
+        <th scope="col">Fired</th>
+        <th scope="col">Evaluated</th>
+        <th scope="col">Hit rate</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in summary %}
+        {% set pct = (100.0 * r.fired / r.evaluated) if r.evaluated else 0 %}
+        <tr>
+          <td><code>{{ r.rule_id }}</code></td>
+          <td>{{ r.fired }}</td>
+          <td>{{ r.evaluated }}</td>
+          <td>{{ "%.1f"|format(pct) }}%</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p><em>No rule runs recorded yet. Run a scan from the
+    <a href="{{ url_for('.index') }}">scanner page</a>.</em></p>
+{% endif %}
+
+<h2>Coverage by host</h2>
+{% if by_host %}
+  <table>
+    <caption>{{ by_host|length }} (rule, host) pair(s)</caption>
+    <thead>
+      <tr>
+        <th scope="col">Rule</th>
+        <th scope="col">Host</th>
+        <th scope="col">Fired</th>
+        <th scope="col">Evaluated</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in by_host %}
+        <tr>
+          <td><code>{{ r.rule_id }}</code></td>
+          <td><code>{{ r.host or '(unknown)' }}</code></td>
+          <td>{{ r.fired }}</td>
+          <td>{{ r.evaluated }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p><em>No per-host runs match the current filters.</em></p>
+{% endif %}
+
+<p><a href="{{ url_for('.index') }}">&larr; Back to scanner</a></p>
+{% endblock %}

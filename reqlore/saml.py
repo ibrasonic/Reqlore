@@ -190,3 +190,41 @@ def _audit(root, xml: str) -> list[SAMLFinding]:
                     "decisions."),
         ))
     return out
+
+
+_SAML_RULE_IDS = {
+    "SAML message is not signed":            ("saml:unsigned",        "CWE-345"),
+    "No expiry (NotOnOrAfter) on assertion": ("saml:no-expiry",       "CWE-294"),
+    "No AudienceRestriction":                ("saml:no-audience",     "CWE-346"),
+    "XML comments in payload":               ("saml:xml-comments",    "CWE-91"),
+}
+
+
+def _saml_rule_for(title: str) -> tuple[str, str]:
+    if title in _SAML_RULE_IDS:
+        return _SAML_RULE_IDS[title]
+    if title.startswith("Weak cryptographic algorithm"):
+        return ("saml:weak-algo", "CWE-327")
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "issue"
+    return (f"saml:{slug}", "")
+
+
+def record_saml_findings(project, inspection: SAMLInspection, *,
+                          host: str = "", url: str = "") -> list[int]:
+    """Promote every :class:`SAMLFinding` on ``inspection`` into the unified
+    findings ledger. Returns the list of finding ids that were created (or
+    deduped to an existing row). Suppressed findings yield no id."""
+    from .findings_bus import record_finding
+    out: list[int] = []
+    for f in inspection.findings:
+        rule_id, cwe = _saml_rule_for(f.title)
+        fid = record_finding(
+            project, source="saml", rule_id=rule_id,
+            severity=f.severity, title=f.title,
+            description=f.detail, cwe=cwe,
+            host=host, url=url,
+            evidence=f.detail[:200],
+        )
+        if fid is not None:
+            out.append(fid)
+    return out

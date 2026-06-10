@@ -53,7 +53,7 @@ class TestUiSubcommand:
 class TestSubcommandSurface:
     @pytest.mark.parametrize("cmd", [
         "init", "ui", "proxy", "both", "scan", "report",
-        "run", "import-har", "browser", "prefetch-firefox",
+        "run", "import-har", "browser", "intruder", "prefetch-firefox",
     ])
     def test_every_documented_subcommand_parses(self, cmd):
         # Each subcommand at least needs to be a recognised name. We use

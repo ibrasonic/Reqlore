@@ -66,36 +66,70 @@
           <option value="numbers" {% if form.source == 'numbers' %}selected{% endif %}>Number range</option>
           <option value="brute" {% if form.source == 'brute' %}selected{% endif %}>Brute force (alphabet × length)</option>
           <option value="common_pw" {% if form.source == 'common_pw' %}selected{% endif %}>Common passwords (built-in)</option>
+          <option value="wordlist" {% if form.source == 'wordlist' %}selected{% endif %}>Built-in wordlist</option>
+          <option value="wordlist_file" {% if form.source == 'wordlist_file' %}selected{% endif %}>Wordlist from file</option>
         </select>
       </div>
     </div>
 
     <div>
       <label for="i-pl">Set 1 — one payload per line</label>
-      <textarea id="i-pl" name="payloads_text" rows="6" autocomplete="off">{{ form.payloads_text }}</textarea>
-    </div>
-    <div>
-      <label for="i-pl2">Set 2 (pitchfork / clusterbomb)</label>
-      <textarea id="i-pl2" name="payloads_set2" rows="4" autocomplete="off">{{ form.payloads_set2 }}</textarea>
-    </div>
-    <div>
-      <label for="i-pl3">Set 3 (pitchfork / clusterbomb)</label>
-      <textarea id="i-pl3" name="payloads_set3" rows="4" autocomplete="off">{{ form.payloads_set3 }}</textarea>
-    </div>
-    <div>
-      <label for="i-pl4">Set 4 (pitchfork / clusterbomb)</label>
-      <textarea id="i-pl4" name="payloads_set4" rows="4" autocomplete="off">{{ form.payloads_set4 }}</textarea>
+      <textarea id="i-pl" name="payloads_text" rows="6" autocomplete="off" aria-describedby="i-pl-help">{{ form.payloads_text }}</textarea>
+      <p id="i-pl-help" class="muted">Used by every attack type. Blank lines are kept as empty payloads.</p>
     </div>
 
-    <div class="row">
-      <div><label for="i-ns">Number start</label><input id="i-ns" name="num_start" value="{{ form.num_start }}"></div>
-      <div><label for="i-ne">Number end</label><input id="i-ne" name="num_end" value="{{ form.num_end }}"></div>
-      <div><label for="i-nst">Step</label><input id="i-nst" name="num_step" value="{{ form.num_step }}"></div>
+    {% set multi = form.attack_type in ('pitchfork', 'clusterbomb') %}
+    <details {% if multi %}open{% endif %}>
+      <summary>Sets 2–4 (used only by Pitchfork / Cluster Bomb)</summary>
+      {% if not multi %}
+      <p class="muted">
+        Current attack type is <strong>{{ form.attack_type }}</strong>, which uses only Set 1.
+        Anything entered below is kept for later but ignored on this submission.
+      </p>
+      {% endif %}
+      <div>
+        <label for="i-pl2">Set 2</label>
+        <textarea id="i-pl2" name="payloads_set2" rows="4" autocomplete="off">{{ form.payloads_set2 }}</textarea>
+      </div>
+      <div>
+        <label for="i-pl3">Set 3</label>
+        <textarea id="i-pl3" name="payloads_set3" rows="4" autocomplete="off">{{ form.payloads_set3 }}</textarea>
+      </div>
+      <div>
+        <label for="i-pl4">Set 4</label>
+        <textarea id="i-pl4" name="payloads_set4" rows="4" autocomplete="off">{{ form.payloads_set4 }}</textarea>
+      </div>
+    </details>
+
+    <div class="row" role="group" aria-labelledby="numgroup-label">
+      <p id="numgroup-label" class="muted">Number range source — produces every integer from start to end with the given step.</p>
+      <div><label for="i-ns">Number start</label><input id="i-ns" name="num_start" value="{{ form.num_start }}" inputmode="numeric"></div>
+      <div><label for="i-ne">Number end</label><input id="i-ne" name="num_end" value="{{ form.num_end }}" inputmode="numeric"></div>
+      <div><label for="i-nst">Step</label><input id="i-nst" name="num_step" value="{{ form.num_step }}" inputmode="numeric"></div>
     </div>
-    <div class="row">
+    <div class="row" role="group" aria-labelledby="brutegroup-label">
+      <p id="brutegroup-label" class="muted">Brute-force source — generates every string from <code>min</code> to <code>max</code> chars over the given alphabet. Capped at 50,000 payloads.</p>
       <div><label for="i-ba">Brute alphabet</label><input id="i-ba" name="brute_alphabet" value="{{ form.brute_alphabet }}"></div>
-      <div><label for="i-bmin">Min length</label><input id="i-bmin" name="brute_min" value="{{ form.brute_min }}"></div>
-      <div><label for="i-bmax">Max length</label><input id="i-bmax" name="brute_max" value="{{ form.brute_max }}"></div>
+      <div><label for="i-bmin">Min length</label><input id="i-bmin" name="brute_min" value="{{ form.brute_min }}" inputmode="numeric"></div>
+      <div><label for="i-bmax">Max length</label><input id="i-bmax" name="brute_max" value="{{ form.brute_max }}" inputmode="numeric"></div>
+    </div>
+    <div class="row" role="group" aria-labelledby="wlgroup-label">
+      <p id="wlgroup-label" class="muted">Built-in wordlist source — small reference lists shipped with reqlore.</p>
+      <div>
+        <label for="i-wln">Built-in wordlist</label>
+        <select id="i-wln" name="wordlist_name">
+          {% for name in wordlists %}
+          <option value="{{ name }}" {% if form.wordlist_name == name %}selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="row" role="group" aria-labelledby="wlfgroup-label">
+      <p id="wlfgroup-label" class="muted">Wordlist-from-file source — absolute path to a UTF-8 text file (one entry per line; ≤ 5 MB, ≤ 100,000 lines). Lines starting with <code>#</code> are ignored.</p>
+      <div class="grow">
+        <label for="i-wlp">Wordlist file path</label>
+        <input id="i-wlp" name="wordlist_path" value="{{ form.wordlist_path }}" autocomplete="off">
+      </div>
     </div>
   </fieldset>
 
@@ -115,8 +149,19 @@
       <label for="i-grep">Grep — extract patterns (one regex per line)</label>
       <textarea id="i-grep" name="grep" rows="3" autocomplete="off">{{ form.grep }}</textarea>
     </div>
+    <div class="row">
+      <div><label for="i-rt">Retries on send error</label>
+        <input id="i-rt" name="retries" value="{{ form.retries }}" inputmode="numeric"
+               aria-describedby="i-rt-help"></div>
+      <div><label for="i-sos">Stop on status (comma-separated codes)</label>
+        <input id="i-sos" name="stop_on_status" value="{{ form.stop_on_status }}"
+               placeholder="200, 302"></div>
+      <div><label for="i-som"><input id="i-som" type="checkbox" name="stop_on_match" value="1"
+             {% if form.stop_on_match %}checked{% endif %}> Stop on first grep match</label></div>
+    </div>
+    <p id="i-rt-help" class="muted">Retries apply only to network/send exceptions, not to HTTP status codes. Each retry waits the per-request delay.</p>
   </fieldset>
 
-  <button type="submit">Create attack</button>
+  <button type="submit" accesskey="c"><u>C</u>reate attack</button>
 </form>
 {% endblock %}

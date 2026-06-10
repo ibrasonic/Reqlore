@@ -36,6 +36,17 @@ KEYMAP = [
     ("Alt+B",  "Send to PoC builder (history detail)"),
     ("Alt+J",  "Send to JWT workbench (history detail)"),
     ("Alt+O",  "Send to Decoder (history detail)"),
+    # On the Intruder list:
+    ("Alt+N",  "New attack (Intruder list)"),
+    # On an Intruder attack detail page:
+    ("Alt+S",  "Start / Restart attack (Intruder detail)"),
+    ("Alt+P",  "Pause attack (Intruder detail)"),
+    ("Alt+R",  "Resume attack (Intruder detail)"),
+    ("Alt+C",  "Cancel attack (Intruder detail)"),
+    ("Alt+D",  "Delete attack (Intruder detail)"),
+    ("Alt+A",  "Apply filter (Intruder detail)"),
+    # On the New-attack form:
+    ("Alt+C",  "Create attack (Intruder new)"),
 ]
 
 

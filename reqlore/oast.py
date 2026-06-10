@@ -200,3 +200,54 @@ def interactsh_poll(server_url: str, correlation_id: str, secret: str,
         return payload.get("data", []) or []
     except Exception as exc:  # network errors must not crash the UI
         return [{"_error": str(exc)}]
+
+
+def record_oast_interactions(project, interactions: list[Interaction], *,
+                              probe_url: str, probe_host: str = "",
+                              request_id: int | None = None,
+                              probe_kind: str = "ssrf") -> list[int]:
+    """Promote OAST callback interactions into findings.
+
+    ``probe_kind`` controls the rule_id and template — ``ssrf`` for typical
+    server-side-request-forgery probes, ``xxe`` for XML out-of-band, ``log4j``
+    for JNDI lookups, etc. Returns the list of created finding ids.
+    """
+    if not interactions:
+        return []
+    from .findings_bus import record_finding
+    rule_map = {
+        "ssrf":   ("oast:ssrf-callback",    "high",     "CWE-918"),
+        "xxe":    ("oast:xxe-callback",     "high",     "CWE-611"),
+        "log4j":  ("oast:jndi-callback",    "critical", "CWE-94"),
+        "rce":    ("oast:rce-callback",     "critical", "CWE-78"),
+        "blind":  ("oast:blind-interaction","medium",   "CWE-918"),
+    }
+    rule_id, severity, cwe = rule_map.get(probe_kind, rule_map["blind"])
+    out: list[int] = []
+    for ix in interactions:
+        evidence = (
+            f"OAST {ix.kind} hit from {ix.remote} at {ix.method} {ix.path} "
+            f"({ix.bytes_in} bytes; token={ix.token})"
+        )
+        fid = record_finding(
+            project, source="oast", rule_id=rule_id, severity=severity,
+            title=f"Out-of-band interaction ({probe_kind.upper()})",
+            description=(
+                "The target made an out-of-band callback to the OAST "
+                "listener after the probe was sent. OAST hits are very "
+                "high-fidelity evidence that the input was processed in a "
+                "context that performs network/file/JNDI lookups."
+            ),
+            remediation=(
+                "Validate / canonicalise user-controlled URLs and file "
+                "paths, disable JNDI lookups in log frameworks, and "
+                "deny outbound traffic from server contexts that should "
+                "not be making external calls."
+            ),
+            cwe=cwe, owasp="A10:2021-Server-Side Request Forgery",
+            host=probe_host, url=probe_url, request_id=request_id,
+            evidence=evidence,
+        )
+        if fid is not None:
+            out.append(fid)
+    return out

@@ -137,3 +137,37 @@ def run_query(url: str, query: str, *,
         return {"_error": f"non-JSON response: {exc}",
                 "_status": resp.status,
                 "_preview": resp.body[:400].decode("latin-1", errors="replace")}
+
+
+def record_introspection_finding(project, introspection: dict, *,
+                                   url: str, host: str = "") -> int | None:
+    """If a GraphQL endpoint replied to ``INTROSPECTION_QUERY`` with a real
+    schema, record a finding. Endpoints in production should disable
+    introspection."""
+    from .findings_bus import record_finding, record_no_finding
+    rule_id = "graphql:introspection-enabled"
+    data = introspection.get("data") or {}
+    schema = data.get("__schema") if isinstance(data, dict) else None
+    if not schema or not (schema.get("types") or []):
+        record_no_finding(project, rule_id=rule_id, host=host, url=url,
+                            reason="introspection refused or empty")
+        return None
+    type_count = len(schema.get("types") or [])
+    return record_finding(
+        project, source="graphql", rule_id=rule_id, severity="medium",
+        title="GraphQL introspection enabled",
+        description=(
+            "The GraphQL endpoint answered an `__schema` introspection "
+            f"query and exposed {type_count} types. Production endpoints "
+            "should disable introspection or restrict it to authenticated "
+            "developer accounts so attackers cannot map the API surface."
+        ),
+        remediation=(
+            "Disable introspection in production (Apollo: "
+            "`introspection: false`; graphql-php: `DisableIntrospection`), "
+            "or gate it behind authentication."
+        ),
+        cwe="CWE-200", owasp="A05:2021-Security Misconfiguration",
+        host=host, url=url,
+        evidence=f"__schema query returned {type_count} types",
+    )

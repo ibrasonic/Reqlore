@@ -42,6 +42,19 @@ def wcag_pass(fg: str, bg: str, *, large_text: bool = False) -> tuple[bool, floa
     return ratio >= threshold, ratio
 
 
+def wcag_aaa_pass(fg: str, bg: str, *, large_text: bool = False) -> tuple[bool, float]:
+    """WCAG 2.1 SC 1.4.6 Contrast (Enhanced): 7.0 normal / 4.5 large."""
+    ratio = contrast_ratio(hex_to_rgb(fg), hex_to_rgb(bg))
+    threshold = 4.5 if large_text else 7.0
+    return ratio >= threshold, ratio
+
+
+def wcag_ui_component_pass(fg: str, bg: str) -> tuple[bool, float]:
+    """WCAG 2.1 SC 1.4.11 Non-text Contrast: 3.0 minimum for UI parts."""
+    ratio = contrast_ratio(hex_to_rgb(fg), hex_to_rgb(bg))
+    return ratio >= 3.0, ratio
+
+
 # ---------- Plain-language summary of an HTTP response ----------
 
 @dataclass

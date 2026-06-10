@@ -1,17 +1,19 @@
 """SQLite-backed project file. Single facade for all reads + writes."""
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
 import time
+import uuid as _uuid
 import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS project (
@@ -139,6 +141,46 @@ CREATE TABLE IF NOT EXISTS intruder_results (
     FOREIGN KEY (attack_id) REFERENCES intruder_attacks(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_intr_attack ON intruder_results(attack_id);
+
+CREATE TABLE IF NOT EXISTS finding_targets (
+    finding_id INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    host TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (finding_id, host, url)
+);
+
+CREATE TABLE IF NOT EXISTS finding_suppressions (
+    rule_id TEXT NOT NULL,
+    host TEXT NOT NULL DEFAULT '',
+    url_pattern TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (rule_id, host, url_pattern)
+);
+
+CREATE TABLE IF NOT EXISTS finding_reproductions (
+    token TEXT PRIMARY KEY,
+    request_blob BLOB,
+    response_blob BLOB,
+    method TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    status INTEGER NOT NULL DEFAULT 0,
+    sent_at INTEGER NOT NULL,
+    elapsed_ms INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS rule_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id TEXT NOT NULL,
+    rule_version INTEGER NOT NULL DEFAULT 0,
+    host TEXT NOT NULL DEFAULT '',
+    url TEXT NOT NULL DEFAULT '',
+    fired INTEGER NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    run_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rule_runs_host ON rule_runs(host, rule_id);
+CREATE INDEX IF NOT EXISTS idx_rule_runs_rule ON rule_runs(rule_id);
 """
 
 
@@ -148,6 +190,22 @@ def _compress(data: bytes) -> bytes:
 
 def _decompress(data: bytes) -> bytes:
     return zlib.decompress(data) if data else b""
+
+
+def _host_matches(pattern: str, host: str) -> bool:
+    """Match a suppression host pattern against a candidate host.
+
+    Empty pattern matches any host. A leading ``*.`` matches the literal host
+    and any subdomain. Otherwise an exact (case-insensitive) match is required.
+    """
+    if not pattern:
+        return True
+    p = pattern.lower()
+    h = (host or "").lower()
+    if p.startswith("*."):
+        suffix = p[1:]
+        return h == p[2:] or h.endswith(suffix)
+    return h == p
 
 
 @dataclass
@@ -210,6 +268,20 @@ class Project:
             ("intercept_q", "decision", "TEXT"),
             ("intercept_q", "edited_blob", "BLOB"),
             ("scope_rules", "target", "TEXT NOT NULL DEFAULT 'host'"),
+            ("intruder_results", "body_md5", "TEXT NOT NULL DEFAULT ''"),
+            ("intruder_results", "matched", "INTEGER NOT NULL DEFAULT 0"),
+            ("issues", "uuid", "TEXT"),
+            ("issues", "source", "TEXT NOT NULL DEFAULT 'scanner'"),
+            ("issues", "rule_id", "TEXT NOT NULL DEFAULT ''"),
+            ("issues", "rule_version", "INTEGER NOT NULL DEFAULT 0"),
+            ("issues", "description", "TEXT NOT NULL DEFAULT ''"),
+            ("issues", "remediation", "TEXT NOT NULL DEFAULT ''"),
+            ("issues", "references_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("issues", "cvss_vector", "TEXT"),
+            ("issues", "cvss_score", "REAL"),
+            ("issues", "reproduction_token", "TEXT"),
+            ("issues", "updated_at", "INTEGER"),
+            ("issues", "dedupe_key", "TEXT"),
         ]
         for table, col, decl in adds:
             cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
@@ -218,6 +290,29 @@ class Project:
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
                 except sqlite3.OperationalError:
                     pass
+        # Indices we want even on freshly-migrated databases.
+        for ddl in (
+            "CREATE INDEX IF NOT EXISTS idx_issues_source ON issues(source)",
+            "CREATE INDEX IF NOT EXISTS idx_issues_uuid ON issues(uuid)",
+            "CREATE INDEX IF NOT EXISTS idx_issues_rule ON issues(rule_id)",
+            "CREATE INDEX IF NOT EXISTS idx_issues_dedupe ON issues(dedupe_key)",
+        ):
+            try:
+                self._conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
+        # Backfill uuid + updated_at for any pre-v3 rows.
+        try:
+            rows = self._conn.execute(
+                "SELECT id, created_at FROM issues WHERE uuid IS NULL OR uuid = ''"
+            ).fetchall()
+            for rid, created in rows:
+                self._conn.execute(
+                    "UPDATE issues SET uuid=?, updated_at=COALESCE(updated_at,?) WHERE id=?",
+                    (_uuid.uuid4().hex, created, rid),
+                )
+        except sqlite3.OperationalError:
+            pass
 
     # ---- low-level helpers ----
     @contextmanager
@@ -586,13 +681,14 @@ class Project:
 
     def add_intruder_result(self, *, attack_id: int, seq: int, payloads: list[str],
                              status: int, len_resp: int, duration_ms: int,
-                             grep_hits: str, history_id: int | None) -> int:
+                             grep_hits: str, history_id: int | None,
+                             body_md5: str = "", matched: bool = False) -> int:
         with self._cursor() as cur:
             cur.execute(
                 "INSERT INTO intruder_results(attack_id,seq,payloads_json,status,len_resp,"
-                "duration_ms,grep_hits,history_id) VALUES (?,?,?,?,?,?,?,?)",
+                "duration_ms,grep_hits,history_id,body_md5,matched) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (attack_id, seq, json.dumps(payloads), status, len_resp, duration_ms,
-                 grep_hits, history_id),
+                 grep_hits, history_id, body_md5, 1 if matched else 0),
             )
             return int(cur.lastrowid or 0)
 
@@ -600,18 +696,20 @@ class Project:
                                desc: bool = False) -> list[dict]:
         order_col = {
             "seq": "seq", "status": "status", "len": "len_resp",
-            "time": "duration_ms", "grep": "grep_hits",
+            "time": "duration_ms", "grep": "grep_hits", "matched": "matched",
         }.get(sort, "seq")
         direction = "DESC" if desc else "ASC"
         with self._cursor() as cur:
             rows = cur.execute(
-                f"SELECT id,seq,payloads_json,status,len_resp,duration_ms,grep_hits,history_id "
-                f"FROM intruder_results WHERE attack_id=? ORDER BY {order_col} {direction}",
+                f"SELECT id,seq,payloads_json,status,len_resp,duration_ms,grep_hits,history_id,"
+                f"body_md5,matched FROM intruder_results WHERE attack_id=? "
+                f"ORDER BY {order_col} {direction}",
                 (attack_id,),
             ).fetchall()
         return [
             {"id": r[0], "seq": r[1], "payloads": json.loads(r[2]), "status": r[3],
-             "len_resp": r[4], "duration_ms": r[5], "grep_hits": r[6], "history_id": r[7]}
+             "len_resp": r[4], "duration_ms": r[5], "grep_hits": r[6], "history_id": r[7],
+             "body_md5": r[8] or "", "matched": bool(r[9])}
             for r in rows
         ]
 
@@ -623,38 +721,119 @@ class Project:
     # ---- findings (scanner output) ----
     SEVERITIES = ("info", "low", "medium", "high", "critical")
     STATUSES = ("open", "triaged", "false_positive", "fixed")
+    SOURCES = (
+        "scanner", "intruder", "smuggling", "sequencer", "saml",
+        "graphql", "oast", "proxy", "manual", "plugin", "imported",
+    )
+
+    _ISSUES_COLS = (
+        "id", "severity", "cwe", "owasp", "title", "host", "url",
+        "request_id", "response_id", "evidence", "payload", "status",
+        "created_at", "uuid", "source", "rule_id", "rule_version",
+        "description", "remediation", "references_json",
+        "cvss_vector", "cvss_score", "reproduction_token",
+        "updated_at", "dedupe_key",
+    )
+
+    @staticmethod
+    def _row_to_finding(r) -> dict:
+        out = dict(zip(Project._ISSUES_COLS, r))
+        try:
+            out["references"] = json.loads(out.pop("references_json") or "[]")
+        except (ValueError, TypeError):
+            out["references"] = []
+            out.pop("references_json", None)
+        return out
+
+    @staticmethod
+    def _compute_dedupe_key(*, rule_id: str, title: str, host: str,
+                             url: str, evidence: str) -> str:
+        ev_hash = hashlib.sha256(evidence.encode("utf-8", "replace")).hexdigest()[:16]
+        key_id = rule_id or f"legacy:{title}"
+        return f"{key_id}|{host}|{url}|{ev_hash}"
 
     def add_finding(self, *, severity: str, title: str, cwe: str = "",
                     owasp: str = "", host: str = "", url: str = "",
                     request_id: int | None = None, response_id: int | None = None,
                     evidence: str = "", payload: str = "",
+                    source: str = "scanner", rule_id: str = "",
+                    rule_version: int = 0, description: str = "",
+                    remediation: str = "", references: list[str] | None = None,
+                    cvss_vector: str | None = None, cvss_score: float | None = None,
+                    reproduction_token: str | None = None,
+                    extra_targets: list[tuple[str, str]] | None = None,
                     dedupe_key: str | None = None) -> int:
-        """Insert a finding. If dedupe_key is provided, drop duplicates on the
-        same (title, host, url, evidence-prefix) tuple to avoid scanner noise."""
-        if dedupe_key:
-            with self._cursor() as cur:
-                r = cur.execute(
-                    "SELECT id FROM issues WHERE title=? AND COALESCE(host,'')=? "
-                    "AND COALESCE(url,'')=? AND substr(evidence,1,200)=substr(?,1,200) "
-                    "LIMIT 1",
-                    (title, host, url, evidence),
-                ).fetchone()
-                if r:
-                    return int(r[0])
+        """Insert a finding. If a finding with the same dedupe_key already
+        exists, return its id instead of inserting a duplicate."""
+        key = dedupe_key or self._compute_dedupe_key(
+            rule_id=rule_id, title=title, host=host, url=url, evidence=evidence,
+        )
+        now = int(time.time())
         with self._cursor() as cur:
+            r = cur.execute(
+                "SELECT id FROM issues WHERE dedupe_key=? LIMIT 1", (key,),
+            ).fetchone()
+            if r:
+                fid = int(r[0])
+                if extra_targets:
+                    self._add_finding_targets(cur, fid, extra_targets)
+                return fid
+            # Legacy fallback: pre-v3 rows have NULL dedupe_key.
+            r = cur.execute(
+                "SELECT id FROM issues WHERE title=? AND COALESCE(host,'')=? "
+                "AND COALESCE(url,'')=? AND substr(evidence,1,200)=substr(?,1,200) "
+                "AND (dedupe_key IS NULL OR dedupe_key='') LIMIT 1",
+                (title, host, url, evidence),
+            ).fetchone()
+            if r:
+                fid = int(r[0])
+                cur.execute(
+                    "UPDATE issues SET dedupe_key=? WHERE id=?", (key, fid),
+                )
+                if extra_targets:
+                    self._add_finding_targets(cur, fid, extra_targets)
+                return fid
+            refs_json = json.dumps(list(references or []))
             cur.execute(
                 "INSERT INTO issues(severity,cwe,owasp,title,host,url,request_id,"
-                "response_id,evidence,payload,status,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?, 'open', ?)",
+                "response_id,evidence,payload,status,created_at,uuid,source,"
+                "rule_id,rule_version,description,remediation,references_json,"
+                "cvss_vector,cvss_score,reproduction_token,updated_at,dedupe_key) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (severity, cwe, owasp, title, host, url, request_id, response_id,
-                 evidence, payload, int(time.time())),
+                 evidence, payload, now,
+                 _uuid.uuid4().hex, source, rule_id, rule_version,
+                 description, remediation, refs_json,
+                 cvss_vector, cvss_score, reproduction_token, now, key),
             )
-            return int(cur.lastrowid or 0)
+            fid = int(cur.lastrowid or 0)
+            if extra_targets:
+                self._add_finding_targets(cur, fid, extra_targets)
+            return fid
+
+    @staticmethod
+    def _add_finding_targets(cur, fid: int,
+                              targets: list[tuple[str, str]]) -> None:
+        for h, u in targets:
+            cur.execute(
+                "INSERT OR IGNORE INTO finding_targets(finding_id,host,url) "
+                "VALUES (?,?,?)", (fid, h or "", u or ""),
+            )
+
+    def list_finding_targets(self, fid: int) -> list[tuple[str, str]]:
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT host,url FROM finding_targets WHERE finding_id=? "
+                "ORDER BY host,url", (fid,),
+            ).fetchall()
+        return [(r[0], r[1]) for r in rows]
 
     def list_findings(self, *, severity: str | None = None, status: str | None = None,
-                       host: str | None = None, limit: int = 500) -> list[dict]:
-        sql = ("SELECT id,severity,cwe,owasp,title,host,url,request_id,response_id,"
-               "evidence,payload,status,created_at FROM issues WHERE 1=1")
+                       host: str | None = None, source: str | None = None,
+                       rule_id: str | None = None,
+                       limit: int = 500) -> list[dict]:
+        cols = ",".join(self._ISSUES_COLS)
+        sql = f"SELECT {cols} FROM issues WHERE 1=1"
         args: list = []
         if severity:
             sql += " AND severity=?"; args.append(severity)
@@ -662,36 +841,36 @@ class Project:
             sql += " AND status=?"; args.append(status)
         if host:
             sql += " AND host=?"; args.append(host)
+        if source:
+            sql += " AND source=?"; args.append(source)
+        if rule_id:
+            sql += " AND rule_id=?"; args.append(rule_id)
         sql += " ORDER BY CASE severity "
         sql += "WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 "
         sql += "WHEN 'low' THEN 3 ELSE 4 END, id DESC LIMIT ?"
         args.append(limit)
         with self._cursor() as cur:
             rows = cur.execute(sql, args).fetchall()
-        return [
-            {"id": r[0], "severity": r[1], "cwe": r[2], "owasp": r[3], "title": r[4],
-             "host": r[5], "url": r[6], "request_id": r[7], "response_id": r[8],
-             "evidence": r[9], "payload": r[10], "status": r[11], "created_at": r[12]}
-            for r in rows
-        ]
+        return [self._row_to_finding(r) for r in rows]
 
     def get_finding(self, fid: int) -> dict | None:
+        cols = ",".join(self._ISSUES_COLS)
         with self._cursor() as cur:
             r = cur.execute(
-                "SELECT id,severity,cwe,owasp,title,host,url,request_id,response_id,"
-                "evidence,payload,status,created_at FROM issues WHERE id=?", (fid,),
+                f"SELECT {cols} FROM issues WHERE id=?", (fid,),
             ).fetchone()
         if not r:
             return None
-        return {"id": r[0], "severity": r[1], "cwe": r[2], "owasp": r[3], "title": r[4],
-                "host": r[5], "url": r[6], "request_id": r[7], "response_id": r[8],
-                "evidence": r[9], "payload": r[10], "status": r[11], "created_at": r[12]}
+        return self._row_to_finding(r)
 
     def set_finding_status(self, fid: int, status: str) -> None:
         if status not in self.STATUSES:
             raise ValueError(f"unknown status: {status}")
         with self._cursor() as cur:
-            cur.execute("UPDATE issues SET status=? WHERE id=?", (status, fid))
+            cur.execute(
+                "UPDATE issues SET status=?, updated_at=? WHERE id=?",
+                (status, int(time.time()), fid),
+            )
 
     def delete_finding(self, fid: int) -> None:
         with self._cursor() as cur:
@@ -710,3 +889,132 @@ class Project:
         for sev, n in rows:
             out[sev] = n
         return out
+
+    # ---- finding suppressions ----
+    def add_finding_suppression(self, *, rule_id: str, host: str = "",
+                                  url_pattern: str = "", reason: str = "") -> None:
+        if not rule_id:
+            raise ValueError("rule_id is required")
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT OR REPLACE INTO finding_suppressions("
+                "rule_id,host,url_pattern,reason,created_at) VALUES (?,?,?,?,?)",
+                (rule_id, host or "", url_pattern or "", reason or "",
+                 int(time.time())),
+            )
+
+    def list_finding_suppressions(self) -> list[dict]:
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT rule_id,host,url_pattern,reason,created_at "
+                "FROM finding_suppressions ORDER BY rule_id, host, url_pattern"
+            ).fetchall()
+        return [
+            {"rule_id": r[0], "host": r[1], "url_pattern": r[2],
+             "reason": r[3], "created_at": r[4]}
+            for r in rows
+        ]
+
+    def delete_finding_suppression(self, *, rule_id: str, host: str = "",
+                                     url_pattern: str = "") -> None:
+        with self._cursor() as cur:
+            cur.execute(
+                "DELETE FROM finding_suppressions WHERE rule_id=? "
+                "AND host=? AND url_pattern=?",
+                (rule_id, host or "", url_pattern or ""),
+            )
+
+    def is_suppressed(self, *, rule_id: str, host: str = "", url: str = "") -> bool:
+        """A suppression matches when its rule_id equals the candidate's, its
+        host is empty (= any) or equals/glob-matches the candidate's host, and
+        its url_pattern is empty (= any) or appears as a substring of url."""
+        if not rule_id:
+            return False
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT host,url_pattern FROM finding_suppressions WHERE rule_id=?",
+                (rule_id,),
+            ).fetchall()
+        for sup_host, sup_url in rows:
+            if sup_host and not _host_matches(sup_host, host or ""):
+                continue
+            if sup_url and (sup_url not in (url or "")):
+                continue
+            return True
+        return False
+
+    # ---- reproduction blobs ----
+    def add_reproduction(self, *, request_blob: bytes, response_blob: bytes,
+                          method: str = "", url: str = "", status: int = 0,
+                          elapsed_ms: int = 0) -> str:
+        token = _uuid.uuid4().hex
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO finding_reproductions(token,request_blob,response_blob,"
+                "method,url,status,sent_at,elapsed_ms) VALUES (?,?,?,?,?,?,?,?)",
+                (token, _compress(request_blob), _compress(response_blob),
+                 method or "", url or "", int(status), int(time.time()),
+                 int(elapsed_ms)),
+            )
+        return token
+
+    def get_reproduction(self, token: str) -> dict | None:
+        with self._cursor() as cur:
+            r = cur.execute(
+                "SELECT token,request_blob,response_blob,method,url,status,"
+                "sent_at,elapsed_ms FROM finding_reproductions WHERE token=?",
+                (token,),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "token": r[0],
+            "request_blob": _decompress(r[1]),
+            "response_blob": _decompress(r[2]),
+            "method": r[3], "url": r[4], "status": r[5],
+            "sent_at": r[6], "elapsed_ms": r[7],
+        }
+
+    # ---- rule run telemetry ----
+    def record_rule_run(self, *, rule_id: str, rule_version: int = 0,
+                          host: str = "", url: str = "", fired: bool,
+                          reason: str = "") -> None:
+        if not rule_id:
+            return
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO rule_runs(rule_id,rule_version,host,url,fired,reason,"
+                "run_at) VALUES (?,?,?,?,?,?,?)",
+                (rule_id, int(rule_version), host or "", url or "",
+                 1 if fired else 0, reason or "", int(time.time())),
+            )
+
+    def rule_run_summary(self) -> list[dict]:
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT rule_id, "
+                "SUM(CASE WHEN fired=1 THEN 1 ELSE 0 END) AS fired, "
+                "COUNT(*) AS evaluated "
+                "FROM rule_runs GROUP BY rule_id ORDER BY rule_id"
+            ).fetchall()
+        return [
+            {"rule_id": r[0], "fired": int(r[1] or 0), "evaluated": int(r[2] or 0)}
+            for r in rows
+        ]
+
+    def rule_run_summary_by_host(self) -> list[dict]:
+        """Per-(rule_id, host) coverage. Sorted by rule_id then host so the
+        renderers can group rows under each rule heading."""
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT rule_id, COALESCE(host,'') AS host, "
+                "SUM(CASE WHEN fired=1 THEN 1 ELSE 0 END) AS fired, "
+                "COUNT(*) AS evaluated "
+                "FROM rule_runs GROUP BY rule_id, host "
+                "ORDER BY rule_id, host"
+            ).fetchall()
+        return [
+            {"rule_id": r[0], "host": r[1] or "",
+             "fired": int(r[2] or 0), "evaluated": int(r[3] or 0)}
+            for r in rows
+        ]

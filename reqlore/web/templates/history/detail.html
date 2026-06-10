@@ -34,6 +34,11 @@
         <button type="submit">Send to Comparer (side B)</button>
       </form>
     </li>
+    <li>
+      <a href="{{ url_for('scanner.manual', request_id=row.id) }}">
+        Create manual finding from this request
+      </a>
+    </li>
   </ul>
 </section>
 {% endif %}

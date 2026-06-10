@@ -1,64 +1,193 @@
 {% extends "base.html" %}
 {% block title %}Reqlore — Attack #{{ attack.id }}{% endblock %}
+{% block head_extra %}
+{% if auto and live %}<meta http-equiv="refresh" content="3">{% endif %}
+{% endblock %}
 {% block main %}
 <h1>Attack #{{ attack.id }} — {{ attack.name }}</h1>
 
-<dl>
+<dl class="kv">
   <dt>Type</dt><dd>{{ attack.attack_type }}</dd>
   <dt>URL</dt><dd class="url">{{ attack.url }}</dd>
   <dt>Engine</dt><dd>{{ attack.engine }}</dd>
-  <dt>Status</dt><dd>{{ attack.status }}</dd>
+  <dt>Status</dt>
+  <dd><span id="attack-status" role="status" aria-live="polite">{{ attack.status }}</span></dd>
   <dt>Positions</dt><dd>{{ attack.positions|length }}</dd>
   <dt>Payload sets</dt><dd>{{ attack.payloads|length }}</dd>
+  {% if total_jobs %}
+  <dt>Progress</dt>
+  <dd>
+    <span id="attack-progress" aria-live="polite">{{ total }} / {{ total_jobs }}</span>
+    <progress id="attack-progress-bar" value="{{ total }}" max="{{ total_jobs }}"
+              aria-label="Requests sent"></progress>
+  </dd>
+  {% endif %}
+  {% if stop_reason %}
+  <dt>Stop reason</dt>
+  <dd><span class="ok-flag">{{ stop_reason }}</span></dd>
+  {% endif %}
 </dl>
 
-<div class="row">
+<nav class="toolbar" aria-label="Attack controls">
   <form method="post" action="{{ url_for('intruder.start', aid=attack.id) }}" class="inline-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit">Start / Restart</button>
+    <button type="submit" accesskey="s"><u>S</u>tart / Restart</button>
+  </form>
+  <form method="post" action="{{ url_for('intruder.pause', aid=attack.id) }}" class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" accesskey="p" {% if not live or attack.status == 'paused' %}disabled aria-disabled="true"{% endif %}><u>P</u>ause</button>
+  </form>
+  <form method="post" action="{{ url_for('intruder.resume', aid=attack.id) }}" class="inline-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" accesskey="r" {% if attack.status != 'paused' %}disabled aria-disabled="true"{% endif %}><u>R</u>esume</button>
   </form>
   <form method="post" action="{{ url_for('intruder.cancel', aid=attack.id) }}" class="inline-form">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit">Cancel</button>
+    <button type="submit" accesskey="c" {% if not live %}disabled aria-disabled="true"{% endif %}><u>C</u>ancel</button>
   </form>
   <form method="post" action="{{ url_for('intruder.delete', aid=attack.id) }}" class="inline-form"
         onsubmit="return confirm('Delete this attack and its results?');">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-    <button type="submit">Delete</button>
+    <button type="submit" accesskey="d"><u>D</u>elete</button>
   </form>
-</div>
+</nav>
 
-<h2>Results ({{ results|length }})</h2>
+{% if live %}
+<p class="muted" role="status">
+  {% set base = url_for('intruder.detail', aid=attack.id, sort=sort, desc='1' if desc else None) %}
+  {% if auto %}
+    Page auto-refreshes every 3 seconds while the attack is running.
+    <a href="{{ base }}">Stop auto-refresh</a>.
+  {% else %}
+    Attack is running.
+    <a href="{{ base }}{{ '&' if '?' in base else '?' }}auto=1">Start auto-refresh (every 3 s)</a>,
+    or <a href="{{ base }}">refresh manually</a>.
+  {% endif %}
+</p>
+{% endif %}
+
+<h2>Results
+  <span class="muted">
+    ({{ filtered }} shown
+    {% if filtered != total %}of {{ total }}{% endif %}
+    {% if filters.dedup and dedup_hidden %}; {{ dedup_hidden }} duplicate{{ '' if dedup_hidden == 1 else 's' }} hidden{% endif %}
+    {% if unique_responses %}; {{ unique_responses }} unique response{{ '' if unique_responses == 1 else 's' }}{% endif %})
+  </span>
+</h2>
+
+<form method="get" action="{{ url_for('intruder.detail', aid=attack.id) }}" class="filter-bar"
+      aria-label="Filter results">
+  <input type="hidden" name="sort" value="{{ sort }}">
+  {% if desc %}<input type="hidden" name="desc" value="1">{% endif %}
+  {% if auto %}<input type="hidden" name="auto" value="1">{% endif %}
+  <div class="row">
+    <div>
+      <label for="f-sc">Status class</label>
+      <select id="f-sc" name="sc">
+        <option value="" {% if not filters.sc %}selected{% endif %}>any</option>
+        {% for v in ['2xx', '3xx', '4xx', '5xx'] %}
+        <option value="{{ v }}" {% if filters.sc == v %}selected{% endif %}>{{ v }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="f-min">Length ≥</label>
+      <input id="f-min" name="len_min" value="{{ filters.len_min if filters.len_min is not none else '' }}"
+             inputmode="numeric" size="6">
+    </div>
+    <div>
+      <label for="f-max">Length ≤</label>
+      <input id="f-max" name="len_max" value="{{ filters.len_max if filters.len_max is not none else '' }}"
+             inputmode="numeric" size="6">
+    </div>
+    <div>
+      <label for="f-m">Grep matched</label>
+      <select id="f-m" name="matched">
+        <option value="" {% if not filters.matched %}selected{% endif %}>any</option>
+        <option value="yes" {% if filters.matched == 'yes' %}selected{% endif %}>yes</option>
+        <option value="no" {% if filters.matched == 'no' %}selected{% endif %}>no</option>
+      </select>
+    </div>
+    <div class="grow">
+      <label for="f-q">Search payloads / grep</label>
+      <input id="f-q" name="q" value="{{ filters.q }}" type="search" autocomplete="off">
+    </div>
+    <div>
+      <label for="f-d"><input id="f-d" type="checkbox" name="dedup" value="1"
+             {% if filters.dedup %}checked{% endif %}>
+        Hide duplicate responses (by body MD5)</label>
+    </div>
+  </div>
+  <div class="row">
+    <button type="submit" accesskey="a"><u>A</u>pply</button>
+    <a href="{{ url_for('intruder.detail', aid=attack.id) }}">Reset</a>
+    {% set export_args = request.args.to_dict() %}
+    {% set _ = export_args.pop('auto', None) %}
+    <a class="export-link"
+       href="{{ url_for('intruder.export_csv', aid=attack.id, **export_args) }}"
+       aria-label="Download filtered results as CSV">Export CSV</a>
+    <a class="export-link"
+       href="{{ url_for('intruder.export_json', aid=attack.id, **export_args) }}"
+       aria-label="Download filtered results as JSON">Export JSON</a>
+  </div>
+</form>
 
 <p>Sort:
-  <a href="?sort=seq">#</a> ·
-  <a href="?sort=status">Status</a> ·
-  <a href="?sort=len">Length</a> ·
-  <a href="?sort=time">Time</a> ·
-  <a href="?sort=grep">Grep</a>
-  | <a href="?sort={{ sort }}&desc={% if desc %}0{% else %}1{% endif %}">{{ 'descending' if not desc else 'ascending' }}</a>
+  {% for col, label in [('seq','#'), ('status','Status'), ('len','Length'),
+                         ('time','Time'), ('matched','Match'), ('grep','Grep')] %}
+    {% if sort == col %}
+      <a href="?sort={{ col }}{% if not desc %}&desc=1{% endif %}"
+         aria-current="true"
+         aria-label="Sort by {{ label }}, currently {{ 'descending' if desc else 'ascending' }}; activate to flip">
+        <strong>{{ label }}{% if desc %} ▼{% else %} ▲{% endif %}</strong>
+      </a>
+    {% else %}
+      <a href="?sort={{ col }}{% if desc %}&desc=1{% endif %}">{{ label }}</a>
+    {% endif %}
+    {% if not loop.last %} · {% endif %}
+  {% endfor %}
 </p>
 
 <table>
   <caption>Attack results</caption>
   <thead>
     <tr><th scope="col">#</th><th scope="col">Payloads</th><th scope="col">Status</th>
-        <th scope="col">Length</th><th scope="col">Time (ms)</th><th scope="col">Grep</th>
+        <th scope="col">Length</th><th scope="col">Time (ms)</th>
+        <th scope="col">Match</th><th scope="col">Grep</th>
         <th scope="col">History</th></tr>
   </thead>
   <tbody>
     {% for r in results %}
     <tr>
-      <td>{{ r.seq }}</td>
-      <td>{% for p in r.payloads %}<code>{{ p }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <th scope="row">{{ r.seq }}</th>
+      <td>
+        {% set joined = r.payloads|join(', ') %}
+        {% if joined|length > 80 %}
+          <details>
+            <summary><code>{{ joined[:77] }}…</code></summary>
+            <ul class="payload-list">
+              {% for p in r.payloads %}<li><code>{{ p }}</code></li>{% endfor %}
+            </ul>
+          </details>
+        {% else %}
+          {% for p in r.payloads %}<code>{{ p }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+        {% endif %}
+      </td>
       <td>{{ r.status }}</td>
       <td>{{ r.len_resp }}</td>
       <td>{{ r.duration_ms }}</td>
+      <td>{% if r.matched %}<span aria-label="grep matched">✓ yes</span>{% else %}<span aria-label="grep did not match">— no</span>{% endif %}</td>
       <td>{{ r.grep_hits }}</td>
       <td>{% if r.history_id %}<a href="{{ url_for('history.detail', hid=r.history_id) }}">view</a>{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="7">No results yet. Click <em>Start</em>.</td></tr>
+    <tr><td colspan="8">
+      {% if total == 0 %}
+        No results yet. Use the <em>Start / Restart</em> button above.
+      {% else %}
+        No results match the current filters. <a href="{{ url_for('intruder.detail', aid=attack.id) }}">Reset filters</a>.
+      {% endif %}
+    </td></tr>
     {% endfor %}
   </tbody>
 </table>

@@ -361,7 +361,15 @@ def cmd_scan(args: argparse.Namespace) -> int:
     project = Project(_resolve_project(args.project))
     extra = get_registry().active_rules()
     scanner = Scanner(rules=BUILTIN_RULES, extra_rules=extra)
-    result = scanner.scan_project(project, limit=args.limit)
+    # B.5 — `--full` disables the resume marker, `--deadline 0` disables
+    # the wall-clock guard, any positive value is taken at face value.
+    resume = not bool(getattr(args, "full", False))
+    deadline_raw = float(getattr(args, "deadline", 300.0) or 0.0)
+    deadline = deadline_raw if deadline_raw > 0 else None
+    result = scanner.scan_project(
+        project, limit=args.limit,
+        deadline_seconds=deadline, resume=resume,
+    )
     log.info(
         "Scanned %d requests in %d ms: %d findings (critical %d, high %d, "
         "medium %d, low %d, info %d)",
@@ -370,6 +378,13 @@ def cmd_scan(args: argparse.Namespace) -> int:
         result.by_severity["medium"], result.by_severity["low"],
         result.by_severity["info"],
     )
+    if result.rows_skipped_resume:
+        log.info("Resume: skipped %d already-scanned rows (use --full to "
+                  "force a re-scan).", result.rows_skipped_resume)
+    if result.aborted_due_to_deadline:
+        log.warning("Scan aborted after %.1fs deadline; partial result "
+                     "written. Re-run to continue from row id %s.",
+                     result.deadline_seconds, result.last_scanned_id)
     project.close()
     return 0
 
@@ -502,6 +517,151 @@ def cmd_browser(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_intruder(args: argparse.Namespace) -> int:
+    """Headless intruder: load a spec file, run it, print/export results."""
+    import json as _json
+
+    from .intruder import AttackRunner
+    from .intruder_spec import SpecError, build_attack, load_spec
+
+    action = args.intruder_action
+    project = Project(Path(args.project).expanduser().resolve())
+
+    if action == "list":
+        attacks = project.list_intruder()
+        if not attacks:
+            print("No attacks in this project.")
+            return 0
+        print(f"{'id':>4}  {'status':<10}  {'type':<12}  name")
+        for a in attacks:
+            print(f"{a['id']:>4}  {a['status']:<10}  {a['attack_type']:<12}  {a['name']}")
+        return 0
+
+    if action == "show":
+        attack = project.get_intruder(args.id)
+        if not attack:
+            print(f"error: attack #{args.id} not found", file=sys.stderr)
+            return 1
+        results = project.list_intruder_results(args.id)
+        print(f"Attack #{attack['id']}: {attack['name']} ({attack['attack_type']}, "
+              f"{attack['engine']}, {attack['status']})")
+        print(f"URL: {attack['url']}")
+        print(f"Results: {len(results)}")
+        if not results:
+            return 0
+        print(f"{'#':>5}  {'status':>6}  {'len':>7}  {'ms':>5}  match  payloads")
+        for r in results[: args.limit]:
+            payloads = ", ".join(r["payloads"])[:60]
+            mark = "yes" if r["matched"] else "no "
+            print(f"{r['seq']:>5}  {r['status']:>6}  {r['len_resp']:>7}  "
+                  f"{r['duration_ms']:>5}  {mark:<5}  {payloads}")
+        if len(results) > args.limit:
+            print(f"  ... ({len(results) - args.limit} more; raise --limit to see all)")
+        return 0
+
+    if action == "export":
+        attack = project.get_intruder(args.id)
+        if not attack:
+            print(f"error: attack #{args.id} not found", file=sys.stderr)
+            return 1
+        results = project.list_intruder_results(args.id)
+        out_path = Path(args.out).expanduser().resolve()
+        fmt = args.format or out_path.suffix.lstrip(".").lower() or "json"
+        if fmt == "csv":
+            import csv as _csv
+            with out_path.open("w", encoding="utf-8", newline="") as fh:
+                w = _csv.writer(fh, lineterminator="\n")
+                w.writerow(["seq", "status", "len_resp", "duration_ms",
+                            "matched", "grep_hits", "body_md5",
+                            "payloads", "history_id"])
+                for r in results:
+                    w.writerow([
+                        r["seq"], r["status"], r["len_resp"], r["duration_ms"],
+                        1 if r["matched"] else 0, r["grep_hits"],
+                        r["body_md5"], "|".join(r["payloads"]),
+                        r["history_id"] if r["history_id"] is not None else "",
+                    ])
+        elif fmt == "json":
+            payload = {
+                "attack": {
+                    "id": attack["id"], "name": attack["name"],
+                    "attack_type": attack["attack_type"],
+                    "engine": attack["engine"], "status": attack["status"],
+                    "url": attack["url"],
+                },
+                "count": len(results),
+                "rows": results,
+            }
+            out_path.write_text(
+                _json.dumps(payload, indent=2, default=str), encoding="utf-8")
+        else:
+            print(f"error: unknown export format {fmt!r} (use csv or json)",
+                  file=sys.stderr)
+            return 2
+        print(f"Wrote {len(results)} row(s) to {out_path}")
+        return 0
+
+    # action == "run"
+    log = _logger(verbose=getattr(args, "verbose", False))
+    spec_path = Path(args.spec).expanduser().resolve()
+    try:
+        spec = load_spec(spec_path)
+        built = build_attack(spec, base_dir=spec_path.parent)
+    except SpecError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    aid = project.create_intruder(
+        name=built.name, attack_type=built.attack_type,
+        template=built.template, positions=built.positions,
+        payloads=built.payloads, options=built.options,
+        url=built.url, engine=built.engine,
+    )
+    print(f"Created attack #{aid} '{built.name}' "
+          f"({built.attack_type}, {built.engine}).")
+
+    if args.dry_run:
+        if built.attack_type == "sniper":
+            est = sum(len(s) for s in built.payloads) * len(built.positions)
+        elif built.attack_type == "battering":
+            est = len(built.payloads[0])
+        elif built.attack_type == "pitchfork":
+            est = min(len(s) for s in built.payloads)
+        else:  # clusterbomb
+            est = 1
+            for s in built.payloads:
+                est *= max(1, len(s))
+        cap = built.options["max_requests"]
+        print(f"Dry run: {len(built.payloads)} payload set(s); "
+              f"~{est} request(s) planned (capped at max_requests={cap}).")
+        return 0
+
+    runner = AttackRunner(project, aid)
+    runner.start()
+    timeout = args.timeout if args.timeout > 0 else None
+    completed = runner.wait(timeout=timeout)
+    if not completed:
+        runner.cancel()
+        runner.wait(timeout=10)
+        print(f"warning: attack did not finish within {args.timeout}s; cancelled.",
+              file=sys.stderr)
+
+    results = project.list_intruder_results(aid)
+    matched = sum(1 for r in results if r["matched"])
+    by_status: dict[int, int] = {}
+    for r in results:
+        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    final = project.get_intruder(aid)["status"]
+    print(f"Done. status={final} sent={len(results)} matched={matched}")
+    if runner.stop_reason:
+        print(f"Stopped early: {runner.stop_reason}")
+    if by_status:
+        for code in sorted(by_status):
+            print(f"  HTTP {code}: {by_status[code]}")
+    log.debug("intruder finished")
+    return 0
+
+
 def cmd_prefetch_firefox(args: argparse.Namespace) -> int:
     """Pre-download Firefox into the cache for offline use later."""
     log = _logger()
@@ -528,6 +688,357 @@ def cmd_prefetch_firefox(args: argparse.Namespace) -> int:
         return 1
     log.info("Firefox ready at %s", exe)
     return 0
+
+
+# ----------------------------------------------- A.6 finding / suppression CLI
+
+
+def _print_findings_table(rows: list[dict]) -> None:
+    if not rows:
+        print("(no findings)")
+        return
+    # Compact, screen-reader-friendly columns: id, sev, status, rule, host, title.
+    widths = {
+        "id":     max(2, max(len(str(r.get("id", ""))) for r in rows)),
+        "sev":    max(3, max(len(str(r.get("severity", ""))) for r in rows)),
+        "status": max(6, max(len(str(r.get("status", ""))) for r in rows)),
+        "rule":   max(7, max(len(str(r.get("rule_id", ""))) for r in rows)),
+        "host":   max(4, max(len(str(r.get("host", ""))) for r in rows)),
+    }
+    header = (
+        f"{'id'.ljust(widths['id'])}  "
+        f"{'sev'.ljust(widths['sev'])}  "
+        f"{'status'.ljust(widths['status'])}  "
+        f"{'rule'.ljust(widths['rule'])}  "
+        f"{'host'.ljust(widths['host'])}  title"
+    )
+    print(header)
+    print("-" * len(header))
+    for r in rows:
+        print(
+            f"{str(r.get('id', '')).ljust(widths['id'])}  "
+            f"{str(r.get('severity', '')).ljust(widths['sev'])}  "
+            f"{str(r.get('status', '')).ljust(widths['status'])}  "
+            f"{str(r.get('rule_id', '')).ljust(widths['rule'])}  "
+            f"{str(r.get('host', '')).ljust(widths['host'])}  "
+            f"{r.get('title', '')}"
+        )
+
+
+def _split_refs(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    parts = [p.strip() for chunk in raw.splitlines() for p in chunk.split(",")]
+    return [p for p in parts if p]
+
+
+def cmd_finding_add(args: argparse.Namespace) -> int:
+    """Record a manual finding via the write-bus."""
+    from .findings_bus import record_finding
+    from .scanner.rules import SEVERITIES
+
+    if args.severity not in SEVERITIES:
+        print(f"error: --severity must be one of {', '.join(SEVERITIES)}",
+              file=sys.stderr)
+        return 2
+    title = (args.title or "").strip()
+    if not title:
+        print("error: --title is required", file=sys.stderr)
+        return 2
+    rule_id = (args.rule_id or "").strip()
+    if not rule_id:
+        slug_src = (args.slug or title).lower()
+        import re as _re
+        slug = _re.sub(r"[^a-z0-9]+", "-", slug_src).strip("-")[:60] or "finding"
+        rule_id = f"manual:{slug}"
+    project = Project(_resolve_project(args.project))
+    try:
+        fid = record_finding(
+            project,
+            source="manual",
+            rule_id=rule_id,
+            severity=args.severity,
+            title=title,
+            host=args.host or "",
+            url=args.url or "",
+            cwe=args.cwe or "",
+            owasp=args.owasp or "",
+            description=args.description or "",
+            evidence=args.evidence or "",
+            payload=args.payload or "",
+            remediation=args.remediation or "",
+            references=_split_refs(args.reference),
+        )
+    finally:
+        project.close()
+    if fid is None:
+        print(f"Suppressed by an existing suppression for {rule_id}.")
+        return 0
+    print(f"Recorded finding #{fid} ({rule_id})")
+    return 0
+
+
+def cmd_finding_list(args: argparse.Namespace) -> int:
+    project = Project(_resolve_project(args.project))
+    try:
+        rows = project.list_findings(
+            severity=args.severity or None,
+            status=args.status or None,
+            host=args.host or None,
+            source=args.source or None,
+            rule_id=args.rule_id or None,
+            limit=args.limit,
+        )
+        if args.format == "json":
+            import json as _json
+            print(_json.dumps(rows, indent=2, default=str))
+        else:
+            _print_findings_table(rows)
+    finally:
+        project.close()
+    return 0
+
+
+def cmd_finding_triage(args: argparse.Namespace) -> int:
+    project = Project(_resolve_project(args.project))
+    try:
+        if not project.get_finding(args.id):
+            print(f"error: finding #{args.id} not found", file=sys.stderr)
+            return 2
+        try:
+            project.set_finding_status(args.id, args.status)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        msg = f"Finding #{args.id} -> {args.status}"
+        if args.status == "false_positive":
+            f = project.get_finding(args.id)
+            if f and f.get("rule_id"):
+                project.add_finding_suppression(
+                    rule_id=f["rule_id"],
+                    host=f.get("host") or "",
+                    url_pattern=f.get("url") or "",
+                    reason=args.reason or f"FP triage of finding #{args.id}",
+                )
+                msg += f"; suppression added for {f['rule_id']}"
+            else:
+                msg += " (no rule_id; no suppression created)"
+        print(msg)
+    finally:
+        project.close()
+    return 0
+
+
+def cmd_finding_import(args: argparse.Namespace) -> int:
+    """Bulk-import findings from a JSON file using the bus."""
+    import json as _json
+    from .findings_bus import record_finding
+    from .scanner.rules import SEVERITIES
+
+    path = Path(args.file).expanduser().resolve()
+    if not path.exists():
+        print(f"error: file not found: {path}", file=sys.stderr)
+        return 2
+    try:
+        payload = _json.loads(path.read_text(encoding="utf-8"))
+    except _json.JSONDecodeError as exc:
+        print(f"error: invalid JSON: {exc}", file=sys.stderr)
+        return 2
+    if isinstance(payload, dict) and "findings" in payload:
+        items = payload["findings"]
+    elif isinstance(payload, list):
+        items = payload
+    else:
+        print("error: JSON must be a list of findings or an object with "
+              "a 'findings' array.", file=sys.stderr)
+        return 2
+
+    project = Project(_resolve_project(args.project))
+    added = suppressed = rejected = 0
+    try:
+        for i, item in enumerate(items):
+            if not isinstance(item, dict):
+                print(f"error: row {i}: not an object", file=sys.stderr)
+                rejected += 1
+                continue
+            title = (item.get("title") or "").strip()
+            severity = item.get("severity") or ""
+            if not title or severity not in SEVERITIES:
+                print(f"error: row {i}: missing title or invalid severity "
+                      f"({severity!r})", file=sys.stderr)
+                rejected += 1
+                continue
+            rule_id = item.get("rule_id") or ""
+            if not rule_id:
+                import re as _re
+                slug = _re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60]
+                rule_id = f"manual:{slug or 'finding'}"
+            refs = item.get("references") or []
+            if isinstance(refs, str):
+                refs = _split_refs(refs)
+            fid = record_finding(
+                project,
+                source=item.get("source") or "imported",
+                rule_id=rule_id,
+                severity=severity,
+                title=title,
+                host=item.get("host") or "",
+                url=item.get("url") or "",
+                cwe=item.get("cwe") or "",
+                owasp=item.get("owasp") or "",
+                description=item.get("description") or "",
+                evidence=item.get("evidence") or "",
+                payload=item.get("payload") or "",
+                remediation=item.get("remediation") or "",
+                references=list(refs),
+            )
+            if fid is None:
+                suppressed += 1
+            else:
+                added += 1
+    finally:
+        project.close()
+    print(f"Imported {added} findings ({suppressed} suppressed, "
+          f"{rejected} rejected, {len(items)} seen).")
+    return 1 if rejected and not added else 0
+
+
+def cmd_finding_repro(args: argparse.Namespace) -> int:
+    """Print a `curl` one-liner that re-fires the probe attached to a finding."""
+    from .reporter._common import curl_from_reproduction
+
+    project = Project(_resolve_project(args.project))
+    try:
+        finding = project.get_finding(args.id)
+        if finding is None:
+            print(f"error: finding #{args.id} not found", file=sys.stderr)
+            return 2
+        token = finding.get("reproduction_token") or ""
+        if not token:
+            print(f"error: finding #{args.id} has no stored reproduction "
+                  "(passive / manual / imported findings don't carry one)",
+                  file=sys.stderr)
+            return 2
+        repro = project.get_reproduction(token)
+        if repro is None:
+            print(f"error: reproduction token {token} is missing from storage",
+                  file=sys.stderr)
+            return 2
+        if args.format == "json":
+            import json as _json
+            out = dict(repro)
+            # bytes -> str for JSON.
+            out["request_blob"] = (out.get("request_blob") or b"").decode(
+                "latin-1", errors="replace")
+            out["response_blob"] = (out.get("response_blob") or b"").decode(
+                "latin-1", errors="replace")
+            print(_json.dumps(out, indent=2, default=str))
+            return 0
+        line = curl_from_reproduction(repro)
+        if not line:
+            print(f"error: reproduction for finding #{args.id} could not be "
+                  "rendered as curl (no method/url recorded)", file=sys.stderr)
+            return 2
+        print(line)
+    finally:
+        project.close()
+    return 0
+
+
+def cmd_suppression_add(args: argparse.Namespace) -> int:
+    project = Project(_resolve_project(args.project))
+    try:
+        try:
+            project.add_finding_suppression(
+                rule_id=args.rule_id,
+                host=args.host or "",
+                url_pattern=args.url_pattern or "",
+                reason=args.reason or "",
+            )
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"Suppression added for {args.rule_id} "
+            f"(host={args.host or '*'}, url={args.url_pattern or '*'})."
+        )
+    finally:
+        project.close()
+    return 0
+
+
+def cmd_suppression_list(args: argparse.Namespace) -> int:
+    project = Project(_resolve_project(args.project))
+    try:
+        rows = project.list_finding_suppressions()
+        if args.format == "json":
+            import json as _json
+            print(_json.dumps(rows, indent=2, default=str))
+            return 0
+        if not rows:
+            print("(no suppressions)")
+            return 0
+        widths = {
+            "rule": max(7, max(len(r["rule_id"]) for r in rows)),
+            "host": max(4, max(len(r["host"] or "*") for r in rows)),
+            "url":  max(11, max(len(r["url_pattern"] or "*") for r in rows)),
+        }
+        header = (
+            f"{'rule'.ljust(widths['rule'])}  "
+            f"{'host'.ljust(widths['host'])}  "
+            f"{'url_pattern'.ljust(widths['url'])}  reason"
+        )
+        print(header)
+        print("-" * len(header))
+        for r in rows:
+            print(
+                f"{r['rule_id'].ljust(widths['rule'])}  "
+                f"{(r['host'] or '*').ljust(widths['host'])}  "
+                f"{(r['url_pattern'] or '*').ljust(widths['url'])}  "
+                f"{r['reason'] or ''}"
+            )
+    finally:
+        project.close()
+    return 0
+
+
+def cmd_suppression_delete(args: argparse.Namespace) -> int:
+    project = Project(_resolve_project(args.project))
+    try:
+        project.delete_finding_suppression(
+            rule_id=args.rule_id,
+            host=args.host or "",
+            url_pattern=args.url_pattern or "",
+        )
+        print(
+            f"Suppression removed for {args.rule_id} "
+            f"(host={args.host or '*'}, url={args.url_pattern or '*'})."
+        )
+    finally:
+        project.close()
+    return 0
+
+
+def cmd_finding(args: argparse.Namespace) -> int:
+    """Dispatcher for `reqlore finding <action>`."""
+    dispatch = {
+        "add":    cmd_finding_add,
+        "list":   cmd_finding_list,
+        "triage": cmd_finding_triage,
+        "import": cmd_finding_import,
+        "repro":  cmd_finding_repro,
+    }
+    return dispatch[args.finding_action](args)
+
+
+def cmd_suppression(args: argparse.Namespace) -> int:
+    """Dispatcher for `reqlore suppression <action>`."""
+    dispatch = {
+        "add":    cmd_suppression_add,
+        "list":   cmd_suppression_list,
+        "delete": cmd_suppression_delete,
+    }
+    return dispatch[args.suppression_action](args)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -592,6 +1103,11 @@ def build_parser() -> argparse.ArgumentParser:
     psc.add_argument("--project", required=True)
     psc.add_argument("--limit", type=int, default=5000,
                      help="How many most-recent requests to scan (default 5000).")
+    psc.add_argument("--full", action="store_true",
+                     help="Re-scan every row, ignoring the resume marker.")
+    psc.add_argument("--deadline", type=float, default=300.0,
+                     help="Wall-clock deadline in seconds (default 300; "
+                          "use 0 to disable).")
     psc.set_defaults(func=cmd_scan)
 
     pr = sub.add_parser("report", help="Export findings as md / html / docx.", allow_abbrev=False)
@@ -632,6 +1148,171 @@ def build_parser() -> argparse.ArgumentParser:
     pb2.add_argument("--wait", action="store_true",
                      help="Block until Firefox exits (default: spawn and return).")
     pb2.set_defaults(func=cmd_browser)
+
+    pin = sub.add_parser(
+        "intruder",
+        help="Headless intruder: run an attack spec, list, show, or export results.",
+        allow_abbrev=False,
+    )
+    pin_sub = pin.add_subparsers(
+        dest="intruder_action", metavar="<action>", required=True,
+    )
+
+    pin_run = pin_sub.add_parser(
+        "run", help="Run an attack from a JSON/YAML spec.", allow_abbrev=False,
+    )
+    pin_run.add_argument("--project", required=True)
+    pin_run.add_argument("spec", help="Path to a .json/.yaml/.yml attack spec.")
+    pin_run.add_argument("--timeout", type=int, default=0,
+                          help="Seconds to wait before cancelling (0 = no timeout).")
+    pin_run.add_argument("--dry-run", action="store_true",
+                          help="Build the attack and report planned request "
+                               "count without sending anything.")
+    pin_run.add_argument("-v", "--verbose", action="store_true")
+
+    pin_list = pin_sub.add_parser(
+        "list", help="List attacks in a project.", allow_abbrev=False,
+    )
+    pin_list.add_argument("--project", required=True)
+
+    pin_show = pin_sub.add_parser(
+        "show", help="Show results for one attack.", allow_abbrev=False,
+    )
+    pin_show.add_argument("--project", required=True)
+    pin_show.add_argument("--id", type=int, required=True)
+    pin_show.add_argument("--limit", type=int, default=50,
+                           help="Maximum rows to print (default 50).")
+
+    pin_exp = pin_sub.add_parser(
+        "export", help="Export results to CSV or JSON.", allow_abbrev=False,
+    )
+    pin_exp.add_argument("--project", required=True)
+    pin_exp.add_argument("--id", type=int, required=True)
+    pin_exp.add_argument("--out", required=True)
+    pin_exp.add_argument("--format", choices=["csv", "json"], default=None,
+                          help="Override the format inferred from --out's extension.")
+
+    pin.set_defaults(func=cmd_intruder)
+
+    # ----- A.6: finding management
+    pfd = sub.add_parser(
+        "finding",
+        help="Manage findings (add manual, list, triage, bulk-import).",
+        allow_abbrev=False,
+    )
+    pfd_sub = pfd.add_subparsers(
+        dest="finding_action", metavar="<action>", required=True,
+    )
+
+    pfd_add = pfd_sub.add_parser(
+        "add", help="Record a manual finding via the write-bus.",
+        allow_abbrev=False,
+    )
+    pfd_add.add_argument("--project", required=True)
+    pfd_add.add_argument("--severity", required=True,
+                          choices=("info", "low", "medium", "high", "critical"))
+    pfd_add.add_argument("--title", required=True)
+    pfd_add.add_argument("--rule-id", default="",
+                          help="Stable rule identifier. Defaults to "
+                               "'manual:<slug-of-title>' or 'manual:<--slug>'.")
+    pfd_add.add_argument("--slug", default="",
+                          help="Slug to use when --rule-id is not given.")
+    pfd_add.add_argument("--host", default="")
+    pfd_add.add_argument("--url", default="")
+    pfd_add.add_argument("--cwe", default="",
+                          help="CWE id, e.g. CWE-79.")
+    pfd_add.add_argument("--owasp", default="")
+    pfd_add.add_argument("--description", default="")
+    pfd_add.add_argument("--evidence", default="")
+    pfd_add.add_argument("--payload", default="")
+    pfd_add.add_argument("--remediation", default="")
+    pfd_add.add_argument("--reference", default="",
+                          help="References. Comma- or newline-separated.")
+
+    pfd_ls = pfd_sub.add_parser(
+        "list", help="List findings (filterable, tabular or JSON).",
+        allow_abbrev=False,
+    )
+    pfd_ls.add_argument("--project", required=True)
+    pfd_ls.add_argument("--severity", default="")
+    pfd_ls.add_argument("--status", default="")
+    pfd_ls.add_argument("--host", default="")
+    pfd_ls.add_argument("--source", default="")
+    pfd_ls.add_argument("--rule-id", default="")
+    pfd_ls.add_argument("--limit", type=int, default=500)
+    pfd_ls.add_argument("--format", choices=("table", "json"), default="table")
+
+    pfd_tr = pfd_sub.add_parser(
+        "triage",
+        help="Update a finding's status. "
+             "When --status=false_positive, also adds a suppression.",
+        allow_abbrev=False,
+    )
+    pfd_tr.add_argument("--project", required=True)
+    pfd_tr.add_argument("--id", type=int, required=True)
+    pfd_tr.add_argument("--status", required=True,
+                         choices=("open", "triaged", "false_positive", "fixed"))
+    pfd_tr.add_argument("--reason", default="",
+                         help="Reason recorded on the suppression "
+                              "(false_positive only).")
+
+    pfd_im = pfd_sub.add_parser(
+        "import",
+        help="Bulk-import findings from a JSON file via the bus.",
+        allow_abbrev=False,
+    )
+    pfd_im.add_argument("--project", required=True)
+    pfd_im.add_argument("--format", choices=("json",), default="json")
+    pfd_im.add_argument("file", help="Path to a JSON file (list of findings "
+                                       "or an object with a 'findings' array).")
+
+    pfd_rp = pfd_sub.add_parser(
+        "repro",
+        help="Print a curl one-liner that re-fires the probe behind a finding.",
+        allow_abbrev=False,
+    )
+    pfd_rp.add_argument("--project", required=True)
+    pfd_rp.add_argument("--id", type=int, required=True)
+    pfd_rp.add_argument("--format", choices=("curl", "json"), default="curl",
+                          help="curl: single-line shell command (default); "
+                               "json: full reproduction record with raw bytes.")
+
+    pfd.set_defaults(func=cmd_finding)
+
+    # ----- A.6: suppression management
+    psu = sub.add_parser(
+        "suppression",
+        help="Manage finding suppressions (add, list, delete).",
+        allow_abbrev=False,
+    )
+    psu_sub = psu.add_subparsers(
+        dest="suppression_action", metavar="<action>", required=True,
+    )
+
+    psu_add = psu_sub.add_parser("add", help="Add a finding suppression.",
+                                   allow_abbrev=False)
+    psu_add.add_argument("--project", required=True)
+    psu_add.add_argument("--rule-id", required=True)
+    psu_add.add_argument("--host", default="",
+                          help="Host glob (e.g. 'api.example.com' or "
+                               "'*.example.com'). Empty = any host.")
+    psu_add.add_argument("--url-pattern", default="",
+                          help="Substring URL pattern. Empty = any URL.")
+    psu_add.add_argument("--reason", default="")
+
+    psu_ls = psu_sub.add_parser("list", help="List existing suppressions.",
+                                  allow_abbrev=False)
+    psu_ls.add_argument("--project", required=True)
+    psu_ls.add_argument("--format", choices=("table", "json"), default="table")
+
+    psu_del = psu_sub.add_parser("delete", help="Delete a suppression.",
+                                   allow_abbrev=False)
+    psu_del.add_argument("--project", required=True)
+    psu_del.add_argument("--rule-id", required=True)
+    psu_del.add_argument("--host", default="")
+    psu_del.add_argument("--url-pattern", default="")
+
+    psu.set_defaults(func=cmd_suppression)
 
     pf = sub.add_parser(
         "prefetch-firefox",

@@ -4,7 +4,16 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Iterable
 
-SEV_ORDER = ("critical", "high", "medium", "low", "info")
+from ._common import (
+    SEV_ORDER,
+    coverage_rows,
+    coverage_rows_by_host,
+    curl_from_reproduction,
+    reqlore_version,
+    severity_counts,
+    utc_now,
+)
+
 SEV_BADGE = {
     "critical": "[CRITICAL]",
     "high":     "[HIGH]",
@@ -15,13 +24,22 @@ SEV_BADGE = {
 
 
 def render_markdown(project_meta: dict, findings: Iterable[dict],
-                     *, title: str = "Reqlore — Security Findings") -> str:
+                     *, title: str = "Reqlore — Security Findings",
+                     now: _dt.datetime | None = None,
+                     classification: str = "",
+                     include_coverage: bool = False,
+                     coverage: Iterable[dict] | None = None,
+                     coverage_by_host: Iterable[dict] | None = None,
+                     reproductions: dict[str, dict] | None = None) -> str:
     findings = list(findings)
-    counts = _counts(findings)
+    counts = severity_counts(findings)
+    ts = utc_now(now).isoformat(timespec="seconds")
     out: list[str] = []
     out.append(f"# {title}\n")
+    if classification:
+        out.append(f"> **{classification}**\n")
     out.append(f"Project: **{project_meta.get('name', '?')}**  ")
-    out.append(f"Generated: {_dt.datetime.now().isoformat(timespec='seconds')}  ")
+    out.append(f"Generated (UTC): {ts}  ")
     out.append(f"Findings: **{len(findings)}** "
                f"(critical {counts['critical']}, high {counts['high']}, "
                f"medium {counts['medium']}, low {counts['low']}, "
@@ -34,6 +52,29 @@ def render_markdown(project_meta: dict, findings: Iterable[dict],
         out.append(f"| {sev.title()} | {counts[sev]} |")
     out.append("")
 
+    if include_coverage:
+        rows = coverage_rows(coverage)
+        out.append("\n## Coverage\n")
+        if not rows:
+            out.append("_No rule runs recorded._\n")
+        else:
+            out.append("| Rule | Fired | Evaluated |")
+            out.append("|---|---:|---:|")
+            for r in rows:
+                out.append(f"| `{r['rule_id']}` | {r['fired']} | {r['evaluated']} |")
+            out.append("")
+        per_host = coverage_rows_by_host(coverage_by_host)
+        if per_host:
+            out.append("\n### Coverage by host\n")
+            out.append("| Rule | Host | Fired | Evaluated |")
+            out.append("|---|---|---:|---:|")
+            for r in per_host:
+                out.append(
+                    f"| `{r['rule_id']}` | `{r['host']}` | "
+                    f"{r['fired']} | {r['evaluated']} |"
+                )
+            out.append("")
+
     for sev in SEV_ORDER:
         bucket = [f for f in findings if f["severity"] == sev]
         if not bucket:
@@ -41,19 +82,31 @@ def render_markdown(project_meta: dict, findings: Iterable[dict],
         out.append(f"\n## {sev.title()} ({len(bucket)})\n")
         for f in bucket:
             out.append(f"### {SEV_BADGE[sev]} {f['title']}\n")
-            meta = []
+            chips: list[str] = []
+            if f.get("rule_id"):
+                chips.append(f"Rule: `{f['rule_id']}`")
+            if f.get("source"):
+                chips.append(f"Source: {f['source']}")
             if f.get("cwe"):
-                meta.append(f"CWE: {f['cwe']}")
+                chips.append(f"CWE: {f['cwe']}")
             if f.get("owasp"):
-                meta.append(f"OWASP: {f['owasp']}")
+                chips.append(f"OWASP: {f['owasp']}")
+            if f.get("cvss_score") not in (None, ""):
+                vec = f.get("cvss_vector") or ""
+                chips.append(
+                    f"CVSS: {f['cvss_score']}" + (f" ({vec})" if vec else "")
+                )
             if f.get("host"):
-                meta.append(f"Host: `{f['host']}`")
-            if meta:
-                out.append("  ·  ".join(meta) + "\n")
+                chips.append(f"Host: `{f['host']}`")
+            if chips:
+                out.append("  ·  ".join(chips) + "\n")
             if f.get("url"):
                 out.append(f"**URL:** `{f['url']}`\n")
             if f.get("status"):
                 out.append(f"**Status:** {f['status']}\n")
+            if f.get("description"):
+                out.append("**Description:**\n")
+                out.append(str(f["description"]).rstrip() + "\n")
             if f.get("evidence"):
                 out.append("**Evidence:**\n")
                 out.append("```")
@@ -64,15 +117,34 @@ def render_markdown(project_meta: dict, findings: Iterable[dict],
                 out.append("```")
                 out.append(_clip(f["payload"], 400))
                 out.append("```\n")
+            curl = _curl_for(f, reproductions)
+            if curl:
+                out.append("**Reproduction:**\n")
+                out.append("```")
+                out.append(curl)
+                out.append("```\n")
+            if f.get("remediation"):
+                out.append("**Remediation:**\n")
+                out.append(str(f["remediation"]).rstrip() + "\n")
+            refs = f.get("references") or []
+            if refs:
+                out.append("**References:**\n")
+                for ref in refs:
+                    out.append(f"- {ref}")
+                out.append("")
+
+    out.append(f"\n---\n_Generated by reqlore {reqlore_version()} at {ts}_\n")
     return "\n".join(out) + "\n"
 
 
-def _counts(findings) -> dict[str, int]:
-    out = {s: 0 for s in SEV_ORDER}
-    for f in findings:
-        s = f.get("severity", "info")
-        out[s] = out.get(s, 0) + 1
-    return out
+def _curl_for(finding: dict, reproductions: dict[str, dict] | None) -> str:
+    if not reproductions:
+        return ""
+    token = finding.get("reproduction_token")
+    if not token:
+        return ""
+    repro = reproductions.get(token)
+    return curl_from_reproduction(repro)
 
 
 def _clip(s: str, n: int) -> str:

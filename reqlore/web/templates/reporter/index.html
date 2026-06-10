@@ -26,6 +26,8 @@
       <code>pip install python-docx</code> and reload this page.
     {% endif %}
   </li>
+  <li><a href="{{ url_for('.export', fmt='json') }}">JSON (.json)</a> — versioned <code>reqlore.findings/1</code> schema for downstream tools.</li>
+  <li><a href="{{ url_for('.export', fmt='sarif') }}">SARIF (.sarif)</a> — SARIF 2.1.0, consumable by GitHub Security and IDE plugins.</li>
 </ul>
 
 <h2>Filter the export</h2>
@@ -50,6 +52,13 @@
       <option value="false_positive">false_positive</option>
       <option value="fixed">fixed</option>
     </select>
+  </p>
+  <p>
+    <label for="eclass">Classification banner</label>
+    <input type="text" id="eclass" name="classification" placeholder="CONFIDENTIAL — CLIENT-X">
+  </p>
+  <p>
+    <label><input type="checkbox" name="coverage" value="1"> Include rule-coverage section</label>
   </p>
   <p><button type="submit">Download filtered Markdown</button></p>
 </form>

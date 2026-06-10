@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Finding suppressions{% endblock %}
+{% block main %}
+<h1>Finding suppressions</h1>
+<p>
+  Suppressions silently drop matching findings during scans (rule re-runs are
+  still recorded as <code>fired=0, reason="suppressed"</code> for audit).
+  False-positive triage in the
+  <a href="{{ url_for('.index') }}">Findings list</a> creates a suppression
+  automatically — delete it here to re-enable detection.
+</p>
+
+{% if suppressions %}
+  <table>
+    <caption>{{ suppressions|length }} active suppression(s)</caption>
+    <thead>
+      <tr>
+        <th scope="col">Rule</th>
+        <th scope="col">Host</th>
+        <th scope="col">URL pattern</th>
+        <th scope="col">Reason</th>
+        <th scope="col">Created</th>
+        <th scope="col">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in suppressions %}
+        <tr>
+          <td><code>{{ s.rule_id }}</code></td>
+          <td>{{ s.host or '(any)' }}</td>
+          <td>{{ s.url_pattern or '(any)' }}</td>
+          <td>{{ s.reason or '' }}</td>
+          <td>{{ s.created_at }}</td>
+          <td>
+            <form method="post" action="{{ url_for('.suppressions_delete') }}" class="inline">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <input type="hidden" name="rule_id" value="{{ s.rule_id }}">
+              <input type="hidden" name="host" value="{{ s.host }}">
+              <input type="hidden" name="url_pattern" value="{{ s.url_pattern }}">
+              <button type="submit" accesskey="d">Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No suppressions configured.</p>
+{% endif %}
+
+<p><a href="{{ url_for('.index') }}">&larr; Back to scanner</a></p>
+{% endblock %}

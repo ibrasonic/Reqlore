@@ -188,3 +188,33 @@ def detect(url: str, technique: str, *, sender: Callable[[Request], Response],
                           baseline_ms=baseline_ms, probe_ms=probe_ms,
                           delta_ms=delta, likely_vulnerable=vuln,
                           reason=reason)
+
+
+def record_smuggling_test(project, test: SmugglingTest, *,
+                           url: str, host: str = "") -> int | None:
+    """Promote a :class:`SmugglingTest` into a Finding when the probe
+    indicated likely vulnerability. Negative results record a skipped
+    rule_run for visibility."""
+    from .findings_bus import record_finding, record_no_finding
+    rule_id = f"smuggling:{test.technique}"
+    if not test.likely_vulnerable:
+        record_no_finding(project, rule_id=rule_id, host=host, url=url,
+                            reason=test.reason)
+        return None
+    return record_finding(
+        project, source="smuggling", rule_id=rule_id, severity="critical",
+        title=f"Likely HTTP request smuggling ({test.technique.upper()})",
+        description=(
+            "A timing-based probe took significantly longer than the "
+            "baseline, which strongly suggests the upstream front-end and "
+            "back-end disagree on request framing — the classic indicator "
+            "of HTTP request smuggling. Confirm manually before disclosure."
+        ),
+        remediation=(
+            "Normalise request framing at the front-end (reject ambiguous "
+            "Transfer-Encoding/Content-Length combinations, prefer HTTP/2 "
+            "end-to-end) and patch the affected proxy/server software."
+        ),
+        cwe="CWE-444", owasp="A10:2021-Server-Side Request Forgery",
+        host=host, url=url, evidence=test.reason,
+    )

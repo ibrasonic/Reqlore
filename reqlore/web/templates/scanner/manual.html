@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Add manual finding{% endblock %}
+{% block main %}
+<p><a href="{{ url_for('.index') }}">&larr; Back to findings</a></p>
+
+<h1>Add a manual finding</h1>
+
+<p>
+  Use this form for issues you discovered by hand — confirmed exploitation,
+  business-logic flaws, anything the automated rules can't see. The entry
+  joins the rest of the findings ledger and shows up in the reporter just
+  like any rule emit.
+</p>
+
+{% if errors %}
+  <div class="flash err" role="alert" aria-live="assertive">
+    <p><strong>Please fix the following before saving:</strong></p>
+    <ul>
+      {% for e in errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<form method="post" action="{{ url_for('.manual') }}" class="stack" accesskey="m">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+  <fieldset>
+    <legend>Required</legend>
+    <p>
+      <label for="title">Title</label><br>
+      <input id="title" name="title" type="text" required maxlength="180"
+              value="{{ f.title }}" aria-describedby="title-hint">
+      <span id="title-hint" class="muted">One sentence summarising the issue.</span>
+    </p>
+    <p>
+      <label for="severity">Severity</label>
+      <select id="severity" name="severity" required>
+        {% for s in severities %}
+          <option value="{{ s }}" {% if f.severity == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Classification</legend>
+    <p>
+      <label for="slug">Rule id slug</label><br>
+      <input id="slug" name="rule_id_slug" type="text" maxlength="60"
+              value="{{ f.rule_id_slug }}" aria-describedby="slug-hint"
+              pattern="[a-z0-9-]*">
+      <span id="slug-hint" class="muted">
+        Optional. Stored as <code>manual:&lt;slug&gt;</code>. Leave blank to
+        derive from the title.
+      </span>
+    </p>
+    <p>
+      <label for="cwe">CWE</label>
+      <input id="cwe" name="cwe" type="text" maxlength="20"
+              value="{{ f.cwe }}" placeholder="CWE-79" pattern="^(CWE-\d+)?$"
+              aria-describedby="cwe-hint">
+      <span id="cwe-hint" class="muted">Optional. Format: <code>CWE-79</code>.</span>
+    </p>
+    <p>
+      <label for="owasp">OWASP Top 10</label>
+      <select id="owasp" name="owasp">
+        <option value="">(none)</option>
+        {% for cat in owasp_categories %}
+          <option value="{{ cat }}" {% if f.owasp == cat %}selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+      </select>
+    </p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Target</legend>
+    <p>
+      <label for="host">Host</label>
+      <input id="host" name="host" type="text" list="known-hosts"
+              value="{{ f.host }}" maxlength="200">
+      <datalist id="known-hosts">
+        {% for h in hosts %}<option value="{{ h }}">{% endfor %}
+      </datalist>
+    </p>
+    <p>
+      <label for="url">URL</label><br>
+      <input id="url" name="url" type="url" value="{{ f.url }}"
+              maxlength="2000" style="width: 100%; max-width: 60em;">
+    </p>
+    <p>
+      <label for="rid">Originating request id</label>
+      <input id="rid" name="request_id" type="number" min="1"
+              value="{{ f.request_id }}" aria-describedby="rid-hint"
+              inputmode="numeric">
+      <span id="rid-hint" class="muted">
+        Optional. Link to a row in the history table.
+      </span>
+    </p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Body</legend>
+    <p>
+      <label for="desc">Description</label><br>
+      <textarea id="desc" name="description" rows="5"
+                 style="width: 100%; max-width: 60em;">{{ f.description }}</textarea>
+    </p>
+    <p>
+      <label for="evidence">Evidence</label><br>
+      <textarea id="evidence" name="evidence" rows="4"
+                 style="width: 100%; max-width: 60em;"
+                 aria-describedby="evidence-hint">{{ f.evidence }}</textarea>
+      <span id="evidence-hint" class="muted">
+        Quote the response snippet, screenshot ALT text, or log line that
+        proves the issue. This drives finding de-duplication, so two manual
+        entries with identical evidence collapse into one row.
+      </span>
+    </p>
+    <p>
+      <label for="payload">Payload</label><br>
+      <textarea id="payload" name="payload" rows="3"
+                 style="width: 100%; max-width: 60em;">{{ f.payload }}</textarea>
+    </p>
+    <p>
+      <label for="remed">Remediation</label><br>
+      <textarea id="remed" name="remediation" rows="4"
+                 style="width: 100%; max-width: 60em;">{{ f.remediation }}</textarea>
+    </p>
+    <p>
+      <label for="refs">References</label><br>
+      <textarea id="refs" name="references" rows="3"
+                 style="width: 100%; max-width: 60em;"
+                 aria-describedby="refs-hint">{{ f.references }}</textarea>
+      <span id="refs-hint" class="muted">One URL per line.</span>
+    </p>
+  </fieldset>
+
+  <p>
+    <button type="submit" accesskey="s">Save finding</button>
+    <a href="{{ url_for('.index') }}">Cancel</a>
+  </p>
+</form>
+{% endblock %}
