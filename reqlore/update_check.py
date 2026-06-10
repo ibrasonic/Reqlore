@@ -19,7 +19,13 @@ from dataclasses import dataclass
 
 from . import __version__
 
-DEFAULT_MANIFEST_URL = "https://reqlore.invalid/manifest.json"
+# Served from the main branch of the upstream repo so a fresh tag in
+# Git makes the in-app notifier pick it up on the next opt-in check.
+# `raw.githubusercontent.com` returns a static file, no auth, and is
+# tiny (~150 bytes), so the 4-second timeout in `check()` is plenty.
+DEFAULT_MANIFEST_URL = (
+    "https://raw.githubusercontent.com/ibrasonic/Reqlore/main/manifest.json"
+)
 USER_AGENT = f"reqlore/{__version__} (+update-check)"
 
 

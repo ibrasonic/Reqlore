@@ -95,6 +95,9 @@ rem ----------------------------------------------------------------------
 :upgrade_pipx
     echo ==^> upgrading Reqlore via pipx ^(clean reinstall from this checkout^)
 
+    set "PIPX_SHIM=%USERPROFILE%\.local\bin\reqlore.exe"
+    call :read_version "%PIPX_SHIM%" OLD_VER
+
     rem A leftover `pip install --user` shim could re-appear from an old
     rem install attempt. Wipe it before pipx puts a fresh shim on PATH.
     %PY% -m pip uninstall -y reqlore >nul 2>&1
@@ -119,6 +122,13 @@ rem ----------------------------------------------------------------------
 
     echo.
     echo ==^> upgraded.
+    call :read_version "%PIPX_SHIM%" NEW_VER
+    echo     !OLD_VER! -^> !NEW_VER!
+    if /i "!OLD_VER!"=="!NEW_VER!" (
+        if /i not "!OLD_VER!"=="(not installed)" (
+            echo     note: version string is unchanged; the install still ran but no version bump is visible.
+        )
+    )
     echo.
     %PY% -m pipx list 2>nul | findstr /r /c:"package reqlore "
     echo.
@@ -139,6 +149,7 @@ if not exist "%VENV%\Scripts\python.exe" (
 )
 
 echo ==^> upgrading Reqlore in venv at %VENV%
+call :read_version "%VENV%\Scripts\reqlore.exe" OLD_VER
 "%VENV%\Scripts\python.exe" -m pip install --upgrade pip >nul
 "%VENV%\Scripts\pip.exe" install --upgrade .
 if errorlevel 1 (
@@ -148,6 +159,13 @@ if errorlevel 1 (
 
 echo.
 echo ==^> upgraded.
+call :read_version "%VENV%\Scripts\reqlore.exe" NEW_VER
+echo     !OLD_VER! -^> !NEW_VER!
+if /i "!OLD_VER!"=="!NEW_VER!" (
+    if /i not "!OLD_VER!"=="(not installed)" (
+        echo     note: version string is unchanged; the install still ran but no version bump is visible.
+    )
+)
 echo.
 echo Run:
 echo   %VENV%\Scripts\reqlore.exe --version
@@ -173,4 +191,20 @@ rem permanently block all future pipx commands. Give Windows time to
 rem release file handles between retries.
 :clear_pipx_trash
     powershell -NoProfile -Command "$t = Join-Path $env:USERPROFILE 'pipx\trash'; if (Test-Path $t) { 1..3 | ForEach-Object { try { Remove-Item $t -Recurse -Force -ErrorAction Stop; return } catch { Start-Sleep -Milliseconds 500 } }; Remove-Item $t -Recurse -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+    exit /b 0
+
+rem ----------------------------------------------------------------------
+rem read_version <exe> <out_var> — set the named variable to the version
+rem reported by `<exe> --version`, or to `(not installed)` / `(unknown)`
+rem when the exe is missing or can't be run. Used for the before -> after
+rem line so the operator sees the actual version bump.
+:read_version
+    set "_RV_EXE=%~1"
+    set "_RV_VAR=%~2"
+    set "%_RV_VAR%=(not installed)"
+    if not exist "%_RV_EXE%" exit /b 0
+    for /f "tokens=*" %%v in ('"%_RV_EXE%" --version 2^>nul') do (
+        for /f "tokens=2" %%w in ("%%v") do set "%_RV_VAR%=%%w"
+    )
+    if "!%_RV_VAR%!"=="(not installed)" set "%_RV_VAR%=(unknown)"
     exit /b 0
