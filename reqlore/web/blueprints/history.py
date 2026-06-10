@@ -29,11 +29,39 @@ def index():
     )
     flagged = [(r, _flags(r.req_blob, r.resp_blob)) for r in rows]
     total = g.project.history_count()
+    # Highest row id matching the current filters — used by the page's live
+    # poll (latest.json) as the "since" cursor for new-request detection.
+    max_id = max((r.id for r in rows), default=0)
     methods = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
     return render_template("history/index.html",
                            rows=flagged, q=q or "", host=host or "",
                            method=method or "", methods=methods,
-                           page=page, per_page=per_page, total=total)
+                           page=page, per_page=per_page, total=total,
+                           max_id=max_id)
+
+
+@bp.route("/latest.json")
+def latest():
+    """Poll endpoint for the History page live indicator.
+
+    Query params mirror the index filters so the new-request count reflects
+    what the user is actually viewing. `since` is the highest row id the
+    client already knows about.
+    """
+    q = request.args.get("q", "").strip() or None
+    host = request.args.get("host", "").strip() or None
+    method = request.args.get("method", "").strip().upper() or None
+    try:
+        since = max(0, int(request.args.get("since", "0")))
+    except ValueError:
+        since = 0
+    new_count, max_id = g.project.count_history_after(
+        since, host=host, q=q, method=method,
+    )
+    return Response(
+        json.dumps({"new": new_count, "max_id": max_id, "since": since}),
+        mimetype="application/json",
+    )
 
 
 @bp.route("/<int:hid>")

@@ -36,6 +36,18 @@
 
 <p>{{ total }} total records. Showing page {{ page }} ({{ rows|length }} item{{ '' if rows|length == 1 else 's' }}).</p>
 
+<div class="hist-live"
+     data-history-live
+     data-latest-url="{{ url_for('history.latest', q=q, host=host, method=method) }}"
+     data-since="{{ max_id }}">
+  <label class="hist-live-toggle">
+    <input type="checkbox" id="hist-live-cb">
+    Auto-refresh when new requests arrive
+  </label>
+  <span id="hist-live-status" class="hist-live-status" role="status" aria-live="polite"></span>
+  <noscript><em>(JavaScript disabled — press F5 to see new requests.)</em></noscript>
+</div>
+
 {% if rows %}
 <p id="cmp-status" class="cmp-status" hidden aria-live="polite"></p>
 <table id="hist-table"

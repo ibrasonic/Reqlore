@@ -712,6 +712,30 @@ html[data-theme="high-contrast"] .login-error {
   background: var(--bg);
 }
 
+/* History page live (auto-refresh) indicator. */
+.hist-live {
+  margin: 0.4rem 0 0.8rem 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.hist-live-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+.hist-live-status {
+  font-weight: bold;
+}
+.hist-live-status.has-new {
+  color: var(--accent, #ffae00);
+}
+
 /* Comparer view toggle (request / response / both). */
 .cmp-view {
   margin: 0.5rem 0 1rem 0;

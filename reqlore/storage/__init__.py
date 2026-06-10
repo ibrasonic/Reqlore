@@ -403,6 +403,31 @@ class Project:
         with self._cursor() as cur:
             return int(cur.execute("SELECT COUNT(*) FROM http_history").fetchone()[0])
 
+    def count_history_after(
+        self, since: int, *,
+        host: str | None = None, q: str | None = None,
+        method: str | None = None,
+    ) -> tuple[int, int]:
+        """Return (new_count, max_id) for rows with id > since matching filters.
+
+        max_id is the overall MAX(id) under the same filters (0 if empty), so
+        the client can advance its "since" cursor monotonically.
+        """
+        base = " FROM http_history WHERE 1=1"
+        args: list = []
+        if host:
+            base += " AND host = ?"; args.append(host)
+        if method:
+            base += " AND method = ?"; args.append(method.upper())
+        if q:
+            base += " AND url LIKE ?"; args.append(f"%{q}%")
+        with self._cursor() as cur:
+            max_id = int(cur.execute("SELECT COALESCE(MAX(id), 0)" + base, args).fetchone()[0])
+            new_count = int(cur.execute(
+                "SELECT COUNT(*)" + base + " AND id > ?", args + [int(since)],
+            ).fetchone()[0])
+        return new_count, max_id
+
     def clear_history(self) -> int:
         """Delete all recorded HTTP history. Returns the number of rows removed."""
         with self._cursor() as cur:

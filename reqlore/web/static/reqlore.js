@@ -348,4 +348,123 @@
       announce("Showing inputs for source: " + sel.value + ".");
     });
   })();
+
+  // History: live auto-refresh.
+  // Polls /history/latest.json every few seconds. When new requests are
+  // recorded (matching the current filters), either reloads the page (if
+  // the Auto-refresh checkbox is on) or shows a "N new — Refresh" link
+  // (if the checkbox is off). Polling pauses while the tab is hidden.
+  (function () {
+    var root = document.querySelector("[data-history-live]");
+    if (!root) return;
+    var url = root.getAttribute("data-latest-url") || "/history/latest.json";
+    var since = parseInt(root.getAttribute("data-since") || "0", 10) || 0;
+    var cb = document.getElementById("hist-live-cb");
+    var status = document.getElementById("hist-live-status");
+    var POLL_MS = 2500;
+    var RELOAD_DELAY_MS = 600;
+    var timer = null;
+    var reloadTimer = null;
+    var stopped = false;
+
+    var STORAGE_KEY = "reqloreHistoryAutoRefresh";
+    try {
+      // Default OFF (WCAG SC 3.2.5 Change on Request, AAA): the first
+      // reload must be user-initiated. Users who flip the toggle ON have
+      // their preference remembered across page loads.
+      var saved = localStorage.getItem(STORAGE_KEY);
+      if (saved === "on") cb.checked = true;
+    } catch (_) { /* ignore */ }
+
+    if (cb) {
+      cb.addEventListener("change", function () {
+        try {
+          localStorage.setItem(STORAGE_KEY, cb.checked ? "on" : "off");
+        } catch (_) { /* ignore */ }
+        if (cb.checked && status && status.classList.contains("has-new")) {
+          scheduleReload();
+        } else if (!cb.checked && reloadTimer) {
+          clearTimeout(reloadTimer);
+          reloadTimer = null;
+        }
+      });
+    }
+
+    function userIsBusy() {
+      // Don't yank the page out from under the user mid-interaction.
+      // Skip the auto-reload if focus is in a form control or any
+      // row-actions menu is open; the "N new — Refresh" link stays
+      // visible so the user can reload on their own terms.
+      var ae = document.activeElement;
+      if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return true;
+      var openMenu = document.querySelector(
+        '[data-row-actions] [aria-expanded="true"]'
+      );
+      return !!openMenu;
+    }
+
+    function scheduleReload() {
+      if (reloadTimer) return;
+      reloadTimer = setTimeout(function () {
+        reloadTimer = null;
+        if (userIsBusy()) {
+          // Retry on the next poll tick; the visible Refresh link is
+          // the user's escape hatch in the meantime.
+          return;
+        }
+        // Preserve the user's current URL (filters, page, hash) on reload.
+        window.location.reload();
+      }, RELOAD_DELAY_MS);
+    }
+
+    function paint(newCount) {
+      if (!status) return;
+      if (newCount > 0) {
+        var noun = newCount === 1 ? "request" : "requests";
+        // Build a Refresh link the user can click even if auto-reload is off.
+        status.classList.add("has-new");
+        status.textContent = "";
+        var label = document.createElement("span");
+        label.textContent = newCount + " new " + noun + " \u2014 ";
+        var a = document.createElement("a");
+        a.href = window.location.href;
+        a.textContent = "Refresh";
+        status.appendChild(label);
+        status.appendChild(a);
+        if (cb && cb.checked) scheduleReload();
+      } else {
+        status.classList.remove("has-new");
+        status.textContent = "";
+      }
+    }
+
+    function poll() {
+      if (stopped) return;
+      if (document.hidden) { schedule(); return; }
+      var sep = url.indexOf("?") >= 0 ? "&" : "?";
+      var u = url + sep + "since=" + encodeURIComponent(since);
+      fetch(u, { credentials: "same-origin", headers: { "Accept": "application/json" } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (data) {
+          if (data && typeof data.new === "number") paint(data.new);
+        })
+        .catch(function () { /* network blips: silent, try again next tick */ })
+        .then(function () { schedule(); });
+    }
+
+    function schedule() {
+      if (stopped) return;
+      timer = setTimeout(poll, POLL_MS);
+    }
+
+    document.addEventListener("visibilitychange", function () {
+      if (!document.hidden) {
+        // Resume immediately when the tab comes back into view.
+        if (timer) { clearTimeout(timer); timer = null; }
+        poll();
+      }
+    });
+
+    schedule();
+  })();
 })();
