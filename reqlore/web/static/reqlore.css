@@ -155,6 +155,106 @@ body {
   font-size: 0.85em;
 }
 
+/* Severity badges — used in scanner findings tables and detail page.
+   Colour is supplementary: the text label always carries the meaning,
+   and critical/high/medium/low/info also differ by border weight so
+   they remain distinguishable in monochrome (WCAG 1.4.1). */
+.sev {
+  display: inline-block;
+  min-width: 4.5rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  line-height: 1.4;
+}
+.sev-critical {
+  background: var(--err-fg);
+  color: var(--err-bg);
+  border: 2px solid var(--err-fg);
+}
+.sev-high {
+  background: var(--err-bg);
+  color: var(--err-fg);
+  border: 2px solid var(--err-fg);
+}
+.sev-medium {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  border: 1px solid var(--warn-fg);
+}
+.sev-low {
+  background: var(--code-bg);
+  color: var(--fg);
+  border: 1px dashed var(--border);
+}
+.sev-info {
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px dotted var(--border);
+}
+
+/* Long-text <pre> blocks: wrap rather than scroll horizontally
+   (WCAG 1.4.8 / 1.4.10 — no horizontal scroll at narrow widths). */
+.wrap-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  padding: 0.75rem;
+  border-radius: 4px;
+  max-height: 32rem;
+  overflow-y: auto;
+}
+
+/* Long URL inside a table cell: never overflow horizontally. */
+td .url, td code.url {
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+/* Two-step confirm for destructive actions (WCAG 3.3.6 Error Prevention).
+   Uses native <details> so it works without JS. */
+details.confirm {
+  display: inline-block;
+  margin: 0;
+}
+details.confirm > summary {
+  display: inline-block;
+  cursor: pointer;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--err-fg);
+  border-radius: 4px;
+  background: var(--err-bg);
+  color: var(--err-fg);
+  font-weight: 600;
+  list-style: none;
+}
+details.confirm > summary::-webkit-details-marker { display: none; }
+details.confirm > summary:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+details.confirm[open] > summary {
+  background: var(--code-bg);
+  color: var(--fg);
+}
+details.confirm .confirm-body {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--err-fg);
+  border-radius: 4px;
+  background: var(--err-bg);
+  color: var(--err-fg);
+}
+details.confirm .confirm-body p { margin: 0 0 0.5rem; }
+details.confirm .confirm-body button { font-weight: 600; }
+
 main {
   max-width: var(--maxw);
   margin: 0 auto;

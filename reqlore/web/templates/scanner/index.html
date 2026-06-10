@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Reqlore — Scanner{% endblock %}
 {% block main %}
-<h1>Passive scanner</h1>
+<h1>Scanner</h1>
 
 <section aria-labelledby="run-h">
-  <h2 id="run-h">Run a scan</h2>
+  <h2 id="run-h">Passive scan</h2>
   <p>
     Replays no traffic. Audits every recorded request/response pair against
     the built-in rule set plus any enabled plugin rules and writes new findings
@@ -25,7 +25,7 @@
 </section>
 
 <section aria-labelledby="active-h">
-  <h2 id="active-h">Active scan (sends traffic)</h2>
+  <h2 id="active-h">Active scan <small>(sends traffic)</small></h2>
   <p>
     The active scanner <strong>sends mutated HTTP requests</strong> to the
     target. Only run it against systems you are authorised to test. Probes
@@ -62,12 +62,14 @@
     </fieldset>
     <fieldset>
       <legend>Checks to run</legend>
+      <ul class="check-list" style="list-style:none;padding-left:0;margin:0;">
       {% for c in active_checks %}
-        <p>
+        <li>
           <input type="checkbox" id="chk-{{ c.name }}" name="checks" value="{{ c.name }}" checked>
-          <label for="chk-{{ c.name }}"><strong>{{ c.name }}</strong> — {{ c.description }}</label>
-        </p>
+          <label for="chk-{{ c.name }}" style="display:inline;font-weight:400;"><strong>{{ c.name }}</strong> &mdash; {{ c.description }}</label>
+        </li>
       {% endfor %}
+      </ul>
     </fieldset>
     <p><button type="submit">Run active scan</button></p>
   </form>
@@ -80,7 +82,7 @@
     <thead><tr><th scope="col">Severity</th><th scope="col">Count</th></tr></thead>
     <tbody>
       {% for s in severities %}
-        <tr><th scope="row">{{ s.title() }}</th><td>{{ summary.get(s, 0) }}</td></tr>
+        <tr><th scope="row"><span class="sev sev-{{ s }}">{{ s }}</span></th><td>{{ summary.get(s, 0) }}</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -92,7 +94,7 @@
 <section aria-labelledby="find-h">
   <h2 id="find-h">Findings</h2>
   <p>
-    <a href="{{ url_for('.manual') }}" accesskey="m">Add manual finding</a>
+    <a href="{{ url_for('.manual') }}" accesskey="m">Add <u>m</u>anual finding</a>
     — record an issue you discovered by hand.
   </p>
   <p>
@@ -145,10 +147,10 @@
       {% for f in findings %}
       <tr>
         <td>{{ f.id }}</td>
-        <td>{{ f.severity }}</td>
+        <td><span class="sev sev-{{ f.severity }}" aria-label="Severity: {{ f.severity }}">{{ f.severity }}</span></td>
         <td><a href="{{ url_for('.show', fid=f.id) }}">{{ f.title }}</a></td>
         <td>{{ f.host or '—' }}</td>
-        <td><code>{{ (f.url or '—')[:80] }}</code></td>
+        <td><code class="url">{{ f.url or '—' }}</code></td>
         <td>{{ f.status }}</td>
       </tr>
       {% endfor %}

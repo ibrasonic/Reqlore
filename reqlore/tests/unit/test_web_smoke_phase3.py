@@ -34,7 +34,7 @@ def _csrf(client) -> str:
 def test_scanner_index(client):
     r = client.get("/scanner/")
     assert r.status_code == 200
-    assert b"Passive scanner" in r.data
+    assert b"<h1>Scanner</h1>" in r.data
     assert b"Run passive scan" in r.data
 
 

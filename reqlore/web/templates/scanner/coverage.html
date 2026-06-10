@@ -12,16 +12,20 @@
 </p>
 
 <form method="get" action="{{ url_for('.coverage') }}" class="filter-form">
-  <label>Rule&nbsp;contains
-    <input type="text" name="rule_id" value="{{ rule_filter }}" placeholder="passive:hsts">
-  </label>
-  <label>Host&nbsp;contains
-    <input type="text" name="host" value="{{ host_filter }}" placeholder="example.com">
-  </label>
-  <button type="submit">Filter</button>
-  {% if rule_filter or host_filter %}
-    <a href="{{ url_for('.coverage') }}">Clear</a>
-  {% endif %}
+  <p>
+    <label for="cov-rule">Rule contains</label>
+    <input id="cov-rule" type="text" name="rule_id" value="{{ rule_filter }}" placeholder="passive:hsts">
+  </p>
+  <p>
+    <label for="cov-host">Host contains</label>
+    <input id="cov-host" type="text" name="host" value="{{ host_filter }}" placeholder="example.com">
+  </p>
+  <p>
+    <button type="submit" accesskey="a"><u>A</u>pply filter</button>
+    {% if rule_filter or host_filter %}
+      <a href="{{ url_for('.coverage') }}">Clear</a>
+    {% endif %}
+  </p>
 </form>
 
 <h2>Rule totals</h2>

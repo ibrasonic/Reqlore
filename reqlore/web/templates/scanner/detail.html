@@ -6,11 +6,11 @@
 <h1>{{ f.title }}</h1>
 
 <dl>
-  <dt>Severity</dt><dd>{{ f.severity }}</dd>
+  <dt>Severity</dt><dd><span class="sev sev-{{ f.severity }}" aria-label="Severity: {{ f.severity }}">{{ f.severity }}</span></dd>
   <dt>CWE</dt><dd>{{ f.cwe or '—' }}</dd>
   <dt>OWASP</dt><dd>{{ f.owasp or '—' }}</dd>
   <dt>Host</dt><dd>{{ f.host or '—' }}</dd>
-  <dt>URL</dt><dd><code>{{ f.url or '—' }}</code></dd>
+  <dt>URL</dt><dd><code class="url">{{ f.url or '—' }}</code></dd>
   <dt>Status</dt><dd>{{ f.status }}</dd>
   {% if f.request_id %}
     <dt>Originating request</dt>
@@ -20,12 +20,12 @@
 
 {% if f.evidence %}
   <h2>Evidence</h2>
-  <pre>{{ f.evidence }}</pre>
+  <pre class="wrap-pre">{{ f.evidence }}</pre>
 {% endif %}
 
 {% if f.payload %}
   <h2>Payload</h2>
-  <pre>{{ f.payload }}</pre>
+  <pre class="wrap-pre">{{ f.payload }}</pre>
 {% endif %}
 
 <h2>Triage</h2>
@@ -40,8 +40,14 @@
   <button type="submit">Update status</button>
 </form>
 
-<form method="post" action="{{ url_for('.delete', fid=f.id) }}" class="inline">
-  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-  <button type="submit">Delete finding</button>
-</form>
+<details class="confirm">
+  <summary aria-haspopup="true"><u>D</u>elete finding…</summary>
+  <div class="confirm-body">
+    <form method="post" action="{{ url_for('.delete', fid=f.id) }}" class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <p>Permanently remove finding #{{ f.id }} from the project. This cannot be undone.</p>
+      <button type="submit" accesskey="d">Yes, delete finding #{{ f.id }}</button>
+    </form>
+  </div>
+</details>
 {% endblock %}

@@ -188,7 +188,9 @@ def test_references_split_on_newlines(client, app):
 # ----------------------------------------- Index page wiring
 def test_manual_link_present_on_scanner_index(client):
     r = client.get("/scanner/")
-    assert b"Add manual finding" in r.data
+    # Link text gained a `<u>` accesskey hint (WCAG 3.2.4) but the
+    # underlying anchor + target route stayed the same.
+    assert b'accesskey="m"' in r.data
     assert b"/scanner/manual" in r.data
 
 
