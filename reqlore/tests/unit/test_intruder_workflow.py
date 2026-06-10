@@ -162,8 +162,13 @@ def test_retries_recover_from_transient_send_exception(tmp_path: Path, echo_serv
     assert calls["n"] == 3  # 1 initial + 2 retries
 
 
-def test_retries_exhausted_marks_attack_done_without_row(tmp_path: Path, echo_server: int):
-    """All retries fail → the row is not persisted and the attack still terminates."""
+def test_retries_exhausted_marks_attack_errored_without_row(tmp_path: Path, echo_server: int):
+    """All retries fail → the row is not persisted and the attack is marked errored.
+
+    The runner used to mark this 'done', which was indistinguishable from
+    a clean run. Failures now surface as 'errored' with ``stop_reason``
+    pointing at the first underlying exception.
+    """
     p = Project(tmp_path / "rt2.rlr")
     aid = _create_attack(p, echo_server, ["x"], retries=1, delay_ms=0)
 
@@ -181,7 +186,9 @@ def test_retries_exhausted_marks_attack_done_without_row(tmp_path: Path, echo_se
         mod.httpx_engine.send = real
 
     assert p.list_intruder_results(aid) == []
-    assert p.get_intruder(aid)["status"] == "done"
+    assert p.get_intruder(aid)["status"] == "errored"
+    assert r.errors  # at least one job recorded its error
+    assert "nope" in r.stop_reason
 
 
 # ---------- progress ----------

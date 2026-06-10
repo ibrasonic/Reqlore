@@ -84,7 +84,7 @@ def new():
                 form["url"] = row.url
                 form["template"] = row.req_blob.decode(
                     "latin-1", errors="replace").replace("\r\n", "\n")
-                form["name"] = f"From history #{row.id} — {row.method} {row.url}"
+                form["name"] = f"Reqlore_{row.id}"
     if request.method == "POST":
         for k in form:
             if k in request.form:

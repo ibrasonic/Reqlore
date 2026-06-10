@@ -20,6 +20,7 @@ All payload encoders are stdlib; no curl / no subprocess / no shell.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import html
 import itertools
@@ -93,7 +94,7 @@ def _proc_b64dec(s: str) -> str:
     try:
         pad = "=" * (-len(s) % 4)
         return base64.b64decode(s + pad).decode("latin-1", errors="replace")
-    except Exception:
+    except (binascii.Error, ValueError):
         return s
 def _proc_hex(s: str) -> str: return s.encode().hex()
 def _proc_upper(s: str) -> str: return s.upper()
@@ -467,6 +468,10 @@ class AttackRunner:
         self._done = threading.Event()
         self.total_jobs: int = 0
         self.stop_reason: str = ""
+        # Worker-thread errors (job seq -> "ExcClass: message"). Surfaced
+        # via the final attack status so a transient engine failure does
+        # not leave the attack stuck in 'running' forever.
+        self.errors: dict[int, str] = {}
 
     def cancel(self) -> None:
         self._cancel.set()
@@ -561,6 +566,17 @@ class AttackRunner:
                 raise last_exc if last_exc else RuntimeError("send failed")
 
             def _do(job: _Job):
+                # The body is wrapped so engine / storage / processor
+                # failures do not silently kill the worker thread (which
+                # would leave the attack stuck in 'running' with no new
+                # results and no error reported to the operator).
+                try:
+                    return _do_inner(job)
+                except Exception as exc:  # noqa: BLE001 - intentional safety net
+                    self.errors[job.seq] = f"{exc.__class__.__name__}: {exc}"
+                    return None
+
+            def _do_inner(job: _Job):
                 self._pause.wait()
                 if self._cancel.is_set():
                     return None
@@ -614,8 +630,17 @@ class AttackRunner:
                 return job.seq
 
             with ThreadPoolExecutor(max_workers=options.concurrency) as ex:
-                futures = [ex.submit(_do, j) for j in jobs]
-                for _ in as_completed(futures):
+                futures = {ex.submit(_do, j): j for j in jobs}
+                for fut in as_completed(futures):
+                    # Drain any exception that escaped _do's wrapper so
+                    # the future doesn't carry it silently to GC.
+                    try:
+                        fut.result()
+                    except Exception as exc:  # noqa: BLE001
+                        job = futures[fut]
+                        self.errors[job.seq] = (
+                            f"{exc.__class__.__name__}: {exc}"
+                        )
                     if self._cancel.is_set():
                         for f in futures:
                             f.cancel()
@@ -627,6 +652,15 @@ class AttackRunner:
                 final = "done" if self.stop_reason else "cancelled"
             else:
                 final = "done"
+            # If every job errored out we surface that distinctly so the
+            # operator notices instead of seeing an empty 'done' attack.
+            if self.errors and len(self.errors) >= len(jobs) and not self.stop_reason:
+                final = "errored"
+                first_seq = next(iter(self.errors))
+                self.stop_reason = (
+                    f"all {len(jobs)} requests failed; first error "
+                    f"at seq #{first_seq}: {self.errors[first_seq]}"
+                )
             self.project.set_intruder_status(self.attack_id, final)
         finally:
             self._done.set()

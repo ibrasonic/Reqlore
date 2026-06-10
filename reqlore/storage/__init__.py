@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS intruder_attacks (
     options_json TEXT NOT NULL DEFAULT '{}',  -- {concurrency, delay_ms, encode, grep, sort_by}
     url TEXT NOT NULL,
     engine TEXT NOT NULL DEFAULT 'httpx',
-    status TEXT NOT NULL DEFAULT 'idle',  -- idle | running | paused | done | cancelled
+    status TEXT NOT NULL DEFAULT 'idle',  -- idle | running | paused | done | cancelled | errored
     created_at INTEGER NOT NULL
 );
 
