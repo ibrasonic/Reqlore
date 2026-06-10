@@ -68,15 +68,33 @@
         <th scope="col">Host</th>
         <th scope="col">Fired</th>
         <th scope="col">Evaluated</th>
+        <th scope="col">Why not fired</th>
       </tr>
     </thead>
     <tbody>
       {% for r in by_host %}
+        {% set pair_reasons = reasons_by_pair.get((r.rule_id, r.host), []) %}
         <tr>
           <td><code>{{ r.rule_id }}</code></td>
           <td><code>{{ r.host or '(unknown)' }}</code></td>
           <td>{{ r.fired }}</td>
           <td>{{ r.evaluated }}</td>
+          <td>
+            {% if r.fired == r.evaluated %}
+              <em>fired every time</em>
+            {% elif pair_reasons %}
+              <details>
+                <summary>{{ pair_reasons|length }} reason(s)</summary>
+                <ul>
+                  {% for reason in pair_reasons %}
+                    <li><code>{{ reason.reason }}</code> &times; {{ reason.count }}</li>
+                  {% endfor %}
+                </ul>
+              </details>
+            {% else %}
+              <em>no detail recorded</em>
+            {% endif %}
+          </td>
         </tr>
       {% endfor %}
     </tbody>

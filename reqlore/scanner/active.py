@@ -1401,6 +1401,482 @@ class OASTSSRFCheck(ActiveCheck):
 BUILTIN_ACTIVE_CHECKS.append(OASTSSRFCheck())
 
 
+# =============== Phase 1 (Tier A) — gap-list checks ===========================
+#
+# Each check below closes one item on the SCANNER_GAP_PLAN tier-A list. They
+# follow the same contract as everything above: stateless across scans, budget
+# every probe via ``ctx.claim_probe``, fire at most one Finding per real
+# weakness, and never raise.
+
+
+class ForcedBrowsingCheck(ActiveCheck):
+    """Item 11 — actively probe a small list of high-signal sensitive paths.
+
+    The passive ``rule_sensitive_paths`` only flags paths the operator already
+    visited; this check actually sends a GET. The wordlist is intentionally
+    short and high-signal: every entry has a near-zero false-positive rate
+    when it returns 200, so we don't need a fuzzy body-content classifier.
+
+    A per-row probe budget keeps cost bounded; cross-row duplicates are
+    deduped at the Finding layer by ``record_finding``.
+    """
+    name = "forced-browsing"
+    description = ("Probe a small wordlist of sensitive paths (.git/HEAD, "
+                   ".env, /backup.zip, /swagger.json, /.DS_Store, /api-docs) "
+                   "on the same host and flag any that return 200.")
+    meta = RuleMeta(
+        id="active:forced-browsing",
+        title="Sensitive path exposed",
+        default_severity="high",
+        cwe="CWE-538",
+        owasp="A05:2021-Security Misconfiguration",
+        description=(
+            "Actively GET a curated list of paths that should never be "
+            "world-readable. Each hit is high-signal: a 200 on /.git/HEAD "
+            "leaks the entire repository, /.env leaks credentials, "
+            "/swagger.json leaks the full API surface."
+        ),
+        remediation=(
+            "Remove the file from the deployed tree, or block the path at "
+            "the front-end (`location ~ /\\.git { deny all; }`). For "
+            "/swagger.json and /api-docs, gate them behind authentication."
+        ),
+        tags=("forced-browsing", "info-leak"),
+    )
+    WORDLIST: tuple[tuple[str, str, str], ...] = (
+        # (path, severity, why)
+        ("/.git/HEAD",      "high",   "Git repository exposed"),
+        ("/.env",           "high",   "Environment file exposed"),
+        ("/.DS_Store",      "medium", "macOS Finder metadata exposed"),
+        ("/backup.zip",     "high",   "Backup archive exposed"),
+        ("/swagger.json",   "medium", "OpenAPI spec exposed"),
+        ("/api-docs",       "medium", "API documentation exposed"),
+    )
+    # Body markers that confirm the response is the real artefact, not a
+    # SPA fallback 200 that serves index.html for every path.
+    _CONFIRM_MARKERS: dict[str, tuple[bytes, ...]] = {
+        "/.git/HEAD":    (b"ref: refs/", b"ref:refs/"),
+        "/.env":         (b"=",),  # any key=value line
+        "/.DS_Store":    (b"Bud1",),  # DS_Store magic
+        "/backup.zip":   (b"PK\x03\x04",),  # ZIP magic
+        "/swagger.json": (b"\"swagger\"", b"\"openapi\""),
+        "/api-docs":     (b"swagger", b"openapi", b"<title>"),
+    }
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        parsed = up.urlsplit(ctx.full_url)
+        if not parsed.scheme or not parsed.netloc:
+            return
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+
+        for path, severity, why in self.WORDLIST:
+            if not ctx.claim_probe(opts, rule_id, "path", path):
+                continue
+            probe_url = origin + path
+            req = Request(method="GET", url=probe_url, headers=[], body=b"")
+            try:
+                pr = send(req)
+            except _SAFE_NETWORK_EXC:
+                continue
+            if pr.response.status != 200:
+                continue
+            body = pr.response.body[:200_000]
+            markers = self._CONFIRM_MARKERS.get(path, ())
+            if markers and not any(m in body for m in markers):
+                # 200 but the body doesn't look like the artefact — likely
+                # a SPA fallback. Skip to avoid false positives.
+                continue
+            yield Finding(
+                severity=severity,
+                title=f"Sensitive path exposed: {path}",
+                description=(
+                    f"{why}. Anonymous GET to {probe_url} returned 200 with "
+                    "a body that matches the expected fingerprint."
+                ),
+                remediation=(
+                    "Remove the file from the deployed artefact, or block "
+                    f"`{path}` at the front-end / WAF."
+                ),
+                cwe="CWE-538", owasp="A05:2021-Security Misconfiguration",
+                host=ctx.host, url=probe_url, request_id=ctx.history_id,
+                payload=f"GET {path}",
+                evidence=f"status=200, body[:32]={body[:32]!r}",
+            )
+
+
+class DeserialisationReflectCheck(ActiveCheck):
+    """Item 7 — feed known serialised-object magic bytes into params and look
+    for the back-end's deserialiser stack trace in the response.
+
+    Sending Base64-encoded magic for Java (rO0AB…), .NET (AAEAAAD…), PHP
+    (O:…), or Python pickle (gASV…) into a parameter that is later
+    deserialised tends to surface a *very* specific error string. We do not
+    attempt RCE; the marker for "the back-end actually tried to deserialise"
+    is the exception class name. False-positive risk is low because those
+    class names virtually never appear in normal application output.
+    """
+    name = "deserialisation-reflect"
+    description = ("Inject Java/.NET/PHP/Python serialised-object magic "
+                   "bytes into each parameter and flag responses that "
+                   "leak a deserialiser stack trace.")
+    meta = RuleMeta(
+        id="active:deserialisation-reflect",
+        title="Insecure deserialisation hint",
+        default_severity="high",
+        cwe="CWE-502",
+        owasp="A08:2021-Software and Data Integrity Failures",
+        description=(
+            "Send the canonical magic prefix for Java ObjectInputStream, "
+            ".NET BinaryFormatter, PHP `unserialize`, and Python pickle "
+            "in each query/form parameter; flag any response that reveals "
+            "the matching deserialiser stack trace or class name."
+        ),
+        remediation=(
+            "Stop deserialising untrusted input; if you must, use a safe "
+            "format (JSON with schema validation) or sign the payload "
+            "(HMAC) and verify before deserialising."
+        ),
+        tags=("deserialisation", "injection"),
+    )
+    # (label, payload, marker_signatures)
+    PAYLOADS: tuple[tuple[str, str, tuple[bytes, ...]], ...] = (
+        ("java-objectinputstream", "rO0ABXQABHRlc3Q=", (
+            b"java.io.ObjectInputStream",
+            b"java.io.InvalidClassException",
+            b"java.io.NotSerializableException",
+            b"java.io.StreamCorruptedException",
+        )),
+        ("dotnet-binaryformatter", "AAEAAAD/////AQAAAAAAAAAMAgAAAFNTeXN0ZW0=", (
+            b"System.Runtime.Serialization",
+            b"BinaryFormatter",
+            b"SerializationException",
+        )),
+        ("php-unserialize", 'O:8:"stdClass":0:{}', (
+            b"unserialize()",
+            b"__PHP_Incomplete_Class",
+            b"PHP Warning:  unserialize",
+        )),
+        ("python-pickle", "gASVCgAAAAAAAACMBnRlc3QxlC4=", (
+            b"pickle.UnpicklingError",
+            b"_pickle.UnpicklingError",
+            b"_pickle.PickleError",
+        )),
+    )
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        targets: list[tuple[str, str]] = (
+            [("query", k) for k, _ in ctx.query_pairs()] +
+            [("form", k) for k, _ in ctx.form_pairs()]
+        )
+        if not targets:
+            return
+
+        for loc, key in targets:
+            for label, payload, sigs in self.PAYLOADS:
+                if not ctx.claim_probe(opts, rule_id, loc, key):
+                    return  # per-row budget exhausted
+                req = _mutated(ctx, key, payload, loc)
+                try:
+                    pr = send(req)
+                except _SAFE_NETWORK_EXC:
+                    continue
+                body = pr.response.body[:200_000]
+                hit = next((s for s in sigs if s in body), None)
+                if not hit:
+                    continue
+                yield Finding(
+                    severity="high",
+                    title=f"Insecure deserialisation hint ({label})",
+                    description=(
+                        f"Sending the {label} magic bytes in '{loc}' "
+                        f"parameter '{key}' caused the response to include "
+                        "a deserialiser stack trace, which strongly "
+                        "suggests the parameter is fed to an unsafe "
+                        "deserialisation routine."
+                    ),
+                    remediation=(
+                        "Stop deserialising untrusted input; use a safe "
+                        "format or sign+verify the payload before "
+                        "deserialising."
+                    ),
+                    cwe="CWE-502",
+                    owasp="A08:2021-Software and Data Integrity Failures",
+                    host=ctx.host, url=ctx.full_url,
+                    request_id=ctx.history_id,
+                    payload=payload[:120],
+                    evidence=f"{loc}.{key}: stack-trace marker {hit!r}",
+                )
+                # One finding per (loc, key) is enough; stop probing other
+                # payload families for this parameter.
+                break
+
+
+class WebCacheDeceptionCheck(ActiveCheck):
+    """Item 19 — classic Omer Gil cache-deception: append a static-looking
+    suffix to an authenticated path and see if the cache serves the
+    authenticated body to an *anonymous* request.
+
+    Only runs when the recorded request carried a ``Cookie`` or
+    ``Authorization`` header (otherwise there's nothing personal in the
+    response). The detection signal is "an unauthenticated GET to
+    /account/x.css returned a 200 whose body is highly similar to the
+    authenticated /account body" — i.e. the upstream cache mis-keyed.
+    """
+    name = "web-cache-deception"
+    description = ("Append a static-looking suffix (/x.css) to authenticated "
+                   "paths and check whether an anonymous request gets the "
+                   "personal body back from the cache.")
+    meta = RuleMeta(
+        id="active:web-cache-deception",
+        title="Web cache deception",
+        default_severity="high",
+        cwe="CWE-525",
+        owasp="A04:2021-Insecure Design",
+        description=(
+            "Append a static-extension suffix to the recorded URL, GET it "
+            "without auth, and compare the response body to the original. "
+            "A high-similarity 200 from the unauthenticated probe means "
+            "the upstream cache mis-keyed and is serving personal data."
+        ),
+        remediation=(
+            "Configure the cache to key on the full path *and* a "
+            "Vary/Cache-Control hint, never cache responses that carry "
+            "Set-Cookie, and reject path traversal that produces "
+            "ambiguous extensions at the origin."
+        ),
+        tags=("cache", "info-leak"),
+    )
+    SUFFIXES: tuple[str, ...] = ("/x.css", "/x.js", "/x.jpg")
+
+    def _had_auth(self, ctx) -> bool:
+        for k, v in ctx.req_headers:
+            kl = k.lower()
+            if kl == "cookie" and v.strip():
+                return True
+            if kl == "authorization" and v.strip():
+                return True
+        return False
+
+    def _similarity(self, a: bytes, b: bytes) -> float:
+        """Token Jaccard on byte 3-grams. Cheap and good enough for
+        'is this the same page or a different one?'."""
+        if not a or not b:
+            return 0.0
+        a = a[:50_000]
+        b = b[:50_000]
+        ga = {a[i:i + 3] for i in range(0, len(a) - 2)}
+        gb = {b[i:i + 3] for i in range(0, len(b) - 2)}
+        if not ga or not gb:
+            return 0.0
+        inter = len(ga & gb)
+        union = len(ga | gb)
+        return inter / union if union else 0.0
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        if ctx.method.upper() != "GET":
+            return
+        if ctx.resp_status != 200 or not ctx.resp_body:
+            return
+        if not self._had_auth(ctx):
+            return
+
+        parsed = up.urlsplit(ctx.full_url)
+        # Pages that already look like static assets are uninteresting.
+        if parsed.path and "." in parsed.path.rsplit("/", 1)[-1]:
+            return
+
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        path = parsed.path or "/"
+
+        for suffix in self.SUFFIXES:
+            if not ctx.claim_probe(opts, rule_id, "suffix", suffix):
+                continue
+            probe_path = path.rstrip("/") + suffix
+            probe_url = origin + probe_path
+            if parsed.query:
+                probe_url += "?" + parsed.query
+            req = Request(method="GET", url=probe_url, headers=[], body=b"")
+            try:
+                pr = send(req)
+            except _SAFE_NETWORK_EXC:
+                continue
+            if pr.response.status != 200:
+                continue
+            sim = self._similarity(ctx.resp_body, pr.response.body)
+            if sim < 0.6:
+                continue
+            yield Finding(
+                severity="high",
+                title="Web cache deception",
+                description=(
+                    f"Unauthenticated GET to {probe_url} returned a 200 "
+                    f"whose body is {int(sim * 100)}% similar to the "
+                    "authenticated response. The upstream cache appears "
+                    "to be serving personal data under a static-looking "
+                    "URL, so any later anonymous visitor will get it too."
+                ),
+                remediation=(
+                    "Reject extension-confused paths at the origin (the "
+                    "request reached the app even with a /x.css suffix). "
+                    "Configure the cache to refuse caching responses that "
+                    "carry a Set-Cookie or vary on Authorization."
+                ),
+                cwe="CWE-525", owasp="A04:2021-Insecure Design",
+                host=ctx.host, url=probe_url, request_id=ctx.history_id,
+                payload=f"GET {probe_path}",
+                evidence=f"jaccard={sim:.2f} vs authenticated body",
+            )
+            return  # one finding per page is enough
+
+
+class OAuthRedirectURICheck(ActiveCheck):
+    """Item 20 — OAuth ``redirect_uri`` open-redirect.
+
+    Many OAuth-ish flows accept a ``redirect_uri`` (or ``return_to`` /
+    ``next`` / ``url``) parameter and trust the registered host list to
+    catch tampering. If the server forgets to check, or matches with a
+    weak prefix test, swapping the host sends the user — with their
+    freshly-minted token — to an attacker.
+
+    We swap the host for a scan-unique ``*.example.invalid`` marker and
+    flag a 30x whose ``Location`` honours the swap, or a 200 whose body
+    embeds the swapped URL in a fresh anchor / form / meta refresh.
+    """
+    name = "oauth-redirect-uri"
+    description = ("For URLs carrying a redirect_uri-style parameter, swap "
+                   "the host for an attacker marker and flag responses that "
+                   "redirect to it.")
+    meta = RuleMeta(
+        id="active:oauth-redirect-uri",
+        title="Open redirect via OAuth redirect_uri",
+        default_severity="medium",
+        cwe="CWE-601",
+        owasp="A01:2021-Broken Access Control",
+        description=(
+            "Detect open redirects in OAuth-shaped parameters by "
+            "host-swapping the value and watching for the swapped host to "
+            "show up in the Location header or response body."
+        ),
+        remediation=(
+            "Validate redirect_uri against an exact-match allow-list of "
+            "registered URIs (scheme + host + path), not a prefix or "
+            "substring match. Reject mismatches with HTTP 400."
+        ),
+        tags=("open-redirect", "oauth"),
+    )
+    TARGET_PARAMS: tuple[str, ...] = (
+        "redirect_uri", "redirect", "return_to", "returnto",
+        "return_url", "next", "url", "continue", "callback",
+    )
+
+    def _is_uri_value(self, val: str) -> bool:
+        if not val:
+            return False
+        v = val.strip()
+        if v.startswith(("http://", "https://", "//")):
+            return True
+        return False
+
+    def _swap_host(self, val: str, attacker: str) -> str | None:
+        try:
+            decoded = up.unquote(val)
+        except Exception:
+            return None
+        try:
+            pr = up.urlsplit(decoded)
+        except ValueError:
+            return None
+        if not pr.netloc:
+            return None
+        new = pr._replace(netloc=attacker)
+        return up.urlunsplit(new)
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        pairs = ctx.query_pairs() + ctx.form_pairs()
+        if not pairs:
+            return
+
+        attacker = f"r{secrets.token_hex(3)}.example.invalid"
+
+        seen: set[tuple[str, str]] = set()
+        for key, val in pairs:
+            if key.lower() not in self.TARGET_PARAMS:
+                continue
+            if not self._is_uri_value(val):
+                continue
+            if (key, val) in seen:
+                continue
+            seen.add((key, val))
+
+            swapped = self._swap_host(val, attacker)
+            if not swapped:
+                continue
+            # Best-effort: which location holds this param? Form if it was
+            # in the body, else query. ``_mutated`` doesn't care about a
+            # second location, so probe both if needed.
+            in_query = any(k == key for k, _ in ctx.query_pairs())
+            location = "query" if in_query else "form"
+            if not ctx.claim_probe(opts, rule_id, location, key):
+                continue
+
+            req = _mutated(ctx, key, swapped, location)
+            try:
+                pr = send(req)
+            except _SAFE_NETWORK_EXC:
+                continue
+            status = pr.response.status
+            loc_hdr = pr.response.header("Location") or ""
+            body = pr.response.body[:200_000]
+
+            redirect_hit = (300 <= status < 400 and attacker in loc_hdr)
+            body_hit = (status == 200 and attacker.encode() in body)
+            if not (redirect_hit or body_hit):
+                continue
+
+            yield Finding(
+                severity="medium",
+                title="Open redirect via OAuth redirect_uri",
+                description=(
+                    f"Swapping the host of '{key}' to {attacker!r} caused "
+                    f"the server to {'redirect' if redirect_hit else 'echo a link'} "
+                    "to the attacker-controlled host. If this parameter is "
+                    "part of an OAuth flow, an attacker who tricks a user "
+                    "into clicking the crafted URL can steal the resulting "
+                    "authorisation code or token."
+                ),
+                remediation=(
+                    "Validate the redirect target against an exact-match "
+                    "allow-list of registered URIs and reject anything "
+                    "else with HTTP 400."
+                ),
+                cwe="CWE-601", owasp="A01:2021-Broken Access Control",
+                host=ctx.host, url=ctx.full_url, request_id=ctx.history_id,
+                payload=f"{key}={swapped}",
+                evidence=(
+                    f"status={status}, "
+                    f"{'Location=' + loc_hdr if redirect_hit else 'body contains marker'}"
+                ),
+            )
+
+
+BUILTIN_ACTIVE_CHECKS.append(ForcedBrowsingCheck())
+BUILTIN_ACTIVE_CHECKS.append(DeserialisationReflectCheck())
+BUILTIN_ACTIVE_CHECKS.append(WebCacheDeceptionCheck())
+BUILTIN_ACTIVE_CHECKS.append(OAuthRedirectURICheck())
+
+
 # ---- runner ----
 
 @dataclass

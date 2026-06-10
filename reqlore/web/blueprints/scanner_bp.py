@@ -35,15 +35,19 @@ ACTIVE_CHECK_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Injection", (
         "xss-reflected", "xss-reflected-headers", "sqli-error",
         "ssti", "nosqli-mongo", "xxe-classic",
+        "deserialisation-reflect",
     )),
     ("File / OS", (
         "path-traversal-lfi", "os-cmd-time",
+        "forced-browsing",
     )),
     ("Auth & Logic", (
         "jwt-alg-none", "open-redirect", "prototype-pollution",
+        "oauth-redirect-uri",
     )),
     ("API & CORS", (
         "graphql-introspection", "cors-misconfig-extended",
+        "web-cache-deception",
     )),
     ("SSRF / OAST", (
         "oast-ssrf",
@@ -425,15 +429,24 @@ def coverage():
     host_filter = (request.args.get("host") or "").strip()
     summary = g.project.rule_run_summary()
     by_host = g.project.rule_run_summary_by_host()
+    reasons_raw = g.project.rule_run_reasons(
+        rule_id=rule_filter, host=host_filter,
+    )
     if rule_filter:
         summary = [r for r in summary if rule_filter in r["rule_id"]]
         by_host = [r for r in by_host if rule_filter in r["rule_id"]]
     if host_filter:
         by_host = [r for r in by_host if host_filter in r["host"]]
+    # Pre-bucket reasons by (rule_id, host) so the template can render each
+    # row's "why didn't it fire?" inline without nested loops in Jinja.
+    reasons_by_pair: dict[tuple[str, str], list[dict]] = {}
+    for r in reasons_raw:
+        reasons_by_pair.setdefault((r["rule_id"], r["host"]), []).append(r)
     return render_template(
         "scanner/coverage.html",
         summary=summary,
         by_host=by_host,
+        reasons_by_pair=reasons_by_pair,
         rule_filter=rule_filter,
         host_filter=host_filter,
         active="coverage",

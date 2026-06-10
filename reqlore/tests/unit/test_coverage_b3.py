@@ -251,3 +251,68 @@ def test_scanner_index_links_to_coverage_page(client):
     # After the redesign the Coverage link lives in the section nav.
     assert "/scanner/coverage" in body
     assert ">Coverage<" in body
+
+
+# ---------------- item #22: "explain why I'm safe" reasons -------------------
+
+
+def test_rule_run_reasons_groups_by_rule_host_and_reason(project):
+    project.record_rule_run(rule_id="passive:csp-missing", host="a.test",
+                              url="https://a.test/", fired=False,
+                              reason="no_match")
+    project.record_rule_run(rule_id="passive:csp-missing", host="a.test",
+                              url="https://a.test/x", fired=False,
+                              reason="no_match")
+    project.record_rule_run(rule_id="passive:csp-missing", host="a.test",
+                              url="https://a.test/y", fired=False,
+                              reason="suppressed")
+    project.record_rule_run(rule_id="passive:csp-missing", host="b.test",
+                              url="https://b.test/", fired=True)  # fired, ignored
+    rows = project.rule_run_reasons()
+    # Should contain the no_match (x2) entry first because of the COUNT
+    # DESC tiebreak, plus the suppressed (x1) entry, but NOT the fired
+    # row from b.test.
+    bucket = {(r["host"], r["reason"]): r["count"] for r in rows}
+    assert bucket[("a.test", "no_match")] == 2
+    assert bucket[("a.test", "suppressed")] == 1
+    assert ("b.test", "no_match") not in bucket
+
+
+def test_rule_run_reasons_honours_rule_and_host_filters(project):
+    project.record_rule_run(rule_id="active:forced-browsing", host="a.test",
+                              url="", fired=False, reason="no_match")
+    project.record_rule_run(rule_id="active:forced-browsing", host="b.test",
+                              url="", fired=False, reason="no_match")
+    project.record_rule_run(rule_id="passive:hsts-missing", host="a.test",
+                              url="", fired=False, reason="suppressed")
+    only_rule = project.rule_run_reasons(rule_id="active:forced-browsing")
+    assert {r["host"] for r in only_rule} == {"a.test", "b.test"}
+    only_host = project.rule_run_reasons(host="a.test")
+    assert {r["rule_id"] for r in only_host} == {
+        "active:forced-browsing", "passive:hsts-missing",
+    }
+
+
+def test_coverage_route_shows_reason_breakdown(client, app):
+    """The /scanner/coverage page should surface the `reason` column from
+    rule_runs so the operator can see WHY a rule didn't fire on a host."""
+    proj = app.extensions["reqlore_project"]
+    proj.record_rule_run(rule_id="active:forced-browsing", host="reasons.test",
+                          url="https://reasons.test/p", fired=False,
+                          reason="no_match")
+    proj.record_rule_run(rule_id="active:forced-browsing", host="reasons.test",
+                          url="https://reasons.test/q", fired=False,
+                          reason="no_match")
+    proj.record_rule_run(rule_id="active:forced-browsing", host="reasons.test",
+                          url="https://reasons.test/r", fired=False,
+                          reason="suppressed")
+    r = client.get("/scanner/coverage?host=reasons.test")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    assert "Why not fired" in body
+    assert "no_match" in body
+    assert "suppressed" in body
+    # The reason column groups by count, so each reason should appear
+    # exactly once in the breakdown.
+    assert body.count("<code>no_match</code>") == 1
+    assert body.count("<code>suppressed</code>") == 1

@@ -1018,3 +1018,33 @@ class Project:
              "fired": int(r[2] or 0), "evaluated": int(r[3] or 0)}
             for r in rows
         ]
+
+    def rule_run_reasons(self, *, rule_id: str = "",
+                          host: str = "") -> list[dict]:
+        """Per-(rule_id, host, reason) breakdown of evaluations that did
+        NOT fire. Used by the coverage view to answer "why didn't this
+        rule flag anything on this host?".
+
+        Both filters are optional; pass empty string for "no filter".
+        Sorted by rule_id, host, then descending count so the loudest
+        reasons surface first.
+        """
+        sql = ("SELECT rule_id, COALESCE(host,'') AS host, "
+               "COALESCE(reason,'') AS reason, COUNT(*) AS n "
+               "FROM rule_runs WHERE fired=0")
+        params: list = []
+        if rule_id:
+            sql += " AND rule_id=?"
+            params.append(rule_id)
+        if host:
+            sql += " AND host=?"
+            params.append(host)
+        sql += (" GROUP BY rule_id, host, reason "
+                "ORDER BY rule_id, host, n DESC")
+        with self._cursor() as cur:
+            rows = cur.execute(sql, params).fetchall()
+        return [
+            {"rule_id": r[0], "host": r[1] or "",
+             "reason": r[2] or "(none)", "count": int(r[3] or 0)}
+            for r in rows
+        ]
