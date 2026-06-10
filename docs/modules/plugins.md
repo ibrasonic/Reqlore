@@ -1,6 +1,6 @@
 # Plugins — `/plugins/`
 
-Drop a `.py` file into `~/.rlr/plugins/`, click **Reload plugins**, and
+Drop a `.py` file into `~/.reqlore/plugins/`, click **Reload plugins**, and
 your code is live: passive scanner rules, copy-as renderers (for
 [History](history.md)), or even a full Flask blueprint mounted into
 the app. Hot-reload via `watchdog` if installed.
@@ -12,11 +12,11 @@ the app. Hot-reload via `watchdog` if installed.
 
 - **URL:** `/plugins/`
 - **Nav:** *Plugins* in the top bar.
-- Plugin directory: `~/.rlr/plugins/` (one level, non-recursive).
+- Plugin directory: `~/.reqlore/plugins/` (one level, non-recursive).
 
 ## Quick start
 
-1. Drop a `.py` file into `~/.rlr/plugins/`. Minimum: a
+1. Drop a `.py` file into `~/.reqlore/plugins/`. Minimum: a
    `PLUGIN_INFO = {"name": "my-plugin"}` dict.
 2. Open `/plugins/`. Click **Reload plugins** — your plugin appears in
    the *Loaded plugins* table.
@@ -67,7 +67,7 @@ for private modules.
 
 `PluginRegistry.discover()`:
 
-1. Iterate every configured `dirs` entry (default: `[~/.rlr/plugins/]`).
+1. Iterate every configured `dirs` entry (default: `[~/.reqlore/plugins/]`).
 2. `*.py` (non-recursive); skip files starting `_`.
 3. `importlib.util.spec_from_file_location()` + `exec_module()`.
 4. Pull `PLUGIN_INFO`, `scanner_rules`, `copy_as`, `register` from the
@@ -125,7 +125,7 @@ renderers.
 ### Hello-world passive rule
 
 ```python
-# ~/.rlr/plugins/xfo_check.py
+# ~/.reqlore/plugins/xfo_check.py
 from reqlore.plugins_sdk import make_info, make_passive_rule
 from reqlore.scanner.findings import Finding
 
@@ -152,7 +152,7 @@ def scanner_rules():
     return [check_xfo]
 ```
 
-Drop into `~/.rlr/plugins/`, **Reload**, run [Scanner](scanner.md).
+Drop into `~/.reqlore/plugins/`, **Reload**, run [Scanner](scanner.md).
 
 ### Copy-as PHP curl
 
@@ -178,7 +178,7 @@ that calls `_render_php(row.req_blob)`.
 ### Custom blueprint
 
 ```python
-# ~/.rlr/plugins/admin_panel.py
+# ~/.reqlore/plugins/admin_panel.py
 from flask import Blueprint, render_template_string
 from reqlore.plugins_sdk import make_info
 

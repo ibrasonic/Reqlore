@@ -23,18 +23,27 @@ The Flask UI thread, the proxy event loop, and a thread pool for the engines all
 
 ## Engines
 
-Every outgoing request flows through an **Engine** chosen by the caller:
+Every outgoing request flows through one of four **transport engines**
+chosen by the caller, plus a render-only helper. Full details in
+[engines.md](engines.md).
 
 | Engine | Purpose | When to use |
 |---|---|---|
-| `httpx_engine` | Default. HTTP/1.1 + HTTP/2, mTLS, proxies, streaming. | 95% of traffic — Repeater, Intruder, scanner, history replay. |
-| `raw_engine` | Byte-exact requests over raw socket + ssl. | Smuggling, malformed headers, `--path-as-is` equivalents, edge cases httpx normalises. |
-| `h2_engine` | Direct HTTP/2 frame control via `h2` lib. | Smuggling, priority abuse, settings flooding tests. |
-| `h3_engine` | HTTP/3 over QUIC via `aioquic` / `qh3`. | Targets that only speak H3. |
-| `ws_engine` | WebSocket via `websockets`. | WS history + repeater + fuzz. |
+| `httpx_engine` | Default. HTTP/1.1 + HTTP/2, mTLS, proxies, streaming. 30 s timeout. | 95% of traffic — Repeater, Intruder, scanner, history replay. |
+| `raw_engine` | Byte-exact requests over raw socket + ssl. 30 s timeout. | Smuggling, malformed headers, edge cases `httpx` normalises away. |
+| `h3_engine` | HTTP/3 over QUIC via `aioquic`. Optional `[h3]` extra. 15 s timeout. | Targets that only speak H3. |
+| `curl_cffi_engine` | curl-impersonate JA3/JA4 spoofing. Optional `[impersonate]` extra. 15 s timeout. 8 profiles. | Anti-bot bypass; reaching CDNs that fingerprint TLS handshakes. |
 | `curl_render` | **Render only**, never sends. | "Copy as curl" exports. |
 
-A common `Request` dataclass and `Response` dataclass are shared across engines so the UI doesn't care which engine produced a response.
+HTTP/2 frame work and WebSocket fuzzing are handled by dedicated
+workbenches (`reqlore.h2_tool` + `/h2/`, `reqlore.websocket` + `/ws/`)
+rather than transport engines — they own their own protocol state and
+need UI surface that doesn't fit the `send(req) -> resp` contract.
+
+A common `Request` dataclass and `Response` dataclass are shared across
+engines so the UI doesn't care which engine produced a response. The
+documented degradation signal is `Response(status=0, error="…")` — the
+active scanner relies on this contract.
 
 ```python
 @dataclass
@@ -48,7 +57,7 @@ class Request:
 
 @dataclass
 class Response:
-    status: int
+    status: int                # 0 == transport failure; see `error`
     reason: str
     http_version: str
     headers: list[tuple[str, str]]
@@ -56,7 +65,13 @@ class Response:
     timings: Timings           # dns/connect/tls/ttfb/total
     engine: str
     raw_request: bytes | None  # exact bytes sent, if available
+    error: str | None = None   # set when transport failed or extra missing
 ```
+
+The dispatcher `_send_factory(engine, opts)` in `reqlore/intruder.py`
+resolves an engine string (e.g. `httpx`, `raw`, `h3`,
+`curl-cffi:chrome120`) to a `send` callable; the Repeater + Intruder UI
+pickers both feed strings through it.
 
 ## Proxy
 
@@ -71,6 +86,13 @@ On top we layer:
 - **Rules engine** (`proxy/rules.py`) — host/method/status/content-type filters that decide whether to hold a request for interception.
 - **Intercept queue** — held requests go into a SQLite-backed FIFO; the UI shows the queue, the user edits/forwards/drops.
 - **Match & Replace** — applied automatically on requests/responses by scope.
+
+The History page exposes a small server-driven live indicator:
+`/history/latest.json?since=<row_id>` returns `{new, max_id, since}`
+backed by `Project.count_history_after(since, host=…, …)` so the page
+can refresh a `role="status"` region without JS routing. Same pattern
+on Intruder detail (`/intruder/<id>/results.json?since=<seq>`) for
+live results during a running attack.
 
 ## Storage
 
@@ -107,17 +129,55 @@ Large binary blobs (`req_blob`, `resp_blob`, attachments) are LZ4-compressed bef
 
 ## Plugin system
 
-- Plugins are Python modules in `~/.reqlore/plugins/*.py` *or* installed via pip (entry point `reqlore.plugins`).
-- `plugins/api.py` exposes a stable API: `on_request(ctx)`, `on_response(ctx)`, `add_passive_check(fn)`, `add_active_check(fn)`, `add_payload_processor(name, fn)`, `add_menu_item(label, path, handler)`, `add_template(path, content)`.
-- `watchdog` hot-reloads plugins on file change in dev mode.
-- Per-plugin enable/disable in the Settings UI; signature optional but recommended (Ed25519).
+See [PLUGINS.md](PLUGINS.md) for the user-facing contract. In short:
+
+- Plugins are single Python files in `~/.reqlore/plugins/*.py` (per
+  user) or a `plugins/` folder next to the `*.rlr` (per project).
+- Three entry points: `PLUGIN_INFO` (required dict),
+  `scanner_rules() -> [Callable]`, `register(app: Flask) -> None`,
+  `copy_as() -> [CopyAsHandler]`.
+- `watchdog`-driven hot reload via the optional `[plugins]` extra.
+- Per-plugin enable/disable on `/plugins/`. Import errors are caught
+  and surfaced; a broken plugin disables itself instead of taking the
+  whole app down.
+
+## Intruder pipeline
+
+The Intruder request loop in `reqlore/intruder.py` is split into
+three pluggable stages so each is independently testable:
+
+1. **Source** — produces the next payload tuple for the chosen attack
+   type (sniper / battering-ram / pitchfork / cluster-bomb). Sources
+   are list / file / brute / dates / numbers / common-passwords.
+2. **Processors** — a chain of named transforms run per payload
+   (`apply_processors(value, processors)`). Two registries: `PROCESSORS`
+   for nullary functions (`case_upper`, `b64`, `md5`, …) and
+   `ARG_PROCESSORS` for `name:arg` syntax (`prefix:foo`, `suffix:bar`,
+   `regex_replace:pat:repl`). A specialised `jwt:<spec>` processor mints
+   a fresh signed token per payload.
+3. **Sender** — the engine-resolved callable from `_send_factory`.
+   Receives the processed payload tuple substituted into the request
+   template, returns a `Response`. The runner checks a shared cancel
+   event before each call so Pause / Cancel from the UI is responsive.
+
+Results stream back through the project's append-only result store;
+the live `?auto=1` indicator polls `/results.json?since=<seq>` for
+new rows.
 
 ## Concurrency
 
-- UI: Flask + `waitress` WSGI server (Windows-friendly, no eventlet).
-- Proxy: mitmproxy's asyncio loop in its own thread.
-- Engines: a `concurrent.futures.ThreadPoolExecutor` per module for parallel jobs (Intruder, scanner, discovery).
-- Rate limiting: per-request `delay_ms` knob on Intruder and Param-Miner workbenches; `ActiveScanner` enforces a per-scan throttle through its injected sender. Engines themselves do not rate-limit; callers are expected to space requests or cap concurrency.
+- UI: Flask development server bound to `127.0.0.1`; one request at a
+  time per worker is fine because all heavy work hands off to engine
+  threads.
+- Proxy: mitmproxy's asyncio loop in its own thread, constructed with
+  an explicit `loop=` argument (`DumpMaster(loop=loop)`) to side-step
+  the `get_running_loop()` regression in mitmproxy 10+.
+- Engines: a `concurrent.futures.ThreadPoolExecutor` per module for
+  parallel jobs (Intruder, scanner, discovery).
+- Rate limiting: per-request `delay_ms` knob on Intruder and
+  Param-Miner; `ActiveScanner` enforces a per-scan throttle through
+  its injected sender. Engines themselves do not rate-limit; callers
+  are expected to space requests or cap concurrency.
 
 ## Configuration
 
@@ -126,3 +186,26 @@ Large binary blobs (`req_blob`, `resp_blob`, attachments) are LZ4-compressed bef
 - Per-user overrides in `~/.reqlore/config.toml`.
 - CLI flags override everything.
 - Resolution order: CLI > env > user > project > defaults.
+
+## Reliability matrix
+
+A dedicated test surface —
+[`test_reliability_phase{1..4}.py`](../reqlore/tests/unit/) — boots
+the app and asserts an architectural invariant on every test run:
+
+1. **Module import sweep** — `pkgutil.walk_packages` over `reqlore.*`,
+   each `importlib.import_module(name)` must not raise.
+2. **Blueprint reachability** — walks `app.url_map.iter_rules()`,
+   GETs every parameterless route, asserts status `∈ {200, 302, 303,
+   401}` (plus a small documented skip-set of intentional 404s).
+3. **CLI subcommand parse** — introspects `build_parser()._SubParsersAction`,
+   runs each subcommand with `--help`, asserts `SystemExit(0)`.
+4. **Engine round-trip sanity** — `raw_engine._build_raw` /
+   `_parse_response` round-trip; `raw_engine.send` against a dead port
+   returns `Response(status=0, error=…)`; `httpx_engine.send` keeps
+   its `(req, *, timeout, follow_redirects)` signature locked.
+
+The matrix is the canonical guard against architectural drift —
+rename a module without updating its import sites, add a blueprint
+without a template, or break an engine signature, and one of these
+four groups will fail before any feature test gets a chance.

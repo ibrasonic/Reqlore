@@ -10,6 +10,7 @@
 **Phase 6 — Polish & integration:** ✅ complete (2026-06-07). 221/221 unit tests pass. Repeater UI now exposes H/3 + curl-cffi engines, History detail surfaces plugin `copy_as()` handlers, ActiveScanner ships an `oast-ssrf` check that auto-wires the running OAST receiver, an opt-in axe-core a11y smoke suite covers all 26 routes, and `scripts/release.ps1` produces wheel + sdist + SHA256SUMS.txt (verified locally).
 **Phase 7 — Importers + miner + scheduler:** ✅ complete (2026-06-07). 240/240 unit tests pass. All 28 blueprint routes serve 200; HAR importer + CLI `reqlore import-har` verified end-to-end; Intruder gained the H/3 + curl-cffi engine picker; new `/param-miner` workbench fuzzes ~200 candidate parameter names with a built-in wordlist; new `/schedule` blueprint persists recurring passive scans (APScheduler optional via `[schedule]` extra, thread fallback otherwise); opt-in update-check exposed in `/settings`, off by default.
 **Phase 8 — Portable Firefox launcher:** ✅ complete (2026-06-07). 258/258 unit tests pass. New `reqlore.browser` module + `reqlore browser` and `reqlore prefetch-firefox` CLI subcommands. First launch downloads the official Mozilla portable build (zip on Windows, tar.xz on Linux), SHA-256-verifies against `archive.mozilla.org/.../SHA256SUMS`, caches it under `~/.reqlore/firefox/<ver>/`, writes an enterprise `policies.json` (cert trust + locked proxy + telemetry/update lockdown), creates a dedicated profile, and spawns Firefox pointed at the Reqlore UI. Air-gapped flow: `--firefox-zip <path>` or run `prefetch-firefox` once and copy the cache. Also fixed a mitmproxy regression: `DumpMaster` is now constructed with an explicit `loop=` (Phase 7 had only created the loop, which made `mitmproxy 10+`'s `get_running_loop()` fail at startup).
+**Phase 9 — Reliability, gap-closure, AAA polish:** ✅ complete (2026-06-09). **1368/1368 unit tests pass, 239 skipped** (skips gate optional extras: `[h3]`, `[impersonate]`, `[websocket]`, `[schedule]`, `[a11y]`). Three internal plans drove this phase: [RELIABILITY_PLAN.md](internal/RELIABILITY_PLAN.md) (component-health matrix, WCAG-AAA structural matrix, error-path coverage, long-session resilience), [SCANNER_GAP_PLAN.md](internal/SCANNER_GAP_PLAN.md) (16 active-scanner gaps closed — smuggling, sequencer auto-feed, forced-browsing, GraphQL batching, deserialisation, web-cache deception, resumable scans, plus the "Why not fired" coverage page), and [INTRUDER_ENHANCEMENTS.md](internal/INTRUDER_ENHANCEMENTS.md) (Phase 0 AAA template fixes + Phase 1 operator control — pause / resume / cancel / server-driven auto-refresh; Phases 2-4 results-triage and export still in progress).
 
 Each phase ends in a tagged release with passing tests and an a11y audit.
 
@@ -146,3 +147,50 @@ templates that follow the established patterns.
 - [x] Scheduled passive scans (`reqlore.scheduler` + `/schedule/`) — persists jobs in `project_state["sched:jobs"]`; uses APScheduler when the new `[schedule]` extra is installed, otherwise a tiny thread-based loop; UI supports start/stop, add (with `interval_s ≥ 30` validation), remove, run-now
 - [x] Opt-in update check (`reqlore.update_check`) — disabled by default; a single GET to a manifest URL only fires when the user clicks the new button in `/settings`; manifest format is `{latest_version, released, url}`; never auto-checks
 - [x] 19 new tests (240 total); all 28 blueprint routes serve 200; CLI `reqlore import-har` verified end-to-end (1-entry HAR → 1 history row)
+
+## Phase 8 — Portable Firefox launcher ✅
+
+- [x] `reqlore.browser` module + `reqlore browser` / `reqlore prefetch-firefox` CLI subcommands
+- [x] First launch fetches the official Mozilla portable build (`.zip` on Windows, `.tar.xz` on Linux) from `archive.mozilla.org/.../<ver>/<plat>/<lang>/`; SHA-256-verified against the official `SHA256SUMS`
+- [x] Cache: `~/.local/share/reqlore/firefox/<ver>/` (POSIX) or `%APPDATA%\reqlore\firefox\<ver>\` (Windows)
+- [x] Enterprise `policies.json` written into the bundle: installs the Reqlore CA, locks the proxy to `127.0.0.1:<port>`, disables telemetry / update / first-run handshakes
+- [x] Dedicated profile under `~/.reqlore/firefox-profile/` seeded with `network.proxy.allow_hijacking_localhost=true`
+- [x] Air-gapped flow: `--firefox-zip <path>` or run `prefetch-firefox` once and copy the cache
+- [x] Linux runtime-dep auto-install via `ensure_linux_runtime()` (apt/dnf/pacman/zypper/apk); skip with `REQLORE_NO_AUTODEPS=1`
+- [x] WSL detection + hand-off — proxy + CA wiring instructions printed for the Windows host
+- [x] Mitmproxy regression fix: `DumpMaster` is now constructed with an explicit `loop=` (Phase 7 had only created the loop, which made `mitmproxy 10+`'s `get_running_loop()` fail at startup)
+- [x] 18 new tests (258 total); all `test_phase8_browser.py` paths exercise offline fixtures via monkeypatch (no live network)
+
+## Phase 9 — Reliability, gap-closure, AAA polish ✅
+
+Tracked in three internal docs that drove this phase:
+[RELIABILITY_PLAN.md](internal/RELIABILITY_PLAN.md),
+[SCANNER_GAP_PLAN.md](internal/SCANNER_GAP_PLAN.md),
+[INTRUDER_ENHANCEMENTS.md](internal/INTRUDER_ENHANCEMENTS.md).
+
+Reliability matrix (sub-phases 1–4 in `test_reliability_phase{N}.py`):
+
+- [x] **R1 — component health matrix**: module-import sweep across `reqlore.*`, blueprint reachability matrix from `app.url_map.iter_rules()`, CLI subcommand parse matrix from `build_parser()._SubParsersAction`, engine round-trip sanity (raw `_build_raw` / `_parse_response`, `httpx_engine.send` signature lock)
+- [x] **R2 — WCAG 2.1 AAA structural matrix** (`test_wcag_aaa.py`): every rendered page audited for single `<h1>`, monotonic heading levels, `<main>` landmark, skip-link target, `<label for>` coverage, no `outline: none`, no `tabindex > 0`
+- [x] **R3 — error-path coverage**: 401 / 403 / 404 / 500 / engine `Response(status=0, error=…)` paths exercised; user-visible message asserted; live region announcement asserted
+- [x] **R4 — long-session resilience**: project-file growth caps, blob cache eviction, history pagination invariants
+
+Scanner gap-closure (16 items from the 2026-06-09 audit, all `[x]` shipped):
+
+- [x] Coverage page "Why not fired" reasons (`Project.rule_run_reasons()`)
+- [x] HTTP smuggling as an active check (`HTTPSmugglingCheck`, opt-in via `ActiveOptions.allow_smuggling_probes`)
+- [x] Sequencer auto-feed (session-cookie sampling → finding when entropy is `weak`)
+- [x] Forced-browsing active check (small built-in wordlist with body fingerprints)
+- [x] GraphQL beyond introspection (batching abuse, field-suggestion leak)
+- [x] Deserialisation reflection (Java `rO0…`, .NET `AAEAAAD…`, PHP `O:`, Python pickle magic bytes)
+- [x] Web-cache deception (`/x.css` / `/x.js` suffix probe)
+- [x] Resumable scans (`test_resumable_scans_b5.py`); cancel mid-row leaves a recoverable checkpoint
+
+Intruder enhancement plan (phases 0–1 shipped, phases 2–4 in progress):
+
+- [x] **P0** template AAA fixes — sort links toggle `desc`, long payload cells wrap in `<details>`, payload-set 2-4 visibility tied to attack type (server-rendered, no JS), detail page action buttons in a labelled `<nav>` toolbar, `role="status"` for last-known runner state
+- [x] **P1** operator control — pause / resume POST routes + buttons + status update, `?auto=1` server-driven refresh (with stop toggle), `/<aid>/results.json?since=<seq>`, cancel event check before each network call
+- [ ] **P2** results triage — status-class filter, length-range filter, free-text search, dedupe by `body_md5`
+- [ ] **P3** export — `/<aid>/export.csv`, `/<aid>/export.json`
+
+Phase totals: **884 → 1368 passing, 239 skipped**. All routes still serve 200; all CLI subcommands still respond to `--help` with exit code 0.

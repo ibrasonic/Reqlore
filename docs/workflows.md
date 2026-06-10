@@ -226,7 +226,7 @@ Goal: record a server's push frames, analyse later.
 
 Goal: ship a new passive scanner rule.
 
-1. Drop a `.py` file into `~/.rlr/plugins/` (see [Plugins](modules/plugins.md)).
+1. Drop a `.py` file into `~/.reqlore/plugins/` (see [Plugins](modules/plugins.md)).
 2. [Plugins](modules/plugins.md) → **Enable hot reload** (requires
    `watchdog`). Save changes; reload happens automatically.
 3. Trigger the rule via [Scanner](modules/scanner.md) → **Run passive

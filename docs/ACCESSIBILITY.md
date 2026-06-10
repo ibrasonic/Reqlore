@@ -121,3 +121,135 @@ Reqlore targets **WCAG 2.2 Level AA** as a minimum and intentionally exceeds it 
 - Mouse-only context menus.
 - Auto-focusing arbitrary fields on page load (only after user explicit action).
 - Pop-ups, toasts, or notifications without a corresponding entry in a persistent log page.
+
+---
+
+## Appendix — WCAG 2.1 AAA-strict patterns we apply
+
+Reqlore's baseline target is WCAG 2.2 AA, but the pentesting workflow
+(long sessions, dense data, time-sensitive prompts, screen-reader-heavy
+users) pulls us toward AAA on most criteria. The reliability plan
+(Phase 9) added an automated structural matrix —
+[`test_wcag_aaa.py`](../reqlore/tests/unit/test_wcag_aaa.py) — that
+runs against every blueprint route on every test run and asserts the
+patterns below.
+
+### 1.4.6 Contrast (Enhanced)
+
+- Body text ≥ **7:1** (not just AA's 4.5:1) in all three themes.
+- Large text ≥ **4.5:1** (not just AA's 3:1).
+- Verified by `reqlore.a11y.contrast` against every palette swap.
+
+### 1.4.8 Visual Presentation
+
+- Max line length **80 characters** for body prose.
+- No full-justified text (avoids river-of-whitespace).
+- Pages remain usable when zoomed to 200% with no horizontal scroll.
+
+### 2.1.1 / 2.1.3 Keyboard (No Exception)
+
+- Every action reachable without a pointer.
+- **No JS-only code paths.** Auto-refresh uses
+  `<meta http-equiv="refresh">`, not `setInterval`.
+- Live updates use ARIA live regions, never focus-stealing.
+
+### 2.2.2 Pause, Stop, Hide
+
+- Any auto-updating region offers a "stop refresh" toggle. Example:
+  the Intruder detail page's `?auto=1` server-driven refresh has a
+  visible **Stop auto-refresh** link rendered on every refresh.
+
+### 2.2.3 No Timing
+
+- No time limit on any user action.
+- Long-running operations (Intruder, scanner) show a `<progress>`
+  with `aria-valuetext` containing a human sentence ("Processed 142
+  of 500 payloads, 3 hits so far").
+- If a session would expire, we present an "Extend" button before
+  timeout.
+
+### 2.2.4 Interruptions
+
+- Interruptions (audio cues, status updates) are user-suppressible
+  in [Settings](modules/settings.md).
+
+### 2.3.3 Animation from Interactions
+
+- `prefers-reduced-motion: reduce` is honoured by all built-in
+  animations.
+
+### 2.4.8 Location
+
+- Every page renders a breadcrumb trail in `<nav aria-label="Breadcrumb">`.
+
+### 2.4.9 Link Purpose (Link Only)
+
+- Every `<a>` has a label that makes sense out of context — no bare
+  "click here" / "read more". Verified by the structural matrix.
+
+### 2.4.10 Section Headings
+
+- Every fieldset, dialog, or content group has a real `<h2>` / `<h3>`,
+  not a styled `<div>`.
+- Heading levels are monotonic (no skipping h2 → h4).
+- Verified by `test_wcag_aaa.py::test_heading_hierarchy_is_monotonic`.
+
+### 3.1.3 Unusual Words
+
+- Pentesting jargon (SSRF, JWT, CSRF, smuggling, etc.) is defined on
+  first use; each module page repeats the definition in its
+  *Background* section.
+
+### 3.1.5 Reading Level
+
+- The plain-language response summariser targets a lower secondary
+  education reading level for status descriptions.
+
+### 3.2.5 Change on Request
+
+- No automatic context changes. Forms submit POST → 303 redirect (PRG
+  pattern); the user always presses a button.
+
+### 3.3.5 Help (Context-Sensitive)
+
+- Every new form control has a `<label>` plus `aria-describedby`
+  pointing at a one-sentence hint.
+
+### 4.1.3 Status Messages
+
+- Runner state changes (paused / resumed / cancelled / done) go to
+  `role="status"` (polite) or `role="alert"` (assertive) regions, not
+  raw flash messages.
+
+### Structural matrix — what the test enforces
+
+[`test_wcag_aaa.py`](../reqlore/tests/unit/test_wcag_aaa.py) walks
+every blueprint route via `app.url_map.iter_rules()` and asserts each
+of these for the rendered HTML:
+
+- Exactly one `<h1>`.
+- Monotonic heading levels (no skipped h2 → h4 jumps).
+- `<main id="main">` landmark present, and the skip-link points to it.
+- `<label for="…">` covers every input / select / textarea (or
+  `aria-label` / `aria-labelledby` when a visible label would be
+  redundant — checkbox toggles in dense tables).
+- No `style="outline: none"` anywhere.
+- No `tabindex` value greater than 0.
+- Any `<button>` has visible text or an `aria-label`.
+- Any `<a>` has visible text or an `aria-label`.
+- `lang="en"` set on `<html>`.
+
+Plus per-page assertions for the modules that ship dense interactive
+state (Intruder detail page, Scanner coverage page, History list).
+
+### Exemptions
+
+The structural matrix has a documented skip-set for two intentional
+404s — `auth.login` when no password is configured (the route 404s by
+design so password-less installs don't render a login form) and
+`comparer.export_diff` with no token / history arguments (the route
+404s when called without a target).
+
+If you add a new exemption, document it here and in the test's
+`_SKIP` constant.
+
