@@ -1,6 +1,7 @@
 """Phase 4 — blueprint integration for built-in wordlists and file source."""
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -63,17 +64,18 @@ def test_create_attack_from_builtin_wordlist(client, app):
 
 
 def test_create_attack_from_file_wordlist(client, app, tmp_path):
-    wl = tmp_path / "wl.txt"
-    wl.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     token = _csrf(client)
+    # The UI sends the wordlist as a multipart upload now (no server-side
+    # path). Build the multipart form manually via the test client.
     r = client.post("/intruder/new", data={
         "name": "wl-file", "attack_type": "sniper", "engine": "httpx",
         "url": "http://127.0.0.1/", "template": _template_with_marker(),
         "marker": DEFAULT_MARKER, "concurrency": "1", "delay_ms": "0",
         "max_requests": "10", "processors": "", "grep": "",
-        "source": "wordlist_file", "wordlist_path": str(wl),
+        "source": "wordlist_file",
+        "wordlist_upload": (BytesIO(b"alpha\nbeta\ngamma\n"), "wl.txt"),
         "payloads_text": "", "_csrf": token,
-    }, follow_redirects=False)
+    }, content_type="multipart/form-data", follow_redirects=False)
     assert r.status_code == 302
     proj = app.extensions["reqlore_project"]
     detail = proj.get_intruder(proj.list_intruder()[0]["id"])
@@ -82,13 +84,14 @@ def test_create_attack_from_file_wordlist(client, app, tmp_path):
 
 def test_file_wordlist_missing_renders_form_error(client):
     token = _csrf(client)
+    # Submit with the wordlist_file source but no file attached.
     r = client.post("/intruder/new", data={
         "name": "wl-missing", "attack_type": "sniper", "engine": "httpx",
         "url": "http://127.0.0.1/", "template": _template_with_marker(),
         "marker": DEFAULT_MARKER, "concurrency": "1", "delay_ms": "0",
         "max_requests": "10", "processors": "", "grep": "",
-        "source": "wordlist_file", "wordlist_path": "/no/such/file.txt",
+        "source": "wordlist_file",
         "payloads_text": "", "_csrf": token,
-    }, follow_redirects=False)
+    }, content_type="multipart/form-data", follow_redirects=False)
     assert r.status_code == 200
-    assert b"not found" in r.data
+    assert b"No wordlist file selected" in r.data

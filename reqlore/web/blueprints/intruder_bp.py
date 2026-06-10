@@ -14,8 +14,8 @@ from flask import (
 
 from ...intruder import (
     AttackRunner, DEFAULT_MARKER, COMMON_PASSWORDS, WORDLISTS,
-    find_positions, iterate, load_wordlist_file, payloads_brute,
-    payloads_from_text, payloads_numbers,
+    find_positions, iterate, load_wordlist_bytes, load_wordlist_file,
+    payloads_brute, payloads_from_text, payloads_numbers,
     get_runner, processor_names, register, wordlist_names,
 )
 
@@ -65,7 +65,6 @@ def new():
         "brute_min": "1",
         "brute_max": "3",
         "wordlist_name": "common_passwords",
-        "wordlist_path": "",
         "retries": "0",
         "stop_on_match": "",
         "stop_on_status": "",
@@ -158,7 +157,14 @@ def _collect_payload_sets(form: dict) -> list[list[str]]:
             raise ValueError(f"Unknown built-in wordlist: {name!r}")
         return [list(wl)]
     if src == "wordlist_file":
-        return [load_wordlist_file(form.get("wordlist_path", "").strip())]
+        # The UI uploads the file as multipart/form-data so the operator
+        # never has to type a server-side path. CLI/spec users still get
+        # `load_wordlist_file(path)` via reqlore.intruder.
+        upload = request.files.get("wordlist_upload")
+        if upload is None or not upload.filename:
+            raise ValueError("No wordlist file selected.")
+        data = upload.read()
+        return [load_wordlist_bytes(data)]
     # 'text' — up to 4 sets for pitchfork/clusterbomb
     sets: list[list[str]] = []
     for key in ("payloads_text", "payloads_set2", "payloads_set3", "payloads_set4"):

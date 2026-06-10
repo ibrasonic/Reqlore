@@ -22,6 +22,10 @@ def create_app(project_path: Path, settings: Settings, *,
     app.config["PROJECT_PATH"] = str(project_path)
     app.config["REQLORE_SETTINGS"] = settings
     app.config["REQLORE_PROXY"] = proxy
+    # Cap multipart uploads so a hostile or runaway request can't OOM
+    # the UI process. The Intruder wordlist upload enforces its own
+    # 5 MB limit downstream; 16 MB here leaves slack for future endpoints.
+    app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 
     project = Project(project_path)
     app.extensions["reqlore_project"] = project

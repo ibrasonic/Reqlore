@@ -322,4 +322,30 @@
 
     relabel();
   })();
+
+  // Intruder "New attack" page: progressive disclosure of the source-
+  // specific input groups. The server pre-renders every group with the
+  // `hidden` attribute on all but the one matching `form.source` so
+  // JS-off users still get a usable form (see <noscript> fallback in
+  // the template). With JS we additionally toggle `hidden` when the
+  // source dropdown changes — `hidden` removes the element from the
+  // accessibility tree per spec, so screen readers don't get the
+  // noisy alternatives either.
+  (function () {
+    var sel = document.querySelector("[data-source-select]");
+    if (!sel) return;
+    var groups = document.querySelectorAll("[data-source-group]");
+    if (!groups.length) return;
+    function apply(src) {
+      groups.forEach(function (g) {
+        var keys = (g.getAttribute("data-source-group") || "").split(/\s+/);
+        g.hidden = keys.indexOf(src) === -1;
+      });
+    }
+    apply(sel.value);
+    sel.addEventListener("change", function () {
+      apply(sel.value);
+      announce("Showing inputs for source: " + sel.value + ".");
+    });
+  })();
 })();

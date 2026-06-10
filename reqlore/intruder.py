@@ -295,6 +295,27 @@ def load_wordlist_file(path: str, *, max_bytes: int = 5 * 1024 * 1024,
             text = fh.read()
     except OSError as exc:
         raise ValueError(f"Cannot read wordlist: {exc}") from exc
+    return _parse_wordlist_text(text, max_lines=max_lines)
+
+
+def load_wordlist_bytes(data: bytes, *, max_bytes: int = 5 * 1024 * 1024,
+                         max_lines: int = 100_000) -> list[str]:
+    """Parse an in-memory wordlist (e.g. a multipart upload).
+
+    Same caps and stripping rules as :func:`load_wordlist_file` — exists so
+    the web UI can accept a real ``<input type="file">`` upload without
+    having to write the bytes to disk first.
+    """
+    if not data:
+        raise ValueError("Wordlist file is empty.")
+    if len(data) > max_bytes:
+        raise ValueError(
+            f"Wordlist too large ({len(data)} bytes > {max_bytes}); split it.")
+    text = data.decode("utf-8", errors="replace")
+    return _parse_wordlist_text(text, max_lines=max_lines)
+
+
+def _parse_wordlist_text(text: str, *, max_lines: int) -> list[str]:
     out: list[str] = []
     for line in text.replace("\r\n", "\n").split("\n"):
         s = line.rstrip("\r")

@@ -9,7 +9,7 @@
 <p role="alert">{{ error }}</p>
 {% endif %}
 
-<form method="post" action="{{ url_for('intruder.new') }}" class="stack" aria-label="Create attack">
+<form method="post" action="{{ url_for('intruder.new') }}" class="stack" aria-label="Create attack" enctype="multipart/form-data">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
   <fieldset>
@@ -61,59 +61,81 @@
     <div class="row">
       <div>
         <label for="i-src">Source</label>
-        <select id="i-src" name="source">
+        <select id="i-src" name="source" data-source-select aria-describedby="i-src-help">
           <option value="text" {% if form.source == 'text' %}selected{% endif %}>Text (one per line)</option>
           <option value="numbers" {% if form.source == 'numbers' %}selected{% endif %}>Number range</option>
           <option value="brute" {% if form.source == 'brute' %}selected{% endif %}>Brute force (alphabet × length)</option>
           <option value="common_pw" {% if form.source == 'common_pw' %}selected{% endif %}>Common passwords (built-in)</option>
           <option value="wordlist" {% if form.source == 'wordlist' %}selected{% endif %}>Built-in wordlist</option>
-          <option value="wordlist_file" {% if form.source == 'wordlist_file' %}selected{% endif %}>Wordlist from file</option>
+          <option value="wordlist_file" {% if form.source == 'wordlist_file' %}selected{% endif %}>Wordlist from file (upload)</option>
         </select>
+        <p id="i-src-help" class="muted">Only the inputs for the picked source are shown. Switching the source updates them in place.</p>
       </div>
     </div>
 
-    <div>
-      <label for="i-pl">Set 1 — one payload per line</label>
-      <textarea id="i-pl" name="payloads_text" rows="6" autocomplete="off" aria-describedby="i-pl-help">{{ form.payloads_text }}</textarea>
-      <p id="i-pl-help" class="muted">Used by every attack type. Blank lines are kept as empty payloads.</p>
-    </div>
-
-    {% set multi = form.attack_type in ('pitchfork', 'clusterbomb') %}
-    <details {% if multi %}open{% endif %}>
-      <summary>Sets 2–4 (used only by Pitchfork / Cluster Bomb)</summary>
-      {% if not multi %}
-      <p class="muted">
-        Current attack type is <strong>{{ form.attack_type }}</strong>, which uses only Set 1.
-        Anything entered below is kept for later but ignored on this submission.
+    <noscript>
+      <p class="muted" role="note">
+        JavaScript is disabled — all payload source inputs are shown below.
+        Fill in only the one matching your selected Source.
       </p>
-      {% endif %}
-      <div>
-        <label for="i-pl2">Set 2</label>
-        <textarea id="i-pl2" name="payloads_set2" rows="4" autocomplete="off">{{ form.payloads_set2 }}</textarea>
-      </div>
-      <div>
-        <label for="i-pl3">Set 3</label>
-        <textarea id="i-pl3" name="payloads_set3" rows="4" autocomplete="off">{{ form.payloads_set3 }}</textarea>
-      </div>
-      <div>
-        <label for="i-pl4">Set 4</label>
-        <textarea id="i-pl4" name="payloads_set4" rows="4" autocomplete="off">{{ form.payloads_set4 }}</textarea>
-      </div>
-    </details>
+      <style>[data-source-group][hidden] { display: revert !important; }</style>
+    </noscript>
 
-    <div class="row" role="group" aria-labelledby="numgroup-label">
+    <div data-source-group="text" role="group" aria-labelledby="textgroup-label"
+         {% if form.source != 'text' %}hidden{% endif %}>
+      <p id="textgroup-label" class="muted">Text source — one payload per line. Blank lines are kept as empty payloads.</p>
+      <div>
+        <label for="i-pl">Set 1 — one payload per line</label>
+        <textarea id="i-pl" name="payloads_text" rows="6" autocomplete="off">{{ form.payloads_text }}</textarea>
+      </div>
+
+      {% set multi = form.attack_type in ('pitchfork', 'clusterbomb') %}
+      <details {% if multi %}open{% endif %}>
+        <summary>Sets 2–4 (used only by Pitchfork / Cluster Bomb)</summary>
+        {% if not multi %}
+        <p class="muted">
+          Current attack type is <strong>{{ form.attack_type }}</strong>, which uses only Set 1.
+          Anything entered below is kept for later but ignored on this submission.
+        </p>
+        {% endif %}
+        <div>
+          <label for="i-pl2">Set 2</label>
+          <textarea id="i-pl2" name="payloads_set2" rows="4" autocomplete="off">{{ form.payloads_set2 }}</textarea>
+        </div>
+        <div>
+          <label for="i-pl3">Set 3</label>
+          <textarea id="i-pl3" name="payloads_set3" rows="4" autocomplete="off">{{ form.payloads_set3 }}</textarea>
+        </div>
+        <div>
+          <label for="i-pl4">Set 4</label>
+          <textarea id="i-pl4" name="payloads_set4" rows="4" autocomplete="off">{{ form.payloads_set4 }}</textarea>
+        </div>
+      </details>
+    </div>
+
+    <div class="row" data-source-group="numbers" role="group" aria-labelledby="numgroup-label"
+         {% if form.source != 'numbers' %}hidden{% endif %}>
       <p id="numgroup-label" class="muted">Number range source — produces every integer from start to end with the given step.</p>
       <div><label for="i-ns">Number start</label><input id="i-ns" name="num_start" value="{{ form.num_start }}" inputmode="numeric"></div>
       <div><label for="i-ne">Number end</label><input id="i-ne" name="num_end" value="{{ form.num_end }}" inputmode="numeric"></div>
       <div><label for="i-nst">Step</label><input id="i-nst" name="num_step" value="{{ form.num_step }}" inputmode="numeric"></div>
     </div>
-    <div class="row" role="group" aria-labelledby="brutegroup-label">
+
+    <div class="row" data-source-group="brute" role="group" aria-labelledby="brutegroup-label"
+         {% if form.source != 'brute' %}hidden{% endif %}>
       <p id="brutegroup-label" class="muted">Brute-force source — generates every string from <code>min</code> to <code>max</code> chars over the given alphabet. Capped at 50,000 payloads.</p>
       <div><label for="i-ba">Brute alphabet</label><input id="i-ba" name="brute_alphabet" value="{{ form.brute_alphabet }}"></div>
       <div><label for="i-bmin">Min length</label><input id="i-bmin" name="brute_min" value="{{ form.brute_min }}" inputmode="numeric"></div>
       <div><label for="i-bmax">Max length</label><input id="i-bmax" name="brute_max" value="{{ form.brute_max }}" inputmode="numeric"></div>
     </div>
-    <div class="row" role="group" aria-labelledby="wlgroup-label">
+
+    <div data-source-group="common_pw" role="group" aria-labelledby="commonpwgroup-label"
+         {% if form.source != 'common_pw' %}hidden{% endif %}>
+      <p id="commonpwgroup-label" class="muted">Common passwords source — uses the small built-in list shipped with Reqlore. No extra input needed.</p>
+    </div>
+
+    <div class="row" data-source-group="wordlist" role="group" aria-labelledby="wlgroup-label"
+         {% if form.source != 'wordlist' %}hidden{% endif %}>
       <p id="wlgroup-label" class="muted">Built-in wordlist source — small reference lists shipped with reqlore.</p>
       <div>
         <label for="i-wln">Built-in wordlist</label>
@@ -124,11 +146,13 @@
         </select>
       </div>
     </div>
-    <div class="row" role="group" aria-labelledby="wlfgroup-label">
-      <p id="wlfgroup-label" class="muted">Wordlist-from-file source — absolute path to a UTF-8 text file (one entry per line; ≤ 5 MB, ≤ 100,000 lines). Lines starting with <code>#</code> are ignored.</p>
+
+    <div class="row" data-source-group="wordlist_file" role="group" aria-labelledby="wlfgroup-label"
+         {% if form.source != 'wordlist_file' %}hidden{% endif %}>
+      <p id="wlfgroup-label" class="muted">Wordlist from file — upload a UTF-8 text file (≤ 5 MB, ≤ 100,000 lines, one payload per line). Lines starting with <code>#</code> are ignored.</p>
       <div class="grow">
-        <label for="i-wlp">Wordlist file path</label>
-        <input id="i-wlp" name="wordlist_path" value="{{ form.wordlist_path }}" autocomplete="off">
+        <label for="i-wlf">Wordlist file</label>
+        <input id="i-wlf" name="wordlist_upload" type="file" accept=".txt,.lst,.dic,text/plain">
       </div>
     </div>
   </fieldset>
