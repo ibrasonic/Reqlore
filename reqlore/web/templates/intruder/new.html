@@ -185,6 +185,15 @@
       <label for="i-proc">Payload processors (comma-separated, applied in order)</label>
       <input id="i-proc" name="processors" value="{{ form.processors }}" placeholder="url, upper">
       <p class="muted">Available: {{ processors|join(', ') }}</p>
+      <p class="muted">
+        JWT signing per payload — example:
+        <code>jwt:HS256 secret=mysecret claim=sub</code> or
+        <code>jwt:none header=kid base=&lt;captured-token&gt;</code>.
+        Algorithms: <code>none</code>, <code>HS256</code>, <code>HS384</code>, <code>HS512</code>.
+        Use exactly one of <code>claim=</code> (payload key) or <code>header=</code> (header key).
+        Optional <code>base=&lt;token&gt;</code> seeds claims from an existing JWT;
+        quote secrets with spaces: <code>secret="my secret"</code>.
+      </p>
     </div>
     <div>
       <label for="i-grep">Grep — extract patterns (one regex per line)</label>

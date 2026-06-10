@@ -26,6 +26,7 @@ import html
 import itertools
 import json
 import re
+import shlex
 import threading
 import time
 import urllib.parse
@@ -134,10 +135,109 @@ def _proc_repeat(s: str, arg: str) -> str:
     return s * n
 
 
+# JWT processor: mints a fresh JWT per payload so users can brute-force
+# claims (sub, role, kid, ...) directly from a wordlist without leaving
+# the Intruder page.
+#
+# Syntax (single Intruder processor entry, comma-separated from siblings):
+#   jwt:ALG [secret=SECRET] (claim=NAME | header=NAME) [base=TOKEN]
+#
+# ALG is one of: none, HS256, HS384, HS512. RS*/ES* are intentionally not
+# supported here \u2014 use the JWT workbench for asymmetric forging (it needs
+# PEM key paths and the workbench already does it well).
+#
+# `secret=` is required for HS* and ignored for `none`. Values with spaces
+# must be quoted: ``secret="my secret"``.
+#
+# Exactly one of `claim=` or `header=` is required: the wordlist value
+# becomes the string value of that JSON key in the payload (claim=) or
+# header (header=). Numeric values are intentionally not auto-cast \u2014
+# usernames stay strings, which is what every claim-bruteforce wants.
+#
+# `base=` seeds the header + payload from an existing token (typically a
+# captured valid token); the named claim/header is then overwritten with
+# the payload. Without base=, payload defaults to {} and header to the
+# minimal {"alg": ALG, "typ": "JWT"}.
+#
+# On any parse/sign error the processor falls back to returning the raw
+# payload unchanged (matching the precedent set by `repeat` on bad ints).
+# The user sees 401s in the results table and corrects their syntax.
+_VALID_JWT_ALGS = frozenset({"none", "HS256", "HS384", "HS512"})
+
+
+def _proc_jwt(s: str, arg: str) -> str:
+    try:
+        return _jwt_sign_one(s, arg)
+    except Exception:
+        return s
+
+
+def _jwt_sign_one(value: str, arg: str) -> str:
+    # Local import keeps the module-level import surface unchanged so the
+    # rest of intruder.py stays usable in environments that pre-date the
+    # pyjwt dependency on the wheel.
+    import base64 as _b64
+    import jwt as pyjwt  # type: ignore[import-not-found]
+
+    tokens = shlex.split(arg, posix=True)
+    if not tokens:
+        return value
+    alg = tokens[0]
+    if alg not in _VALID_JWT_ALGS:
+        return value
+
+    opts: dict[str, str] = {}
+    for tok in tokens[1:]:
+        if "=" not in tok:
+            continue
+        k, v = tok.split("=", 1)
+        opts[k.strip()] = v
+    secret = opts.get("secret", "")
+    claim = opts.get("claim", "")
+    header_key = opts.get("header", "")
+    base_tok = opts.get("base", "")
+
+    if (bool(claim) == bool(header_key)):
+        # Need exactly one target: claim= XOR header=.
+        return value
+
+    header: dict = {}
+    payload: dict = {}
+    if base_tok:
+        parts = base_tok.split(".")
+        if len(parts) >= 2:
+            def _dec(seg: str) -> dict:
+                pad = "=" * (-len(seg) % 4)
+                return json.loads(_b64.urlsafe_b64decode(seg + pad))
+            try:
+                header = _dec(parts[0])
+                payload = _dec(parts[1])
+            except Exception:
+                header, payload = {}, {}
+
+    header["alg"] = alg
+    header.setdefault("typ", "JWT")
+
+    if claim:
+        payload[claim] = value
+    else:
+        header[header_key] = value
+
+    if alg == "none":
+        def _enc(obj: dict) -> str:
+            data = json.dumps(obj, separators=(",", ":")).encode()
+            return _b64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+        return f"{_enc(header)}.{_enc(payload)}."
+
+    # HS*: pyjwt handles header merging when `headers=` is passed.
+    return pyjwt.encode(payload, secret, algorithm=alg, headers=header)
+
+
 ARG_PROCESSORS: dict[str, Callable[[str, str], str]] = {
     "prefix": _proc_prefix,
     "suffix": _proc_suffix,
     "repeat": _proc_repeat,
+    "jwt": _proc_jwt,
 }
 
 
