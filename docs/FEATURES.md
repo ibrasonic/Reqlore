@@ -35,7 +35,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | TLS CA generation + export | ✅ | `~/.reqlore/ca/reqlore-ca.pem` (RSA-2048, 5yr, 0600). |
 | Intercept rules (host / method / status / CT) | ✅ | |
 | Sync + async hold queue | ✅ | SR-friendly forward / edit / drop. |
-| Match & Replace (req/resp, scoped, literal + regex) | ✅ | See [match-replace.md](modules/match-replace.md). |
+| Match & Replace (req/resp, scoped, literal + regex) | ✅ | See [matchreplace.md](modules/matchreplace.md). |
 
 ## History & targeting
 
