@@ -48,9 +48,11 @@ ACTIVE_CHECK_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("API & CORS", (
         "graphql-introspection", "cors-misconfig-extended",
         "web-cache-deception",
+        "graphql-active",
     )),
     ("SSRF / OAST", (
         "oast-ssrf",
+        "http-smuggling",
     )),
 )
 
@@ -85,7 +87,7 @@ def _resolve_preset(preset: str, posted_checks: list[str]) -> list[str] | None:
     if preset == "full":
         return None  # None ⇒ enable everything
     # standard (default): everything except oast
-    return sorted(_all_check_names() - {"oast-ssrf"})
+    return sorted(_all_check_names() - {"oast-ssrf", "http-smuggling"})
 
 
 def _grouped_checks() -> list[dict]:

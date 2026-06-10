@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Iterable
 
 from ..findings_bus import record_finding
 from .findings import Finding
-from .passive import BUILTIN_RULES, Rule, run_passive
+from .passive import BUILTIN_RULES, Rule, _all_headers, _split_http, run_passive
 from .rules import apply_meta_defaults, id_for, meta_for
 
 
@@ -164,5 +165,153 @@ class Scanner:
             except AttributeError:
                 # Older fake projects in tests may not implement set_state.
                 pass
+        # Phase 1b item #16 — sequencer auto-feed. Cross-row aggregation of
+        # Set-Cookie token samples; emits a finding when the entropy
+        # rating is "weak" with at least the minimum sample count.
+        try:
+            scanned, fired = _scan_session_entropy(project, limit=limit)
+            result.findings_added += fired
+            if fired:
+                result.by_severity["medium"] = (
+                    result.by_severity.get("medium", 0) + fired
+                )
+        except Exception:
+            # Sequencer is best-effort: a bad sample must never abort the
+            # scan. Failures are intentionally silent here; the
+            # rule_runs row records "no_match" which is enough.
+            pass
         result.elapsed_ms = int((time.monotonic() - t0) * 1000)
         return result
+
+
+# Phase 1b item #16 — minimum number of distinct token samples we need
+# before running the sequencer. Below this the entropy estimate is
+# meaningless (a single token is always 0 bits of position entropy).
+_SEQUENCER_MIN_SAMPLES = 8
+_SEQUENCER_RULE_ID = "passive:weak-session-entropy"
+# Cookie names that look like session / auth tokens. Other names are
+# skipped because flagging entropy on a tracking pixel ID is noise.
+_SESSION_COOKIE_NAMES = {
+    "session", "sessionid", "session_id", "sid",
+    "phpsessid", "jsessionid", "asp.net_sessionid", "aspxauth",
+    "auth", "authentication", "auth_token", "authtoken",
+    "token", "access_token", "id_token", "csrf", "xsrf-token",
+    "remember_token", "remember_me", "_session", "_session_id",
+}
+
+
+def _looks_like_session_cookie(name: str) -> bool:
+    n = (name or "").lower().strip()
+    if not n:
+        return False
+    if n in _SESSION_COOKIE_NAMES:
+        return True
+    # Generic shape: contains "session" or "auth" or ends with "_token".
+    return ("session" in n) or ("auth" in n) or n.endswith("_token")
+
+
+def _parse_set_cookie(raw: str) -> tuple[str, str] | None:
+    """Return (name, value) from a single Set-Cookie header value, or
+    None if it does not parse."""
+    if not raw:
+        return None
+    head = raw.split(";", 1)[0]
+    if "=" not in head:
+        return None
+    name, value = head.split("=", 1)
+    name = name.strip()
+    value = value.strip()
+    if not name or not value:
+        return None
+    return name, value
+
+
+def _scan_session_entropy(project, *, limit: int = 5000) -> tuple[int, int]:
+    """Aggregate Set-Cookie tokens across the recorded history and emit a
+    finding for any (host, cookie_name) group whose Burp-Sequencer-style
+    rating comes back as ``"weak"``.
+
+    Returns ``(samples_examined, findings_emitted)``. ``rule_runs`` is
+    updated for every group we evaluated so the coverage page can show
+    why a group did not fire.
+    """
+    from ..sequencer import analyse as sequencer_analyse
+
+    samples: dict[tuple[str, str], list[str]] = defaultdict(list)
+    seen_per_key: dict[tuple[str, str], set[str]] = defaultdict(set)
+    last_url: dict[tuple[str, str], str] = {}
+    total_samples = 0
+
+    rows = project.list_history(limit=limit)
+    for row in rows:
+        try:
+            _, headers, _ = _split_http(row.resp_blob or b"")
+        except Exception:
+            continue
+        for raw in _all_headers(headers, "set-cookie"):
+            parsed = _parse_set_cookie(raw)
+            if not parsed:
+                continue
+            name, value = parsed
+            if not _looks_like_session_cookie(name):
+                continue
+            key = (row.host or "", name)
+            # Only count distinct values per (host, name); duplicates from
+            # repeated visits should not inflate the entropy estimate.
+            if value in seen_per_key[key]:
+                continue
+            seen_per_key[key].add(value)
+            samples[key].append(value)
+            last_url[key] = row.url or ""
+            total_samples += 1
+
+    fired = 0
+    for (host, name), tokens in samples.items():
+        if len(tokens) < _SEQUENCER_MIN_SAMPLES:
+            project.record_rule_run(
+                rule_id=_SEQUENCER_RULE_ID, host=host,
+                url=last_url.get((host, name), ""),
+                fired=False,
+                reason=f"only_{len(tokens)}_samples",
+            )
+            continue
+        seq = sequencer_analyse(tokens)
+        if seq.rating != "weak":
+            project.record_rule_run(
+                rule_id=_SEQUENCER_RULE_ID, host=host,
+                url=last_url.get((host, name), ""),
+                fired=False,
+                reason=f"rating_{seq.rating}",
+            )
+            continue
+        evidence = (
+            f"{seq.sample_count} samples; "
+            f"{seq.overall_entropy_bits_per_token:.1f} bits/token; "
+            f"weak positions={len(seq.weak_positions)}; "
+            f"min_hamming={seq.min_hamming}"
+        )
+        fid = record_finding(
+            project, source="scanner", rule_id=_SEQUENCER_RULE_ID,
+            severity="medium",
+            title=f"Weak session token entropy ({name})",
+            description=(
+                "The Burp-Sequencer-style analyser rated the session "
+                f"token '{name}' on {host or '(unknown host)'} as "
+                "WEAK. Low-entropy session identifiers can be guessed "
+                "or brute-forced; consecutive tokens may differ by a "
+                "single byte (counter-style IDs)."
+            ),
+            remediation=(
+                "Generate session tokens with a CSPRNG (e.g. Python "
+                "`secrets.token_urlsafe(32)`, Node `crypto."
+                "randomBytes(32).toString('hex')`); never derive them "
+                "from sequential counters or hashes of low-entropy "
+                "inputs."
+            ),
+            cwe="CWE-330", owasp="A07:2021-Identification and Authentication Failures",
+            host=host, url=last_url.get((host, name), ""),
+            evidence=evidence,
+        )
+        if fid is not None:
+            fired += 1
+    return total_samples, fired

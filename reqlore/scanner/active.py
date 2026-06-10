@@ -119,6 +119,10 @@ class ActiveOptions:
     replay_every_n_probes: int = 0    # 0 disables refresh
     # B.0.4 Rate-limit awareness.
     retry_after_default_s: float = 5.0
+    # Phase 1b — opt-in network-heavy probes. Off by default because they
+    # bypass the standard httpx engine (smuggling needs raw socket bytes;
+    # the field-suggestion probe sends a deliberately broken query).
+    allow_smuggling_probes: bool = False
 
 
 # ---- context: parsed snapshot of a recorded history row ----
@@ -1875,6 +1879,256 @@ BUILTIN_ACTIVE_CHECKS.append(ForcedBrowsingCheck())
 BUILTIN_ACTIVE_CHECKS.append(DeserialisationReflectCheck())
 BUILTIN_ACTIVE_CHECKS.append(WebCacheDeceptionCheck())
 BUILTIN_ACTIVE_CHECKS.append(OAuthRedirectURICheck())
+
+
+# =============== Phase 1b — items #8 and #18 ==================================
+
+
+class HTTPSmugglingCheck(ActiveCheck):
+    """Item 8 — wrap :mod:`reqlore.smuggling` into a check.
+
+    The smuggling payloads are byte-exact raw HTTP bytes that the standard
+    httpx engine would normalise away, so this check uses
+    :mod:`reqlore.engines.raw_engine` directly. That sidesteps the active
+    scanner's injected ``send`` (and its rate / throttle bookkeeping); we
+    compensate by gating behind an opt-in flag and a per-host claim_probe
+    budget so a single scan can only fire ~3 raw-socket probes per host.
+
+    The check is **off by default** (``ActiveOptions.allow_smuggling_probes``)
+    because raw-socket egress and the timing heuristic are both noisy in
+    real-world environments.
+    """
+    name = "http-smuggling"
+    description = ("Timing-based HTTP request smuggling probe (CL.TE / "
+                   "TE.CL / TE.TE) using the raw-socket engine. Off by "
+                   "default; enable via the run-page Custom preset.")
+    meta = RuleMeta(
+        id="active:http-smuggling",
+        title="Likely HTTP request smuggling",
+        default_severity="critical",
+        cwe="CWE-444",
+        owasp="A10:2021-Server-Side Request Forgery",
+        description=(
+            "Send a baseline GET and a CL.TE / TE.CL / TE.TE payload to "
+            "the recorded host via the raw-socket engine; flag a probe "
+            "whose latency exceeds the baseline by more than the "
+            "configured threshold."
+        ),
+        remediation=(
+            "Normalise request framing at the front-end (reject ambiguous "
+            "Transfer-Encoding/Content-Length combinations, prefer HTTP/2 "
+            "end-to-end) and patch the affected proxy/server software."
+        ),
+        tags=("smuggling", "ssrf"),
+    )
+    TECHNIQUES: tuple[str, ...] = ("cl.te", "te.cl", "te.te")
+    PAUSE_THRESHOLD_MS = 1500
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        if not getattr(opts, "allow_smuggling_probes", False):
+            return
+        from .. import smuggling as smug
+        from ..engines import raw_engine
+        rule_id = self.meta.id
+
+        # Only one probe family per host per scan — the timing heuristic
+        # is the same regardless of which technique fires, and three back-
+        # to-back raw probes is enough load already.
+        if not ctx.claim_probe(opts, rule_id, "host", ctx.host):
+            return
+
+        timeout_s = float(opts.timeout_s)
+
+        def _raw_send(req: Request) -> Response:
+            return raw_engine.send(req, timeout=timeout_s)
+
+        for technique in self.TECHNIQUES:
+            try:
+                test = smug.detect(
+                    ctx.base_url, technique, sender=_raw_send,
+                    pause_ms_threshold=self.PAUSE_THRESHOLD_MS,
+                )
+            except _SAFE_NETWORK_EXC:
+                continue
+            if not test.likely_vulnerable:
+                continue
+            yield Finding(
+                severity="critical",
+                title=f"Likely HTTP request smuggling ({technique.upper()})",
+                description=(
+                    "A raw-socket timing probe took significantly longer "
+                    "than the baseline, which strongly suggests the "
+                    "upstream front-end and back-end disagree on request "
+                    "framing — the classic indicator of HTTP request "
+                    "smuggling. Confirm manually before disclosure."
+                ),
+                remediation=(
+                    "Normalise request framing at the front-end (reject "
+                    "ambiguous Transfer-Encoding/Content-Length "
+                    "combinations, prefer HTTP/2 end-to-end) and patch "
+                    "the affected proxy/server software."
+                ),
+                cwe="CWE-444", owasp="A10:2021-Server-Side Request Forgery",
+                host=ctx.host, url=ctx.base_url, request_id=ctx.history_id,
+                payload=f"{technique.upper()} timing probe",
+                evidence=test.reason,
+            )
+            # One critical-severity finding per host is plenty.
+            return
+
+
+class GraphQLActiveCheck(ActiveCheck):
+    """Item 18 — GraphQL beyond introspection: batching + field suggestions.
+
+    Two probes against any URL that looks like a GraphQL endpoint:
+
+    1. **Query batching abuse** — POST a JSON array of N copies of the same
+       trivial query. A response that comes back as a *length-N JSON array*
+       proves the server honours batched requests, which is exploitable for
+       brute-force amplification (rate-limiters typically count requests,
+       not queries) and DoS.
+    2. **Field-suggestion leak** — POST a query with a deliberately
+       misspelt root field (``__schemaa``). A response containing a "Did
+       you mean" hint or echoing valid root field names leaks schema
+       information even when introspection is disabled.
+
+    Both probes are JSON-only; we leave the existing
+    :class:`GraphQLIntrospectionCheck` untouched.
+    """
+    name = "graphql-active"
+    description = ("Send batched-query and typo-field probes to GraphQL "
+                   "endpoints; flag servers that honour batching or leak "
+                   "field-suggestion hints even with introspection off.")
+    meta = RuleMeta(
+        id="active:graphql-active",
+        title="GraphQL hardening gap",
+        default_severity="medium",
+        cwe="CWE-200",
+        owasp="A05:2021-Security Misconfiguration",
+        description=(
+            "POST a query batch and a typo'd field name to the GraphQL "
+            "endpoint; flag responses that confirm batching is enabled "
+            "or that leak a 'Did you mean' field-name suggestion."
+        ),
+        remediation=(
+            "Disable query batching unless required (Apollo: "
+            "`allowBatchedHttpRequests: false`); turn off field-name "
+            "suggestions in production (e.g. Apollo's "
+            "`NoSchemaIntrospectionCustomRule` and `NoUnknownFieldsHint`)."
+        ),
+        tags=("graphql", "info-leak"),
+    )
+    BATCH_QUERY = (
+        '[{"query":"{__typename}"},{"query":"{__typename}"},'
+        '{"query":"{__typename}"}]'
+    )
+    TYPO_QUERY = '{"query":"{ __schemaa { types { name } } }"}'
+    SUGGESTION_MARKERS: tuple[bytes, ...] = (
+        b"Did you mean",
+        b"did you mean",
+        b'"__schema"',  # echoing a real root field counts as suggestion
+    )
+
+    def _looks_like_graphql(self, url: str) -> bool:
+        u = url.lower()
+        return "graphql" in u or "/gql" in u
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+        if not self._looks_like_graphql(ctx.full_url):
+            return
+
+        json_headers = [(k, v) for k, v in _scrub_headers(ctx.req_headers)
+                         if k.lower() != "content-type"]
+        json_headers.append(("Content-Type", "application/json"))
+
+        # ---- batching probe -------------------------------------------------
+        if ctx.claim_probe(opts, rule_id, "json", "batch"):
+            req = Request(method="POST", url=ctx.base_url,
+                          headers=list(json_headers),
+                          body=self.BATCH_QUERY.encode())
+            try:
+                pr = send(req)
+            except _SAFE_NETWORK_EXC:
+                pr = None
+            if pr is not None and 200 <= pr.response.status < 300:
+                body = pr.response.body[:200_000].lstrip()
+                if body.startswith(b"["):
+                    # Confirm it's a length-3 array of GraphQL responses.
+                    try:
+                        decoded = json.loads(body.decode(
+                            "utf-8", errors="replace"))
+                    except (ValueError, UnicodeDecodeError):
+                        decoded = None
+                    if (isinstance(decoded, list) and len(decoded) >= 2
+                            and all(isinstance(x, dict) for x in decoded)):
+                        yield Finding(
+                            severity="medium",
+                            title="GraphQL query batching enabled",
+                            description=(
+                                "The endpoint accepted a JSON array of "
+                                "queries and returned an array of "
+                                "results. Batching lets an attacker bypass "
+                                "per-request rate limits by packing N "
+                                "lookups (or N login attempts) into a "
+                                "single HTTP request."
+                            ),
+                            remediation=(
+                                "Disable query batching unless explicitly "
+                                "required by clients; if it must stay on, "
+                                "rate-limit by *operation count* rather "
+                                "than by HTTP request."
+                            ),
+                            cwe="CWE-770",
+                            owasp="A04:2021-Insecure Design",
+                            host=ctx.host, url=ctx.base_url,
+                            request_id=ctx.history_id,
+                            payload=self.BATCH_QUERY,
+                            evidence=(f"batched response is a JSON array "
+                                       f"of length {len(decoded)}"),
+                        )
+
+        # ---- field-suggestion probe ----------------------------------------
+        if ctx.claim_probe(opts, rule_id, "json", "suggest"):
+            req = Request(method="POST", url=ctx.base_url,
+                          headers=list(json_headers),
+                          body=self.TYPO_QUERY.encode())
+            try:
+                pr = send(req)
+            except _SAFE_NETWORK_EXC:
+                return
+            body = pr.response.body[:200_000]
+            hit = next((m for m in self.SUGGESTION_MARKERS if m in body), None)
+            if hit:
+                yield Finding(
+                    severity="low",
+                    title="GraphQL field-suggestion hints leaked",
+                    description=(
+                        "Sending a query with a deliberately misspelt "
+                        "root field caused the GraphQL server to echo a "
+                        "suggestion that points at a real schema field "
+                        "name. Field-name suggestions effectively leak "
+                        "the schema even when introspection is disabled."
+                    ),
+                    remediation=(
+                        "Disable field-name suggestions in production "
+                        "(e.g. Apollo's `NoUnknownFieldsHint` rule, or "
+                        "graphql-js `validate` with the standard rules "
+                        "minus `FieldsOnCorrectTypeRule`)."
+                    ),
+                    cwe="CWE-200",
+                    owasp="A05:2021-Security Misconfiguration",
+                    host=ctx.host, url=ctx.base_url,
+                    request_id=ctx.history_id,
+                    payload=self.TYPO_QUERY,
+                    evidence=f"response body includes marker {hit!r}",
+                )
+
+
+BUILTIN_ACTIVE_CHECKS.append(HTTPSmugglingCheck())
+BUILTIN_ACTIVE_CHECKS.append(GraphQLActiveCheck())
 
 
 # ---- runner ----

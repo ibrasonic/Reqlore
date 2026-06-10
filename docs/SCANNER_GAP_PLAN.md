@@ -8,7 +8,7 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done.
 
 ---
 
-## Phase 1 — Tier A: in-repo logic, no new deps `[~]`
+## Phase 1 — Tier A: in-repo logic, no new deps `[x]`
 
 8 items. Each lands as a new `ActiveCheck` (or rule wiring) in
 [`reqlore/scanner/active.py`](../reqlore/scanner/active.py) and
@@ -23,25 +23,34 @@ and ships with at least one positive + one negative test.
   read of existing `rule_runs` data; no new DB columns.
   *Shipped:* new `Project.rule_run_reasons()` + "Why not fired" column
   on the coverage page with a `<details>` breakdown.
-- `[ ]` **8 · HTTP request smuggling as a check** — wrap
+- `[x]` **8 · HTTP request smuggling as a check** — wrap
   `reqlore.smuggling` into `HTTPSmugglingCheck`. Probes CL.TE / TE.CL
   / TE.TE pairs against the recorded host; only fires on the
   documented timing/length disagreement (no speculative findings).
-  *Deferred to Phase 1b:* needs raw-engine sender plumbing distinct
-  from the httpx-based one used by every other check.
-- `[ ]` **16 · Sequencer auto-feed** — call `sequencer.analyze()` on
+  *Shipped:* uses `raw_engine` directly (httpx would normalise the
+  payloads); off by default behind
+  `ActiveOptions.allow_smuggling_probes` and excluded from the
+  `standard` preset.
+- `[x]` **16 · Sequencer auto-feed** — call `sequencer.analyze()` on
   session-cookie samples and emit a finding when entropy drops below
   the documented threshold. Existing workbench stays unchanged.
-  *Deferred to Phase 1b:* needs cross-row sample accumulation that
-  the current per-row ActiveCheck loop does not provide.
+  *Shipped:* `_scan_session_entropy` runs once after the row loop in
+  `Scanner.scan_project`, aggregates Set-Cookie samples by
+  `(host, name)` for cookies that look like session/auth tokens,
+  needs ≥ 8 distinct samples, fires on rating == "weak". Records
+  rule_runs with reasons (`only_N_samples`, `rating_<r>`) so the
+  coverage page can explain why a group did not fire.
 - `[x]` **11 · Forced-browsing active check** — small built-in
   wordlist (`.git/HEAD`, `.env`, `/.DS_Store`, `/backup.zip`,
   `/swagger.json`, `/api-docs`). Each entry has a body-fingerprint
   marker so SPA fallback 200s do not false-positive.
-- `[ ]` **18 · GraphQL beyond introspection** — batching abuse and
+- `[x]` **18 · GraphQL beyond introspection** — batching abuse and
   field-suggestion leak. Fires only when the endpoint responded with
   JSON containing `data` / `errors`.
-  *Deferred to Phase 1b.*
+  *Shipped:* `GraphQLActiveCheck` posts a 3-element batched query
+  (fires medium when the response is a JSON array of length ≥ 2) and
+  a typo'd root-field query (fires low when the response carries a
+  `Did you mean` hint).
 - `[x]` **7 · Deserialisation reflection** — send Java `rO0AB…`,
   .NET `AAEAAAD…`, PHP `O:`, Python pickle magic bytes in query/form
   params; flag responses that echo a known deserialiser stack trace
@@ -62,11 +71,9 @@ and ships with at least one positive + one negative test.
 **Exit criteria for Phase 1:** all 8 boxes ticked, suite still green
 (target: 809 → ≥ 850 passing), commit + push to `main`.
 
-*Phase 1a status:* 5 / 8 items shipped on commit pending (`22`, `11`,
-`7`, `19`, `20`). Tests: 809 → 824 passing. Items `8`, `16`, `18`
-rolled into Phase 1b (next session) — each needs a small
-architectural change (raw-engine sender, cross-row state, JSON-aware
-probing) that warrants its own focused work block.
+*Phase 1 complete (1a + 1b):* 8 / 8 items shipped. Tests:
+809 → 835 passing. Phase 1a covered items 22, 11, 7, 19, 20.
+Phase 1b covered the three carryovers (8 / 16 / 18).
 
 ---
 
@@ -154,8 +161,8 @@ without optional deps, commit + push.
 
 Progress log:
 
-- `[~]` Phase 1 — Phase 1a done (5 of 8 items, suite 809 → 824);
-  Phase 1b queued for items 8 / 16 / 18.
+- `[x]` Phase 1 — 1a (5 items, 809 → 824) + 1b (3 items, 824 → 835),
+  all 8 Tier-A gap-list items shipped.
 - `[ ]` Phase 2
 - `[ ]` Phase 3
 - `[ ]` Phase 4
