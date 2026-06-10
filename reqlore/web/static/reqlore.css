@@ -155,6 +155,87 @@ body {
   font-size: 0.85em;
 }
 
+/* Section nav: a tab-strip-styled <nav> made of normal links. Each link
+   is a full page; the active one is marked with `aria-current="page"`.
+   No JS, no `role="tab"` (so we don't owe browsers the ARIA contract a
+   real tablist requires). */
+.section-nav {
+  margin: 0 0 1rem 0;
+  padding: 0;
+  border-bottom: 2px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.section-nav a {
+  display: inline-block;
+  padding: 0.4rem 0.9rem;
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+  margin-bottom: -2px;
+  font-weight: 500;
+}
+.section-nav a:hover { text-decoration: underline; }
+.section-nav a:focus {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.section-nav a[aria-current="page"] {
+  color: var(--fg);
+  background: var(--bg);
+  border-color: var(--border);
+  border-bottom: 2px solid var(--bg);
+  font-weight: 700;
+  text-decoration: none;
+  cursor: default;
+}
+
+/* Active-scan preset radio strip: small chip-style group above the
+   collapsed check list. */
+.preset-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem 0;
+  padding: 0;
+  list-style: none;
+}
+.preset-bar > li { margin: 0; }
+.preset-bar label {
+  display: inline-block;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.preset-bar input[type="radio"] { margin-right: 0.3rem; }
+.preset-bar input[type="radio"]:checked + span {
+  font-weight: 700;
+}
+.preset-bar label:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--code-bg);
+}
+
+/* Active-scan check-group fieldset list. */
+.check-group {
+  margin: 0.5rem 0;
+}
+.check-group ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0.25rem 0 0 0;
+}
+.check-group li { margin: 0.15rem 0; }
+.check-group label {
+  display: inline;
+  font-weight: 400;
+}
+
 /* Severity badges — used in scanner findings tables and detail page.
    Colour is supplementary: the text label always carries the meaning,
    and critical/high/medium/low/info also differ by border weight so

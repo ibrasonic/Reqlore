@@ -197,5 +197,6 @@ def test_suppressions_delete_requires_rule_id(client):
 def test_scanner_index_links_to_suppressions(client):
     r = client.get("/scanner/")
     assert r.status_code == 200
+    # After the redesign the Suppressions link lives in the section nav.
     assert b"/scanner/suppressions" in r.data
-    assert b"Manage finding suppressions" in r.data
+    assert b">Suppressions<" in r.data

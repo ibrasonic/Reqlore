@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Scanner — Run scan{% endblock %}
+{% block main %}
+{% include "scanner/_section_nav.html" %}
+<h1>Run scan</h1>
+
+<p>
+  Two flavours of scan ship in the box: a <strong>passive</strong> audit of
+  traffic you have already recorded, and an <strong>active</strong> scan that
+  sends mutated requests at your target. Only run the active scan against
+  systems you are authorised to test.
+</p>
+
+<section aria-labelledby="passive-h">
+  <h2 id="passive-h">Passive scan</h2>
+  <p>
+    Replays no traffic. Audits every recorded request/response pair against
+    the built-in rule set plus any enabled plugin rules and writes new
+    findings to the project. Duplicate findings (same title + URL + evidence)
+    are suppressed.
+  </p>
+  <form method="post" action="{{ url_for('.run') }}" class="inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label for="lim">Scan most recent</label>
+    <input id="lim" name="limit" type="number" value="5000" min="1" max="50000">
+    <span> requests.</span>
+    <label for="full" style="margin-left:1em;">
+      <input id="full" name="full" type="checkbox" value="1">
+      Full re-scan (ignore resume marker)
+    </label>
+    <button type="submit" accesskey="p">Run <u>p</u>assive scan</button>
+  </form>
+</section>
+
+<section aria-labelledby="active-h">
+  <h2 id="active-h">Active scan <small>(sends traffic)</small></h2>
+  <p id="active-warning">
+    The active scanner <strong>sends mutated HTTP requests</strong> to the
+    target. Probes are minimal markers, not weaponised exploits, but they
+    will appear in the target's logs.
+  </p>
+
+  <form method="post" action="{{ url_for('.run_active') }}" class="stack"
+        aria-describedby="active-warning">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <fieldset>
+      <legend>Scope</legend>
+      <p>
+        <label for="ahost">Host filter</label>
+        <select id="ahost" name="host">
+          <option value="">(any host)</option>
+          {% for h in hosts %}<option value="{{ h }}">{{ h }}</option>{% endfor %}
+        </select>
+      </p>
+      <p>
+        <label for="alim">Maximum recorded requests to probe</label>
+        <input id="alim" name="limit" type="number" value="20" min="1" max="2000">
+      </p>
+      <p>
+        <label for="ato">Per-request timeout (seconds)</label>
+        <input id="ato" name="timeout" type="number" value="10" min="1" max="60">
+      </p>
+      <p>
+        <label for="adel">Delay between probes (ms)</label>
+        <input id="adel" name="delay" type="number" value="0" min="0" max="5000">
+      </p>
+      <p>
+        <input type="checkbox" id="afollow" name="follow" value="1">
+        <label for="afollow">Follow redirects</label>
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Preset</legend>
+      <p id="preset-hint">
+        A preset picks which checks run. <em>Custom</em> uses the checkboxes
+        below; the other presets ignore those checkboxes.
+      </p>
+      <ul class="preset-bar" role="radiogroup"
+          aria-labelledby="preset-hint">
+        <li>
+          <label>
+            <input type="radio" name="preset" value="quick">
+            <span>Quick (5 checks)</span>
+          </label>
+        </li>
+        <li>
+          <label>
+            <input type="radio" name="preset" value="standard"
+                   {% if default_preset == 'standard' %}checked{% endif %}>
+            <span>Standard (default, no OAST)</span>
+          </label>
+        </li>
+        <li>
+          <label>
+            <input type="radio" name="preset" value="full">
+            <span>Full (all checks, incl. OAST)</span>
+          </label>
+        </li>
+        <li>
+          <label>
+            <input type="radio" name="preset" value="custom">
+            <span>Custom (use checkboxes below)</span>
+          </label>
+        </li>
+      </ul>
+    </fieldset>
+
+    <details>
+      <summary>Customise checks</summary>
+      <p>
+        Only used when the <em>Custom</em> preset is selected above. Otherwise
+        the preset wins and these checkboxes are ignored.
+      </p>
+      {% for group in groups %}
+      <fieldset class="check-group">
+        <legend>{{ group.label }} ({{ group.checks|length }})</legend>
+        <ul>
+        {% for c in group.checks %}
+          <li>
+            <input type="checkbox" id="chk-{{ c.name }}"
+                   name="checks" value="{{ c.name }}" checked>
+            <label for="chk-{{ c.name }}">
+              <strong>{{ c.name }}</strong> &mdash; {{ c.description }}
+            </label>
+          </li>
+        {% endfor %}
+        </ul>
+      </fieldset>
+      {% endfor %}
+    </details>
+
+    <p><button type="submit" accesskey="a">Run <u>a</u>ctive scan</button></p>
+  </form>
+</section>
+{% endblock %}

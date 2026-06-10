@@ -48,13 +48,15 @@ def _csrf(client) -> str:
 
 def test_index_h1_is_scanner_not_passive_scanner(client):
     body = client.get("/scanner/").data.decode()
-    assert "<h1>Scanner</h1>" in body
+    # After the run/findings split, the index page is the Findings dashboard.
+    assert "<h1>Findings</h1>" in body
     assert "<h1>Passive scanner</h1>" not in body
 
 
 def test_index_active_checks_render_as_a_list(client):
-    body = client.get("/scanner/").data.decode()
-    assert 'class="check-list"' in body
+    # Active-scan checks live on /scanner/run after the redesign.
+    body = client.get("/scanner/run").data.decode()
+    assert 'class="check-group"' in body
     # At least one builtin check wraps in <li>, not <p>.
     assert re.search(r'<li>\s*<input type="checkbox" id="chk-', body)
 

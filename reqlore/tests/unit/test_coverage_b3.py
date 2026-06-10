@@ -248,5 +248,6 @@ def test_scanner_index_links_to_coverage_page(client):
     r = client.get("/scanner/")
     assert r.status_code == 200
     body = r.get_data(as_text=True)
+    # After the redesign the Coverage link lives in the section nav.
     assert "/scanner/coverage" in body
-    assert "View scanner coverage" in body
+    assert ">Coverage<" in body

@@ -24,6 +24,87 @@ def _slugify(text: str) -> str:
     return _SLUG_RE.sub("-", (text or "").lower()).strip("-")[:60] or "finding"
 
 
+# ----------------------------------------------- Active-scan UI metadata
+#
+# Five family groups + four presets. Order inside each group is just
+# "what reads nicely top-to-bottom"; the scanner itself doesn't care.
+# Anything not yet known (future builtin or plugin checks) lands in
+# the "Other" group automatically — see _grouped_checks().
+
+ACTIVE_CHECK_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Injection", (
+        "xss-reflected", "xss-reflected-headers", "sqli-error",
+        "ssti", "nosqli-mongo", "xxe-classic",
+    )),
+    ("File / OS", (
+        "path-traversal-lfi", "os-cmd-time",
+    )),
+    ("Auth & Logic", (
+        "jwt-alg-none", "open-redirect", "prototype-pollution",
+    )),
+    ("API & CORS", (
+        "graphql-introspection", "cors-misconfig-extended",
+    )),
+    ("SSRF / OAST", (
+        "oast-ssrf",
+    )),
+)
+
+# A preset is a frozen set of check names. `custom` means "honour the
+# per-check checkboxes the form posted"; the others override them.
+ACTIVE_PRESETS: dict[str, frozenset[str] | None] = {
+    "quick": frozenset({
+        "xss-reflected", "sqli-error", "ssti",
+        "jwt-alg-none", "open-redirect",
+    }),
+    # Standard = everything except OAST (which needs a running receiver).
+    "standard": None,  # filled in below from BUILTIN_ACTIVE_CHECKS minus oast
+    "full": None,      # filled in below from BUILTIN_ACTIVE_CHECKS
+    "custom": None,    # sentinel: read posted checkboxes
+}
+
+
+def _all_check_names() -> frozenset[str]:
+    return frozenset(c.name for c in BUILTIN_ACTIVE_CHECKS)
+
+
+def _resolve_preset(preset: str, posted_checks: list[str]) -> list[str] | None:
+    """Map preset → list of check names. Returns None to mean
+    "use the scanner's full default set" (passed through as enabled_checks=None).
+    """
+    preset = (preset or "standard").lower().strip()
+    if preset == "custom":
+        # Only keep names that actually exist as builtins or plugins.
+        return [n for n in posted_checks if n] or None
+    if preset == "quick":
+        return sorted(ACTIVE_PRESETS["quick"])
+    if preset == "full":
+        return None  # None ⇒ enable everything
+    # standard (default): everything except oast
+    return sorted(_all_check_names() - {"oast-ssrf"})
+
+
+def _grouped_checks() -> list[dict]:
+    """Map BUILTIN_ACTIVE_CHECKS into the family groups defined above,
+    appending anything unknown to an "Other" group so future additions
+    surface without a UI edit."""
+    by_name = {c.name: c for c in BUILTIN_ACTIVE_CHECKS}
+    seen: set[str] = set()
+    out: list[dict] = []
+    for label, names in ACTIVE_CHECK_GROUPS:
+        members = []
+        for n in names:
+            if n in by_name:
+                members.append(by_name[n])
+                seen.add(n)
+        if members:
+            out.append({"label": label, "checks": members})
+    leftover = [c for c in BUILTIN_ACTIVE_CHECKS if c.name not in seen]
+    if leftover:
+        out.append({"label": "Other", "checks": leftover})
+    return out
+
+
 @bp.route("/")
 def index():
     sev = request.args.get("severity") or None
@@ -38,7 +119,20 @@ def index():
         sev=sev or "", status=status or "", host=host or "",
         severities=("critical", "high", "medium", "low", "info"),
         statuses=("open", "triaged", "false_positive", "fixed"),
-        active_checks=BUILTIN_ACTIVE_CHECKS,
+        active="findings",
+    )
+
+
+@bp.route("/run", methods=["GET"])
+def run_page():
+    """Launchpad page: passive + active scan forms only."""
+    return render_template(
+        "scanner/run.html",
+        hosts=g.project.hosts(),
+        groups=_grouped_checks(),
+        presets=("quick", "standard", "full", "custom"),
+        default_preset="standard",
+        active="run",
     )
 
 
@@ -97,7 +191,10 @@ def run_active():
     except ValueError:
         delay = 0
     host = (request.form.get("host") or "").strip() or None
-    enabled = request.form.getlist("checks") or None
+    enabled = _resolve_preset(
+        request.form.get("preset", "standard"),
+        request.form.getlist("checks"),
+    )
     follow = request.form.get("follow") == "1"
 
     opts = ActiveOptions(
@@ -137,7 +234,8 @@ def show(fid: int):
     if not f:
         abort(404)
     return render_template("scanner/detail.html", f=f,
-                           statuses=("open", "triaged", "false_positive", "fixed"))
+                           statuses=("open", "triaged", "false_positive", "fixed"),
+                           active="findings")
 
 
 @bp.route("/<int:fid>/status", methods=["POST"])
@@ -204,6 +302,7 @@ def _render_manual_form(form: dict, errors: list[str], request_id: int | None):
         severities=SEVERITIES,
         owasp_categories=_OWASP_CATEGORIES,
         hosts=g.project.hosts(),
+        active="findings",
     )
 
 
@@ -293,6 +392,7 @@ def suppressions():
     return render_template(
         "scanner/suppressions.html",
         suppressions=g.project.list_finding_suppressions(),
+        active="suppressions",
     )
 
 
@@ -336,4 +436,5 @@ def coverage():
         by_host=by_host,
         rule_filter=rule_filter,
         host_filter=host_filter,
+        active="coverage",
     )

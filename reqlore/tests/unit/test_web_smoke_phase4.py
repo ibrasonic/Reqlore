@@ -20,7 +20,8 @@ def client(app):
 
 
 def test_scanner_active_form_present(client):
-    r = client.get("/scanner/")
+    # Active-scan form moved from /scanner/ (Findings) to /scanner/run.
+    r = client.get("/scanner/run")
     assert r.status_code == 200
     assert b"Active scan" in r.data
     # All built-in check names appear as checkboxes

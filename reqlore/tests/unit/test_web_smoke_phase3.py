@@ -34,8 +34,17 @@ def _csrf(client) -> str:
 def test_scanner_index(client):
     r = client.get("/scanner/")
     assert r.status_code == 200
-    assert b"<h1>Scanner</h1>" in r.data
-    assert b"Run passive scan" in r.data
+    # After the redesign, /scanner/ is the Findings dashboard. The passive-
+    # scan form lives on /scanner/run and is linked from the section nav.
+    assert b"<h1>Findings</h1>" in r.data
+    assert b"Run scan" in r.data
+
+
+def test_scanner_run_page_has_both_forms(client):
+    r = client.get("/scanner/run")
+    assert r.status_code == 200
+    assert b"Run passive scan" in r.data or b"Run <u>p</u>assive scan" in r.data
+    assert b"Run active scan" in r.data or b"Run <u>a</u>ctive scan" in r.data
 
 
 def test_scanner_run_with_no_history(client):
