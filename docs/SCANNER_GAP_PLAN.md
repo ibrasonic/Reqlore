@@ -77,28 +77,45 @@ Phase 1b covered the three carryovers (8 / 16 / 18).
 
 ---
 
-## Phase 2 — Tier B: stdlib network I/O `[ ]`
+## Phase 2 — Tier B: stdlib network I/O `[x]`
 
 3 items. Adds real socket / `ssl` / DNS work. Tests use monkey-patched
 sockets so CI stays offline.
 
-- `[ ]` **14 · Active TLS check** — `ssl.create_default_context()` +
+- `[x]` **14 · Active TLS check** — `ssl.create_default_context()` +
   `wrap_socket` against `host:443`; report on expired cert, weak
   protocol (< TLS 1.2), weak cipher, hostname mismatch.
-- `[ ]` **13 · Subdomain takeover** — `socket.getaddrinfo` /
+  *Shipped:* `ActiveTLSCheck` performs one handshake per
+  `(host, port)` via `_tls_inspect` (test-patchable). Emits high on
+  verify-failed and expired cert (CWE-295/298), medium on legacy
+  protocol or weak cipher, low when expiry is within 7 days.
+- `[x]` **13 · Subdomain takeover** — `socket.getaddrinfo` /
   `dns.resolver` lookup; flag when CNAME resolves to a known
   dangling service fingerprint (GitHub Pages 404, Heroku no-such-app,
   S3 `NoSuchBucket`, Azure `404 Web Site not found`). Built-in
   fingerprint table only — no live HTTP fetch beyond the recorded
   host.
-- `[ ]` **15 · Default-creds spray** — on detected login form (HTTP
+  *Shipped:* `SubdomainTakeoverCheck` issues one GET per host,
+  matches the response against a 10-entry fingerprint table
+  (GitHub Pages, Heroku, S3, Azure, Surge, Fastly, Cargo). Fires
+  high (CWE-350) on first match.
+- `[x]` **15 · Default-creds spray** — on detected login form (HTTP
   Basic challenge OR HTML `<input type=password>` form), try a
   short, well-known list (`admin/admin`, `admin/password`,
   `root/root`, `guest/guest`). Hard cap of 4 attempts per host per
   scan; opt-in via `ActiveOptions.allow_credential_probes`.
+  *Shipped:* `DefaultCredsSprayCheck` covers Basic-auth challenges
+  and HTML password forms. Skips forms that ship a CSRF /
+  authenticity token. Fires critical (CWE-521) on the first pair
+  that produces a logged-in response (3xx, success markers without
+  fail markers). Off by default; excluded from the standard preset.
 
 **Exit criteria for Phase 2:** 3 boxes ticked, tests pass without
 network access, commit + push.
+
+*Phase 2 complete:* 3 / 3 items shipped. Tests: 835 → 856
+passing (1 skipped, unchanged). 21 new tests in
+[`test_active_gap_phase2.py`](../reqlore/tests/unit/test_active_gap_phase2.py).
 
 ---
 
@@ -163,6 +180,6 @@ Progress log:
 
 - `[x]` Phase 1 — 1a (5 items, 809 → 824) + 1b (3 items, 824 → 835),
   all 8 Tier-A gap-list items shipped.
-- `[ ]` Phase 2
+- `[x]` Phase 2 — 3 items (14, 13, 15), 835 → 856 passing.
 - `[ ]` Phase 3
 - `[ ]` Phase 4

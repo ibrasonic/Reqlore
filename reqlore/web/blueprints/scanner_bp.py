@@ -44,6 +44,7 @@ ACTIVE_CHECK_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Auth & Logic", (
         "jwt-alg-none", "open-redirect", "prototype-pollution",
         "oauth-redirect-uri",
+        "default-creds",
     )),
     ("API & CORS", (
         "graphql-introspection", "cors-misconfig-extended",
@@ -53,6 +54,10 @@ ACTIVE_CHECK_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("SSRF / OAST", (
         "oast-ssrf",
         "http-smuggling",
+    )),
+    ("TLS & DNS", (
+        "tls-active",
+        "subdomain-takeover",
     )),
 )
 
@@ -87,7 +92,8 @@ def _resolve_preset(preset: str, posted_checks: list[str]) -> list[str] | None:
     if preset == "full":
         return None  # None ⇒ enable everything
     # standard (default): everything except oast
-    return sorted(_all_check_names() - {"oast-ssrf", "http-smuggling"})
+    return sorted(_all_check_names() - {"oast-ssrf", "http-smuggling",
+                                          "default-creds"})
 
 
 def _grouped_checks() -> list[dict]:

@@ -123,6 +123,10 @@ class ActiveOptions:
     # bypass the standard httpx engine (smuggling needs raw socket bytes;
     # the field-suggestion probe sends a deliberately broken query).
     allow_smuggling_probes: bool = False
+    # Phase 2 — opt-in credential-spray probe. Off by default because
+    # sending login attempts to a real production system is a noisy and
+    # potentially account-locking action.
+    allow_credential_probes: bool = False
 
 
 # ---- context: parsed snapshot of a recorded history row ----
@@ -2129,6 +2133,638 @@ class GraphQLActiveCheck(ActiveCheck):
 
 BUILTIN_ACTIVE_CHECKS.append(HTTPSmugglingCheck())
 BUILTIN_ACTIVE_CHECKS.append(GraphQLActiveCheck())
+
+
+# =============== Phase 2 (Tier B) — stdlib net I/O =============================
+#
+# Items #14, #13, #15. Each uses the network differently from the other
+# checks: TLS opens a raw SSL socket, takeover only inspects response
+# bodies, default-creds spray is opt-in like smuggling. Tests
+# monkey-patch the I/O helpers so CI stays offline.
+
+
+@dataclass
+class _TLSInfo:
+    cipher_name: str = ""
+    cipher_bits: int = 0
+    protocol: str = ""           # e.g. "TLSv1.2"
+    not_after: str = ""          # raw "MMM DD HH:MM:SS YYYY GMT" string
+    error: str = ""              # populated when the handshake failed
+    verify_reason: str = ""      # SSLCertVerificationError.reason
+
+
+def _tls_inspect(host: str, port: int = 443, *,
+                  timeout: float = 5.0) -> _TLSInfo:
+    """Open a TLS connection and return inspection metadata.
+
+    On a successful handshake the cert was verified by the system trust
+    store; populates ``cipher_name``, ``cipher_bits``, ``protocol``, and
+    ``not_after``. On failure populates ``error`` (and ``verify_reason``
+    if it was a verification error). Tests monkey-patch this helper.
+    """
+    import socket
+    info = _TLSInfo()
+    try:
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
+                cipher = ssock.cipher() or ("", "", 0)
+                info.cipher_name = cipher[0] or ""
+                info.cipher_bits = int(cipher[2] or 0)
+                info.protocol = ssock.version() or ""
+                cert = ssock.getpeercert() or {}
+                info.not_after = str(cert.get("notAfter") or "")
+        return info
+    except ssl.SSLCertVerificationError as exc:
+        info.error = "verify_failed"
+        info.verify_reason = str(getattr(exc, "reason", "") or exc)
+        return info
+    except (ssl.SSLError, OSError) as exc:
+        info.error = f"ssl_error:{exc.__class__.__name__}"
+        return info
+
+
+# Cipher names whose presence indicates legacy/insecure crypto, even when
+# the bit-count is nominally OK.
+_WEAK_CIPHER_TOKENS = (
+    "RC4", "3DES", "DES-", "EXPORT", "NULL", "ANON", "MD5", "IDEA",
+)
+_WEAK_PROTOCOLS = ("SSLv2", "SSLv3", "TLSv1", "TLSv1.1")
+
+
+def _is_weak_protocol(name: str) -> bool:
+    """True for protocols below TLS 1.2. Exact-match (and tolerates
+    OpenSSL's occasional ``TLSv1.0`` spelling for TLS 1.0)."""
+    if not name:
+        return False
+    if name in _WEAK_PROTOCOLS:
+        return True
+    if name == "TLSv1.0":
+        return True
+    return False
+
+
+def _is_weak_cipher(name: str, bits: int) -> bool:
+    if not name:
+        return False
+    upper = name.upper()
+    if any(tok in upper for tok in _WEAK_CIPHER_TOKENS):
+        return True
+    return bits and bits < 128
+
+
+def _parse_cert_expiry(not_after: str) -> int | None:
+    """Return seconds-until-expiry, or None if unparseable."""
+    if not not_after:
+        return None
+    try:
+        # ssl module returns "MMM DD HH:MM:SS YYYY GMT"
+        return int(ssl.cert_time_to_seconds(not_after) - time.time())
+    except (ValueError, OSError, TypeError):
+        return None
+
+
+class ActiveTLSCheck(ActiveCheck):
+    """Item 14 — open a real TLS handshake against the recorded host:443
+    and flag expired certs, weak protocols, weak ciphers, or hostname
+    mismatch."""
+    name = "tls-active"
+    description = ("Open a TLS handshake against the recorded host and "
+                   "flag expired certs, weak protocols, weak ciphers, or "
+                   "hostname mismatch.")
+    meta = RuleMeta(
+        id="active:tls-active",
+        title="TLS configuration weakness",
+        default_severity="medium",
+        cwe="CWE-326",
+        owasp="A02:2021-Cryptographic Failures",
+        description=(
+            "Live TLS handshake against the recorded host's HTTPS port. "
+            "Reports certificate verification failures (hostname "
+            "mismatch, expired, self-signed, untrusted CA), legacy "
+            "protocol versions (< TLS 1.2), and ciphers below 128 bits "
+            "or on the documented weak list."
+        ),
+        remediation=(
+            "Renew or replace the certificate, configure the server to "
+            "negotiate TLS 1.2+ only, and disable RC4 / 3DES / EXPORT "
+            "/ NULL / anonymous cipher suites."
+        ),
+        tags=("tls", "crypto"),
+    )
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        parsed = up.urlsplit(ctx.full_url)
+        if parsed.scheme.lower() != "https":
+            return
+        host = parsed.hostname or ctx.host
+        if not host:
+            return
+        port = parsed.port or 443
+
+        # One TLS handshake per (host, port) per scan.
+        if not ctx.claim_probe(opts, rule_id, "host", f"{host}:{port}"):
+            return
+
+        info = _tls_inspect(host, port, timeout=float(opts.timeout_s))
+
+        # ---- handshake outcome ------------------------------------------
+        if info.error:
+            if info.error == "verify_failed":
+                reason = info.verify_reason or "certificate verification failed"
+                yield Finding(
+                    severity="high",
+                    title="TLS certificate verification failed",
+                    description=(
+                        f"Connecting to {host}:{port} with the system "
+                        f"trust store raised: {reason}. Common causes "
+                        "include hostname mismatch, expired cert, "
+                        "self-signed cert, or an untrusted CA. Browsers "
+                        "will warn or refuse to connect."
+                    ),
+                    remediation=(
+                        "Issue a certificate for the correct hostname "
+                        "from a trusted CA and renew before expiry."
+                    ),
+                    cwe="CWE-295",
+                    owasp="A02:2021-Cryptographic Failures",
+                    host=ctx.host, url=ctx.full_url,
+                    request_id=ctx.history_id,
+                    payload=f"tls handshake -> {host}:{port}",
+                    evidence=reason,
+                )
+            # Plain SSL/socket errors (timeout, connection refused) are
+            # not findings — record_no_finding via the scanner's normal
+            # rule_run telemetry.
+            return
+
+        # ---- protocol --------------------------------------------------
+        if _is_weak_protocol(info.protocol):
+            yield Finding(
+                severity="medium",
+                title=f"Legacy TLS protocol negotiated ({info.protocol})",
+                description=(
+                    f"The server at {host}:{port} accepts {info.protocol}. "
+                    "Anything below TLS 1.2 is considered broken: "
+                    "BEAST, POODLE, and Lucky13 all target TLS 1.0/1.1 "
+                    "and SSLv3."
+                ),
+                remediation=(
+                    "Disable SSLv2, SSLv3, TLS 1.0 and TLS 1.1 at the "
+                    "server; require TLS 1.2 or later."
+                ),
+                cwe="CWE-326", owasp="A02:2021-Cryptographic Failures",
+                host=ctx.host, url=ctx.full_url, request_id=ctx.history_id,
+                payload=f"tls handshake -> {host}:{port}",
+                evidence=f"protocol={info.protocol}",
+            )
+
+        # ---- cipher ----------------------------------------------------
+        if _is_weak_cipher(info.cipher_name, info.cipher_bits):
+            yield Finding(
+                severity="medium",
+                title=f"Weak TLS cipher negotiated ({info.cipher_name})",
+                description=(
+                    f"The server at {host}:{port} negotiated "
+                    f"{info.cipher_name} ({info.cipher_bits} bits). "
+                    "RC4, 3DES, DES, EXPORT, NULL, ANON, MD5, IDEA, and "
+                    "ciphers below 128 bits are all considered broken."
+                ),
+                remediation=(
+                    "Restrict the server cipher list to modern AEAD "
+                    "suites (e.g. AES-GCM, ChaCha20-Poly1305) and "
+                    "disable the legacy ones."
+                ),
+                cwe="CWE-326", owasp="A02:2021-Cryptographic Failures",
+                host=ctx.host, url=ctx.full_url, request_id=ctx.history_id,
+                payload=f"tls handshake -> {host}:{port}",
+                evidence=(
+                    f"cipher={info.cipher_name}, bits={info.cipher_bits}"
+                ),
+            )
+
+        # ---- expiry ----------------------------------------------------
+        seconds_left = _parse_cert_expiry(info.not_after)
+        if seconds_left is not None and seconds_left <= 0:
+            yield Finding(
+                severity="high",
+                title="TLS certificate expired",
+                description=(
+                    f"The certificate for {host}:{port} expired on "
+                    f"{info.not_after}. Browsers will refuse to "
+                    "connect; clients pinning the cert will hard-fail."
+                ),
+                remediation=(
+                    "Renew the certificate immediately and automate "
+                    "renewal (e.g. ACME / Let's Encrypt) so it does "
+                    "not happen again."
+                ),
+                cwe="CWE-298", owasp="A02:2021-Cryptographic Failures",
+                host=ctx.host, url=ctx.full_url, request_id=ctx.history_id,
+                payload=f"tls handshake -> {host}:{port}",
+                evidence=f"notAfter={info.not_after}",
+            )
+        elif seconds_left is not None and seconds_left <= 7 * 86400:
+            days = max(0, seconds_left // 86400)
+            yield Finding(
+                severity="low",
+                title="TLS certificate expiring soon",
+                description=(
+                    f"The certificate for {host}:{port} expires on "
+                    f"{info.not_after} (~{days} day(s) from now). "
+                    "Renew before expiry or browsers will start to "
+                    "refuse the connection."
+                ),
+                remediation=(
+                    "Renew the certificate and automate renewal."
+                ),
+                cwe="CWE-298", owasp="A02:2021-Cryptographic Failures",
+                host=ctx.host, url=ctx.full_url, request_id=ctx.history_id,
+                payload=f"tls handshake -> {host}:{port}",
+                evidence=f"notAfter={info.not_after}",
+            )
+
+
+# Each entry: (service_label, fingerprint_bytes, severity).
+_TAKEOVER_FINGERPRINTS: tuple[tuple[str, bytes, str], ...] = (
+    ("GitHub Pages", b"There isn't a GitHub Pages site here", "high"),
+    ("Heroku",       b"No such app",                          "high"),
+    ("Heroku",       b"herokucdn.com/error-pages/no-such-app", "high"),
+    ("Amazon S3",    b"<Code>NoSuchBucket</Code>",            "high"),
+    ("Amazon S3",    b"The specified bucket does not exist",  "high"),
+    ("Azure App",    b"404 Web Site not found",               "high"),
+    ("Azure Cloud",  b"Web App - Unavailable",                "medium"),
+    ("Surge.sh",     b"project not found",                    "medium"),
+    ("Fastly",       b"Fastly error: unknown domain",         "high"),
+    ("Cargo",        b"<title>404 - Page not found</title>"
+                     b"\n<p>The page you were looking for does not exist", "low"),
+)
+
+
+class SubdomainTakeoverCheck(ActiveCheck):
+    """Item 13 — fetch the recorded URL fresh and look for known
+    "dangling service" fingerprints in the response body. A match
+    suggests the DNS still points at e.g. GitHub Pages but the backing
+    project has been deleted, so an attacker can re-register and host
+    arbitrary content under your domain.
+
+    No external DNS lookup: the recorded host is already pointing
+    *somewhere*; we just check whether that somewhere is the "this
+    project doesn't exist" page of a known platform.
+    """
+    name = "subdomain-takeover"
+    description = ("Fetch the recorded URL and check the response body "
+                   "against a built-in fingerprint table of dangling "
+                   "GitHub Pages / Heroku / S3 / Azure / Fastly hosts.")
+    meta = RuleMeta(
+        id="active:subdomain-takeover",
+        title="Subdomain takeover candidate",
+        default_severity="high",
+        cwe="CWE-350",
+        owasp="A05:2021-Security Misconfiguration",
+        description=(
+            "GET the recorded base URL and look for the canonical "
+            "'project not found' fingerprint of GitHub Pages, Heroku, "
+            "Amazon S3, Azure App Service, Fastly, Surge.sh, etc. A "
+            "match indicates the DNS still points at the platform but "
+            "the backing project has been deleted, allowing an attacker "
+            "to re-register and serve arbitrary content."
+        ),
+        remediation=(
+            "Remove the dangling DNS record, or re-claim the resource "
+            "on the platform under the same name. Audit other CNAME "
+            "records pointing at the same providers."
+        ),
+        tags=("dns", "takeover"),
+    )
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        if not ctx.host:
+            return
+        if not ctx.claim_probe(opts, rule_id, "host", ctx.host):
+            return
+
+        req = Request(method="GET", url=ctx.base_url, headers=[], body=b"")
+        try:
+            pr = send(req)
+        except _SAFE_NETWORK_EXC:
+            return
+        body = pr.response.body[:200_000]
+        for service, marker, severity in _TAKEOVER_FINGERPRINTS:
+            if marker in body:
+                yield Finding(
+                    severity=severity,
+                    title=f"Subdomain takeover candidate ({service})",
+                    description=(
+                        f"GET {ctx.base_url} returned a page whose body "
+                        f"matches the canonical {service} 'project not "
+                        "found' fingerprint. The DNS for this host "
+                        "still points at the platform, but the backing "
+                        "project appears to have been deleted — anyone "
+                        "able to register the same project name there "
+                        "can then serve arbitrary content under your "
+                        "subdomain."
+                    ),
+                    remediation=(
+                        "Remove the dangling DNS record or re-claim "
+                        f"the {service} project under the same name. "
+                        "Audit other CNAME records pointing at "
+                        f"{service}."
+                    ),
+                    cwe="CWE-350",
+                    owasp="A05:2021-Security Misconfiguration",
+                    host=ctx.host, url=ctx.base_url,
+                    request_id=ctx.history_id,
+                    payload=f"GET {ctx.base_url}",
+                    evidence=f"body contains {marker[:80]!r}",
+                )
+                return  # one finding per host is enough
+
+
+_DEFAULT_CRED_PAIRS: tuple[tuple[str, str], ...] = (
+    ("admin", "admin"),
+    ("admin", "password"),
+    ("root", "root"),
+    ("guest", "guest"),
+)
+# Very loose markers that the response body looks like a "logged in"
+# state rather than the login page being re-rendered.
+_LOGIN_SUCCESS_MARKERS = (b"logout", b"sign out", b"signout",
+                            b"my account", b"dashboard")
+# If any of these appear we assume we're still on the login page.
+_LOGIN_FAIL_MARKERS = (b"invalid credentials", b"incorrect password",
+                        b"login failed", b"try again",
+                        b"<input type=\"password\"", b"<input type='password'")
+
+
+class DefaultCredsSprayCheck(ActiveCheck):
+    """Item 15 — opt-in, very-low-volume credential spray.
+
+    Two trigger paths, both gated behind ``allow_credential_probes``:
+
+    1. **HTTP Basic challenge** — the recorded response was a 401 with
+       ``WWW-Authenticate: Basic ...``. Send the same URL with each of
+       four well-known credential pairs in the ``Authorization`` header
+       and flag any non-401 response.
+    2. **HTML password form** — the recorded response body contains a
+       single ``<input type="password">`` and at least one
+       username-shaped sibling input. POST the four credential pairs
+       to the form action and flag responses that look "logged in"
+       (Location: redirect, or body markers like 'logout' / 'dashboard'
+       without 'invalid' / 'try again').
+
+    Hard cap is ``len(_DEFAULT_CRED_PAIRS)`` = 4 attempts per host per
+    scan; ``ctx.claim_probe`` enforces that (and the per-rule budget).
+    """
+    name = "default-creds"
+    description = ("Try four well-known credential pairs against an HTTP "
+                   "Basic challenge or a simple password form. Off by "
+                   "default; enable via the run-page Custom preset.")
+    meta = RuleMeta(
+        id="active:default-creds",
+        title="Default credentials accepted",
+        default_severity="critical",
+        cwe="CWE-521",
+        owasp="A07:2021-Identification and Authentication Failures",
+        description=(
+            "Send four well-known credential pairs (admin/admin, "
+            "admin/password, root/root, guest/guest) to a discovered "
+            "Basic-auth challenge or a simple password form, and flag "
+            "any pair that authenticates."
+        ),
+        remediation=(
+            "Force a password change on first login; reject known "
+            "default credentials at the application layer; require "
+            "MFA for administrative roles."
+        ),
+        tags=("auth", "credentials"),
+    )
+
+    def _basic_challenge(self, ctx) -> bool:
+        if ctx.resp_status != 401:
+            return False
+        for k, v in ctx.resp_headers:
+            if k.lower() == "www-authenticate" and v.lower().startswith("basic"):
+                return True
+        return False
+
+    def _find_password_form(self, ctx) -> dict | None:
+        """Very small HTML scrape for a single password form.
+
+        Returns a dict with keys ``action``, ``method``, ``user_field``,
+        ``password_field``, ``extras`` (list of (name, value) for any
+        hidden inputs we should round-trip), or None.
+
+        The parser is deliberately conservative; any hint of CSRF / token
+        state aborts because we'd just be sending stale tokens.
+        """
+        body = ctx.resp_body or b""
+        if b"<input" not in body or b"password" not in body.lower():
+            return None
+        try:
+            import re
+            text = body[:200_000].decode("utf-8", errors="replace")
+        except Exception:
+            return None
+        # Find the first <form ... </form> that contains a type=password.
+        form_re = re.compile(r"<form\b[^>]*>(.*?)</form>",
+                              re.IGNORECASE | re.DOTALL)
+        for m in form_re.finditer(text):
+            form_html = m.group(0)
+            inner = m.group(1)
+            if "type=\"password\"" not in form_html.lower() and \
+               "type='password'" not in form_html.lower() and \
+               "type=password" not in form_html.lower():
+                continue
+            # Bail on anything that looks like CSRF protection.
+            if re.search(r"name\s*=\s*[\"']?(csrf|_token|"
+                          r"authenticity_token|xsrf)",
+                          form_html, re.IGNORECASE):
+                return None
+            # Pull action, method.
+            action_m = re.search(r"action\s*=\s*[\"']([^\"'>]+)[\"']",
+                                  form_html, re.IGNORECASE)
+            method_m = re.search(r"method\s*=\s*[\"']([^\"'>]+)[\"']",
+                                  form_html, re.IGNORECASE)
+            action = action_m.group(1) if action_m else ""
+            method = (method_m.group(1) if method_m else "POST").upper()
+            inputs = re.findall(
+                r"<input\b([^>]*)/?>", inner, re.IGNORECASE)
+            password_name = ""
+            user_name = ""
+            extras: list[tuple[str, str]] = []
+            for attrs in inputs:
+                a = attrs.lower()
+                name_m = re.search(r"name\s*=\s*[\"']?([^\"' >]+)",
+                                    attrs, re.IGNORECASE)
+                if not name_m:
+                    continue
+                name = name_m.group(1)
+                value_m = re.search(r"value\s*=\s*[\"']([^\"']*)[\"']",
+                                     attrs, re.IGNORECASE)
+                value = value_m.group(1) if value_m else ""
+                if "type=\"password\"" in a or "type='password'" in a \
+                   or "type=password" in a:
+                    password_name = name
+                    continue
+                lname = name.lower()
+                if not user_name and any(
+                        k in lname for k in ("user", "email",
+                                              "login", "username")):
+                    user_name = name
+                else:
+                    extras.append((name, value))
+            if not password_name or not user_name:
+                continue
+            return {
+                "action": action,
+                "method": method,
+                "user_field": user_name,
+                "password_field": password_name,
+                "extras": extras,
+            }
+        return None
+
+    def _resolve_action(self, ctx, action: str) -> str:
+        if not action:
+            return ctx.full_url
+        try:
+            return up.urljoin(ctx.full_url, action)
+        except Exception:
+            return ctx.full_url
+
+    def _looks_logged_in(self, status: int, body: bytes) -> bool:
+        if 300 <= status < 400:
+            return True
+        if status >= 400:
+            return False
+        body = body[:50_000].lower()
+        if any(m in body for m in _LOGIN_FAIL_MARKERS):
+            return False
+        return any(m in body for m in _LOGIN_SUCCESS_MARKERS)
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        if not getattr(opts, "allow_credential_probes", False):
+            return
+        rule_id = self.meta.id
+
+        # ---- Basic auth path -------------------------------------------
+        if self._basic_challenge(ctx):
+            for username, password in _DEFAULT_CRED_PAIRS:
+                if not ctx.claim_probe(opts, rule_id, "basic",
+                                         f"{username}:{password}"):
+                    return
+                token = base64.b64encode(
+                    f"{username}:{password}".encode("utf-8")).decode("ascii")
+                headers = [(k, v) for k, v in _scrub_headers(ctx.req_headers)
+                            if k.lower() != "authorization"]
+                headers.append(("Authorization", f"Basic {token}"))
+                req = Request(method=ctx.method, url=ctx.full_url,
+                              headers=headers, body=ctx.req_body)
+                try:
+                    pr = send(req)
+                except _SAFE_NETWORK_EXC:
+                    continue
+                if pr.response.status != 401:
+                    yield Finding(
+                        severity="critical",
+                        title=f"Default Basic-auth credentials accepted "
+                              f"({username}:{password})",
+                        description=(
+                            f"The server returned status "
+                            f"{pr.response.status} when presented with "
+                            f"the well-known credential pair "
+                            f"'{username}:{password}'. Default creds in "
+                            "production are a routine source of full-"
+                            "system compromise."
+                        ),
+                        remediation=(
+                            "Force a password change on first login; "
+                            "reject known default credentials at the "
+                            "application layer; require MFA for "
+                            "administrative roles."
+                        ),
+                        cwe="CWE-521",
+                        owasp="A07:2021-Identification and Authentication Failures",
+                        host=ctx.host, url=ctx.full_url,
+                        request_id=ctx.history_id,
+                        payload=f"Authorization: Basic <{username}:{password}>",
+                        evidence=f"status={pr.response.status} (was 401)",
+                    )
+                    return  # one critical finding per host is plenty
+            return  # exhausted basic pairs without success
+
+        # ---- Form path -------------------------------------------------
+        form = self._find_password_form(ctx)
+        if not form:
+            return
+        action_url = self._resolve_action(ctx, form["action"])
+        for username, password in _DEFAULT_CRED_PAIRS:
+            if not ctx.claim_probe(opts, rule_id, "form",
+                                     f"{username}:{password}"):
+                return
+            payload_pairs = list(form["extras"])
+            payload_pairs.append((form["user_field"], username))
+            payload_pairs.append((form["password_field"], password))
+            body = up.urlencode(payload_pairs).encode("utf-8")
+            headers = [(k, v) for k, v in _scrub_headers(ctx.req_headers)
+                        if k.lower() != "content-type"]
+            headers.append(("Content-Type", "application/x-www-form-urlencoded"))
+            method = form["method"] if form["method"] in ("GET", "POST") \
+                else "POST"
+            if method == "GET":
+                # Encode in the query string instead.
+                glue = "&" if "?" in action_url else "?"
+                req = Request(method="GET",
+                              url=action_url + glue + body.decode(),
+                              headers=headers, body=b"")
+            else:
+                req = Request(method="POST", url=action_url,
+                              headers=headers, body=body)
+            try:
+                pr = send(req)
+            except _SAFE_NETWORK_EXC:
+                continue
+            if not self._looks_logged_in(pr.response.status,
+                                          pr.response.body or b""):
+                continue
+            yield Finding(
+                severity="critical",
+                title=f"Default form credentials accepted ({username}:{password})",
+                description=(
+                    f"POSTing the well-known pair '{username}:{password}' "
+                    f"to the form at {action_url} returned a response "
+                    "that looks logged-in (3xx redirect, or a body "
+                    "containing 'logout' / 'dashboard' without "
+                    "'invalid credentials' / 'try again'). Default "
+                    "credentials in production are a routine source of "
+                    "full-system compromise."
+                ),
+                remediation=(
+                    "Force a password change on first login; reject "
+                    "known default credentials at the application "
+                    "layer; require MFA for administrative roles."
+                ),
+                cwe="CWE-521",
+                owasp="A07:2021-Identification and Authentication Failures",
+                host=ctx.host, url=action_url,
+                request_id=ctx.history_id,
+                payload=f"{form['user_field']}={username}&{form['password_field']}={password}",
+                evidence=f"status={pr.response.status}, looks_logged_in=True",
+            )
+            return  # one finding per host
+
+
+BUILTIN_ACTIVE_CHECKS.append(ActiveTLSCheck())
+BUILTIN_ACTIVE_CHECKS.append(SubdomainTakeoverCheck())
+BUILTIN_ACTIVE_CHECKS.append(DefaultCredsSprayCheck())
 
 
 # ---- runner ----
