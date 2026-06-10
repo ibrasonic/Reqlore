@@ -19,7 +19,8 @@
   <dd>
     <span id="attack-progress" aria-live="polite">{{ total }} / {{ total_jobs }}</span>
     <progress id="attack-progress-bar" value="{{ total }}" max="{{ total_jobs }}"
-              aria-label="Requests sent"></progress>
+              aria-label="Requests sent"
+              aria-valuetext="Sent {{ total }} of {{ total_jobs }} requests."></progress>
   </dd>
   {% endif %}
   {% if stop_reason %}

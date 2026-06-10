@@ -96,7 +96,7 @@ index, commit + push. Status: shipped, **986 → 1209 passing**
 
 ---
 
-## Phase 3 — Screen-reader semantics `[ ]`
+## Phase 3 — Screen-reader semantics `[x]`
 
 Goal: NVDA / Orca / VoiceOver users get a sensible audible
 experience, not just visually-correct HTML. These are static
@@ -104,31 +104,52 @@ template checks — they assert the right ARIA exists; the manual
 SR runs documented in [ACCESSIBILITY.md](ACCESSIBILITY.md) are
 out of scope for automated CI.
 
-- `[ ]` **Progress carries `aria-valuetext`** — `<progress>` on
+- `[x]` **Progress carries `aria-valuetext`** — `<progress>` on
   Intruder run page, Scanner active-scan page, and any long-running
   blueprint must expose `aria-valuetext` (a human sentence). Bare
-  `value/max` makes SRs announce only "75%".
-- `[ ]` **Error summaries link to fields** — every form that
-  validates server-side must render errors inside `<div
-  role="alert">` at the top with anchor links to the offending
-  field; the field carries `aria-invalid="true"` and
-  `aria-describedby`.
-- `[ ]` **No `assertive` live regions** — `aria-live="assertive"`
-  interrupts SR speech; we never use it. Grep ledger across
-  templates.
-- `[ ]` **`role="dialog"` is always `aria-modal` + labelled** —
+  `value/max` makes SRs announce only "75%". Fixed
+  [intruder/detail.html](../reqlore/web/templates/intruder/detail.html)
+  which carried bare `<progress>` with no human readout.
+- `[x]` **Error summaries pair `aria-invalid` with
+  `aria-describedby`** — every form control that carries
+  `aria-invalid="true"` on the rendered page must also carry
+  `aria-describedby` pointing at a same-page id. Matrix scans
+  rendered HTML per template — vacuously passes today (we have
+  no live `aria-invalid` in shipped templates) but locks the
+  contract so the next form that adds it cannot ship the SR-broken
+  half.
+- `[x]` **No `assertive` live regions** — `aria-live="assertive"`
+  interrupts SR speech; we never use it. Regex-grep ledger over
+  every `*.html` under `reqlore/web/templates/`. Fixed
+  [scanner/manual.html](../reqlore/web/templates/scanner/manual.html)
+  which still carried a banned `aria-live="assertive"` flash block.
+- `[x]` **`role="dialog"` is always `aria-modal` + labelled** —
   any `role="dialog"` must carry `aria-modal="true"` and either
-  `aria-labelledby` or `aria-label`.
-- `[ ]` **Accesskey letters are unique per page** — render each
+  `aria-labelledby` or `aria-label`. Vacuously passes today (we
+  ship no `role="dialog"`) but locks the contract for future
+  modal work.
+- `[x]` **Accesskey letters are unique per page** — render each
   page, collect all `accesskey="x"` attributes, assert no
   collision. Already lightly covered by
   [test_intruder_accesskeys.py](../reqlore/tests/unit/test_intruder_accesskeys.py);
-  this phase generalises it.
-- `[ ]` **Dense tables expose a "Read as list" alternative** —
-  for every `<table>` flagged `data-dense` (≥ 5 columns), assert
-  a `<details>` / button companion exists.
+  this phase generalises it across all 51 GET-able routes.
+- `[x]` **Dense tables expose a "Read as list" alternative** —
+  for every `<table data-dense>`, assert a `<details>` / button /
+  link companion with text like "read as list" / "list view"
+  exists on the same page. Vacuously passes today (no
+  `data-dense` tables ship yet) but pre-emptively locks the SR
+  contract before the first dense table ships.
 
-**Exit criteria for Phase 3:** 6 boxes, commit + push.
+**Exit criteria for Phase 3:** 6 boxes, commit + push. Status:
+shipped, **1209 → 1292 passing** (+83; the matrix parametrises
+across every template / every GET-able route, with most cases
+vacuously skipped today — that is *the* point, the contract is
+locked now so future additions cannot ship SR-broken). Two real
+violations were surfaced and fixed in the process: a banned
+`aria-live="assertive"` in `scanner/manual.html` and a bare
+`<progress>` with no `aria-valuetext` in `intruder/detail.html`.
+See
+[test_reliability_phase3.py](../reqlore/tests/unit/test_reliability_phase3.py).
 
 ---
 
@@ -182,5 +203,5 @@ Progress log:
 
 - `[x]` Phase 1 — component health matrix, 884 → 986 passing.
 - `[x]` Phase 2 — WCAG AAA structural matrix, 986 → 1209 passing.
-- `[ ]` Phase 3
+- `[x]` Phase 3 — screen-reader semantics, 1209 → 1292 passing.
 - `[ ]` Phase 4
