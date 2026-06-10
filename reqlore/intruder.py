@@ -504,6 +504,20 @@ def _parse_raw_request(raw: bytes) -> tuple[str, str, list[tuple[str, str]], byt
 def template_to_request(rendered: bytes, base_url: str,
                          http_version: str = "1.1") -> Request:
     method, path, headers, body, host = _parse_raw_request(rendered)
+    # Payload substitution changes the body length, so any Content-Length
+    # the operator pasted in from history is now stale. Two engines
+    # (httpx, raw) trust user-supplied CL and would raise / send a
+    # malformed frame; the other two (curl-cffi, h3) strip and re-add it.
+    # Dropping it here normalises the behaviour: every engine recomputes
+    # CL from the actual body bytes. Same logic for Transfer-Encoding --
+    # it can conflict with CL and the framework owns body framing now,
+    # not the template. Operators who deliberately want a stale CL (CL.TE
+    # smuggling research) can use the smuggling tool or hand-craft via
+    # match-replace on the raw engine.
+    headers = [
+        (k, v) for k, v in headers
+        if k.lower() not in ("content-length", "transfer-encoding")
+    ]
     p = urlsplit(base_url)
     scheme = p.scheme or "http"
     if not host:
