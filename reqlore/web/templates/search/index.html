@@ -32,7 +32,7 @@
   <tbody>
     {% for r in results %}
     <tr>
-      <td><a href="{{ url_for('history.detail', hid=r.id) }}">{{ r.id }}</a></td>
+      <td><a href="{{ url_for('history.show', hid=r.id) }}">{{ r.id }}</a></td>
       <td>{{ r.where }}</td>
       <td>{{ r.method }}</td>
       <td class="url">{{ r.url }}</td>

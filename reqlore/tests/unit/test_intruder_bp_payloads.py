@@ -151,3 +151,33 @@ def test_server_path_empty_renders_form_error(client):
     r = _post_path_attack(client, name="wl-blank", path="   ", token=token)
     assert r.status_code == 200
     assert b"Server path is required" in r.data
+
+
+def test_intruder_detail_renders_with_history_link(client, app):
+    """Regression: detail.html linked to non-existent endpoint 'history.detail'.
+
+    The correct endpoint is 'history.show'. Without a seeded result that has a
+    history_id the broken url_for() never fires, so this test seeds one and
+    then GETs the detail page to ensure the link builds cleanly.
+    """
+    proj = app.extensions["reqlore_project"]
+    hid = proj.add_history(
+        host="127.0.0.1", method="POST", url="http://127.0.0.1/login",
+        status=200, duration_ms=5, engine="httpx",
+        raw_req=b"POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\nu=admin",
+        raw_resp=b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    )
+    aid = proj.create_intruder(
+        name="hist-link", attack_type="sniper",
+        template=b"POST /login HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\nu="
+                 + DEFAULT_MARKER.encode() + b"admin" + DEFAULT_MARKER.encode(),
+        positions=[(0, 0)], payloads=[["x"]], options={},
+        url="http://127.0.0.1/login", engine="httpx",
+    )
+    proj.add_intruder_result(
+        attack_id=aid, seq=1, payloads=["x"], status=200,
+        len_resp=2, duration_ms=5, grep_hits="", history_id=hid,
+    )
+    r = client.get(f"/intruder/{aid}")
+    assert r.status_code == 200
+    assert f'/history/{hid}'.encode() in r.data

@@ -179,7 +179,7 @@
       <td>{{ r.duration_ms }}</td>
       <td>{% if r.matched %}<span aria-label="grep matched">✓ yes</span>{% else %}<span aria-label="grep did not match">— no</span>{% endif %}</td>
       <td>{{ r.grep_hits }}</td>
-      <td>{% if r.history_id %}<a href="{{ url_for('history.detail', hid=r.history_id) }}">view</a>{% endif %}</td>
+      <td>{% if r.history_id %}<a href="{{ url_for('history.show', hid=r.history_id) }}">view</a>{% endif %}</td>
     </tr>
     {% else %}
     <tr><td colspan="8">

@@ -141,6 +141,20 @@ def test_search_index_empty(client):
     assert r.status_code == 200
 
 
+def test_search_renders_result_link(client, app):
+    """Regression: search/index.html linked to non-existent 'history.detail'."""
+    proj = app.extensions["reqlore_project"]
+    hid = proj.add_history(
+        host="127.0.0.1", method="GET", url="http://127.0.0.1/needle",
+        status=200, duration_ms=1, engine="httpx",
+        raw_req=b"GET /needle HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        raw_resp=b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok",
+    )
+    r = client.get("/search/?q=needle&where=url")
+    assert r.status_code == 200
+    assert f'/history/{hid}'.encode() in r.data
+
+
 def test_cues_wav_is_audio(client):
     r = client.get("/cues/ok.wav")
     assert r.status_code == 200
