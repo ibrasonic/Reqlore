@@ -119,29 +119,50 @@ passing (1 skipped, unchanged). 21 new tests in
 
 ---
 
-## Phase 3 — Tier C: architectural changes `[ ]`
+## Phase 3 — Tier C: architectural changes `[x]`
 
 3 items. Each changes `ActiveOptions` and/or the scan loop; sized
 to a session of focused work.
 
-- `[ ]` **2 · Stored XSS (2-step probe)** — inject a unique marker
+- `[x]` **2 · Stored XSS (2-step probe)** — inject a unique marker
   into each param, then re-fetch the same URL (and up to 2 sibling
   paths) without the marker; flag if the marker still appears.
   Requires the scanner to keep a per-token "injected at" map and
   re-issue a GET on the next pass.
-- `[ ]` **10 · IDOR (second identity)** — extend `ActiveOptions`
+  *Shipped:* `StoredXSSCheck` only runs on POST/PUT/PATCH. For each
+  query/form param it sends the recorded request with a marker
+  (`\"'><wbr-stored-<hex>>`), then re-fetches the bare `base_url`
+  as a clean GET. Fires high (CWE-79) when the marker echoes from
+  the GET. Counts as one logical probe per (rule, location, key).
+- `[x]` **10 · IDOR (second identity)** — extend `ActiveOptions`
   with `alt_identity: dict[str, str] | None` (e.g.
   `{"Cookie": "session=B…"}`); for every probe, also send the same
   request with `alt_identity`. If both responses are 200 and bodies
   are ≥ 90% similar, flag IDOR. Identity defaults to off.
-- `[ ]` **9 · Race condition / TOCTOU** — uses `h2_tool` to send
+  *Shipped:* `IDORAltIdentityCheck` is silent unless
+  `alt_identity` is set. Reuses `_byte_3gram_jaccard` (lifted out of
+  the web-cache-deception helper) with a 0.9 threshold. Evidence
+  carries header names only — never the cookie value.
+- `[x]` **9 · Race condition / TOCTOU** — uses `h2_tool` to send
   N parallel requests with the HTTP/2 last-byte synchronisation
   trick. Fires when the same endpoint returns at least one response
   with a state that the single-request baseline never produced
   (e.g. duplicate-resource-created status differing across runs).
+  *Shipped:* `RaceConditionCheck` opt-in via
+  `ActiveOptions.allow_race_probes`. POST/PUT/PATCH/DELETE only, and
+  only when the baseline succeeded. Fans the request out 8× in a
+  `ThreadPoolExecutor` (the HTTP/2 last-byte trick needs raw socket
+  control we don't have via the standard sender; this is the
+  best-effort HTTP/1.1 equivalent and documents the gap in the
+  module docstring). Fires high (CWE-362) when ≥ 2 of the parallel
+  sub-400 responses are creation-style statuses.
 
 **Exit criteria for Phase 3:** 3 boxes ticked, no regression in
 existing tests, commit + push.
+
+*Phase 3 complete:* 3 / 3 items shipped. Tests: 856 → 871
+passing (1 skipped unchanged). 15 new tests in
+[`test_active_gap_phase3.py`](../reqlore/tests/unit/test_active_gap_phase3.py).
 
 ---
 
@@ -181,5 +202,5 @@ Progress log:
 - `[x]` Phase 1 — 1a (5 items, 809 → 824) + 1b (3 items, 824 → 835),
   all 8 Tier-A gap-list items shipped.
 - `[x]` Phase 2 — 3 items (14, 13, 15), 835 → 856 passing.
-- `[ ]` Phase 3
+- `[x]` Phase 3 — 3 items (2, 10, 9), 856 → 871 passing.
 - `[ ]` Phase 4

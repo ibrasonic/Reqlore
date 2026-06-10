@@ -127,6 +127,13 @@ class ActiveOptions:
     # sending login attempts to a real production system is a noisy and
     # potentially account-locking action.
     allow_credential_probes: bool = False
+    # Phase 3 — opt-in race-condition probe (parallel state-changing
+    # requests). Off by default; can create duplicate resources.
+    allow_race_probes: bool = False
+    # Phase 3 — second identity for IDOR. Dict of header name -> value
+    # to swap/add when re-sending each baseline (e.g. an alternate
+    # session cookie). None disables the IDOR check.
+    alt_identity: dict[str, str] | None = None
 
 
 # ---- context: parsed snapshot of a recorded history row ----
@@ -2765,6 +2772,333 @@ class DefaultCredsSprayCheck(ActiveCheck):
 BUILTIN_ACTIVE_CHECKS.append(ActiveTLSCheck())
 BUILTIN_ACTIVE_CHECKS.append(SubdomainTakeoverCheck())
 BUILTIN_ACTIVE_CHECKS.append(DefaultCredsSprayCheck())
+
+
+# =============== Phase 3 (Tier C) — architectural changes =====================
+#
+# Items #2, #10, #9. Each one needs more than a single round-trip:
+# stored XSS does inject + re-fetch, IDOR sends each request twice
+# under two identities, and the race check fans the same request out
+# in parallel.
+
+
+def _byte_3gram_jaccard(a: bytes, b: bytes) -> float:
+    """Token Jaccard on byte 3-grams over the first 50 KB.
+
+    Same trick as ``WebCacheDeceptionCheck._similarity`` — cheap and
+    good enough for 'is this the same page or a different one?'.
+    """
+    if not a or not b:
+        return 0.0
+    a = a[:50_000]
+    b = b[:50_000]
+    ga = {a[i:i + 3] for i in range(0, len(a) - 2)}
+    gb = {b[i:i + 3] for i in range(0, len(b) - 2)}
+    if not ga or not gb:
+        return 0.0
+    inter = len(ga & gb)
+    union = len(ga | gb)
+    return inter / union if union else 0.0
+
+
+class StoredXSSCheck(ActiveCheck):
+    """#2 — stored XSS (2-step probe).
+
+    For every query / form parameter on a state-changing request,
+    inject a marker via the recorded method, then re-fetch the same
+    URL as a clean GET (no marker in the request) and flag if the
+    marker still appears in the body. The two probes share a single
+    ``claim_probe`` slot per parameter — budget-wise they count as
+    one logical probe.
+    """
+
+    meta = RuleMeta(
+        id="active:xss-stored",
+        title="Stored XSS marker reflected on re-fetch",
+        default_severity="high",
+        cwe="CWE-79",
+        owasp="A03:2021-Injection",
+        description=(
+            "Inject a marker into a state-changing request, then re-fetch "
+            "the resource with no marker in the URL or body. If the marker "
+            "appears in the re-fetch the input is being persisted and "
+            "rendered without HTML-encoding."
+        ),
+        remediation=(
+            "HTML-encode persisted user input on output, or store and "
+            "render via a templating engine that auto-escapes."
+        ),
+        tags=("xss", "stored", "injection"),
+    )
+    name = "xss-stored"
+    description = ("Inject a marker via the recorded request, then "
+                   "re-fetch the same URL and flag if the marker is "
+                   "still rendered.")
+
+    PROBE_TPL = '"\'><wbr-stored-{m}>'
+
+    # Methods we treat as 'this could store something server-side'.
+    _STATEFUL_METHODS = ("POST", "PUT", "PATCH")
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        if ctx.method.upper() not in self._STATEFUL_METHODS:
+            return
+
+        for loc, pairs in (("query", ctx.query_pairs()),
+                           ("form", ctx.form_pairs())):
+            for key, _ in pairs:
+                if not ctx.claim_probe(opts, rule_id, loc, key):
+                    continue
+                marker = secrets.token_hex(6)
+                probe = self.PROBE_TPL.format(m=marker)
+
+                inject = _mutated(ctx, key, probe, loc)
+                inj_pr = send(inject)
+                if inj_pr.response.status == 0:
+                    continue
+                # If the inject already echoed it back this is a
+                # *reflected* XSS — leave that to ReflectedXSSCheck.
+
+                # Step 2: re-fetch the base URL with no marker.
+                fetch_url = ctx.base_url
+                fetch_headers = _scrub_headers(ctx.req_headers)
+                refetch = Request(
+                    method="GET", url=fetch_url,
+                    headers=fetch_headers, body=b"",
+                )
+                rf_pr = send(refetch)
+                if rf_pr.response.status == 0:
+                    continue
+                if probe.encode() in rf_pr.response.body:
+                    yield Finding(
+                        severity="high",
+                        title="Stored XSS marker reflected on re-fetch",
+                        description=(
+                            "A marker payload sent in the '{p}' {l} "
+                            "parameter of a {m} request was still "
+                            "present in the body returned by a clean "
+                            "GET of the same URL afterwards. The input "
+                            "is being persisted and rendered without "
+                            "HTML-encoding."
+                        ).format(p=key, l=loc, m=ctx.method.upper()),
+                        remediation=(
+                            "HTML-encode persisted user input on output, "
+                            "or use an auto-escaping templating engine."
+                        ),
+                        cwe="CWE-79", owasp="A03:2021-Injection",
+                        host=ctx.host, url=ctx.full_url,
+                        request_id=ctx.history_id,
+                        payload=probe,
+                        evidence=(f"{loc} param '{key}' echoed by clean "
+                                   f"GET {fetch_url}"),
+                    )
+
+
+class IDORAltIdentityCheck(ActiveCheck):
+    """#10 — IDOR via second identity.
+
+    Re-send the recorded request with the headers in
+    ``ActiveOptions.alt_identity`` swapped/added. If the alternate
+    identity also gets a 200 whose body is highly similar to the
+    baseline, the resource is not enforcing per-user authorisation.
+    Defaults to off (``alt_identity = None``).
+    """
+
+    meta = RuleMeta(
+        id="active:idor-alt-identity",
+        title="Insecure direct object reference (alt identity)",
+        default_severity="high",
+        cwe="CWE-639",
+        owasp="A01:2021-Broken Access Control",
+        description=(
+            "Repeat the recorded request under a different identity "
+            "(supplied via ActiveOptions.alt_identity). If both responses "
+            "are 200 and the bodies are highly similar, the resource is "
+            "not scoped to the requesting user."
+        ),
+        remediation=(
+            "Enforce per-user authorisation on every read/write of an "
+            "object identified by a guessable parameter; reject "
+            "cross-user references at the controller layer."
+        ),
+        tags=("authz", "idor"),
+    )
+    name = "idor-alt-identity"
+    description = ("Send each recorded request again with an alternate "
+                   "identity; flag matching 200 responses with similar bodies.")
+
+    SIMILARITY_THRESHOLD = 0.9
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        if not opts.alt_identity:
+            return
+        if ctx.resp_status != 200 or not ctx.resp_body:
+            return
+
+        rule_id = self.meta.id
+        # One probe per (rule, row); key on the URL so we don't repeat
+        # for the same logical resource if the row is replayed.
+        if not ctx.claim_probe(opts, rule_id, "row", ctx.full_url):
+            return
+
+        # Swap/add the alt-identity headers on the recorded request.
+        headers = _scrub_headers(ctx.req_headers)
+        for k, v in opts.alt_identity.items():
+            headers = _replace_header_value(headers, k, v)
+
+        req = Request(method=ctx.method, url=ctx.full_url,
+                       headers=headers, body=ctx.req_body)
+        try:
+            pr = send(req)
+        except _SAFE_NETWORK_EXC:
+            return
+
+        if pr.response.status != 200 or not pr.response.body:
+            return
+
+        sim = _byte_3gram_jaccard(ctx.resp_body, pr.response.body)
+        if sim < self.SIMILARITY_THRESHOLD:
+            return
+
+        # Surface the alt-identity header names (not values) in evidence
+        # so the report doesn't leak whatever cookie the user supplied.
+        alt_keys = ", ".join(sorted(opts.alt_identity.keys()))
+        yield Finding(
+            severity="high",
+            title="Insecure direct object reference (alt identity)",
+            description=(
+                "The recorded request returned 200 under the original "
+                "identity. Resending it with the alt-identity headers "
+                "({k}) also returned 200, and the bodies are {pct}% "
+                "similar (>= {thr}%). The resource is not enforcing "
+                "per-user authorisation."
+            ).format(k=alt_keys, pct=int(sim * 100),
+                     thr=int(self.SIMILARITY_THRESHOLD * 100)),
+            remediation=(
+                "Enforce per-user authorisation on every access to an "
+                "object identified by a guessable parameter; reject "
+                "cross-user references at the controller layer."
+            ),
+            cwe="CWE-639", owasp="A01:2021-Broken Access Control",
+            host=ctx.host, url=ctx.full_url,
+            request_id=ctx.history_id,
+            payload=f"alt-identity headers: {alt_keys}",
+            evidence=f"jaccard={sim:.2f}, both responses 200",
+        )
+
+
+class RaceConditionCheck(ActiveCheck):
+    """#9 — race condition / TOCTOU on state-changing endpoints.
+
+    Re-issues the recorded request N times in parallel and flags when
+    the parallel run produces strictly more sub-400 responses than the
+    baseline single send. Off by default
+    (``ActiveOptions.allow_race_probes``); only inspects state-changing
+    methods (POST / PUT / PATCH / DELETE).
+
+    The original gap-list called for the HTTP/2 last-byte sync trick,
+    which needs raw socket control we don't have through the normal
+    sender. This is the best-effort HTTP/1.1 equivalent: a thread-pool
+    fan-out. False-negatives are possible against tightly-locked
+    endpoints, but a true race usually shows up well above N=2 anyway.
+    """
+
+    meta = RuleMeta(
+        id="active:race-condition",
+        title="Race condition: parallel duplicates accepted",
+        default_severity="high",
+        cwe="CWE-362",
+        owasp="A04:2021-Insecure Design",
+        description=(
+            "Re-issue the recorded state-changing request in parallel. "
+            "If two or more parallel responses succeed where the baseline "
+            "single request only allowed one, the endpoint is not "
+            "serialising concurrent access."
+        ),
+        remediation=(
+            "Serialise state-changing operations with a database lock, "
+            "unique constraint, or idempotency key; reject duplicate "
+            "submissions inside the same window."
+        ),
+        tags=("race", "logic"),
+    )
+    name = "race-condition"
+    description = ("Send N parallel copies of state-changing requests; "
+                   "flag when more sub-400 responses come back than a "
+                   "single baseline send produced.")
+
+    _STATEFUL_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+    _PARALLEL = 8
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        if not opts.allow_race_probes:
+            return
+        if ctx.method.upper() not in self._STATEFUL_METHODS:
+            return
+        if ctx.resp_status >= 400:
+            return  # baseline failed; nothing to race against
+
+        rule_id = self.meta.id
+        if not ctx.claim_probe(opts, rule_id, "row", ctx.full_url):
+            return
+
+        req = _baseline(ctx)
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _send_one(_i: int) -> int:
+            try:
+                pr = send(req)
+                return int(pr.response.status or 0)
+            except _SAFE_NETWORK_EXC:
+                return 0
+
+        statuses: list[int] = []
+        with ThreadPoolExecutor(max_workers=self._PARALLEL) as pool:
+            statuses = list(pool.map(_send_one, range(self._PARALLEL)))
+
+        successes = [s for s in statuses if 0 < s < 400]
+        if len(successes) < 2:
+            return
+
+        # Distinguish "duplicate created" (multiple 2xx) from "all
+        # responded the same idempotent way" (e.g. all 304).
+        creates = [s for s in successes if s in (200, 201, 202, 204)]
+        if len(creates) < 2:
+            return
+
+        yield Finding(
+            severity="high",
+            title="Race condition: parallel duplicates accepted",
+            description=(
+                "{n} parallel copies of the recorded {m} request produced "
+                "{k} sub-400 responses ({creates}). The endpoint accepted "
+                "concurrent state changes that the single-request baseline "
+                "(status {b}) only allowed one of."
+            ).format(n=self._PARALLEL, m=ctx.method.upper(),
+                     k=len(successes), creates=creates, b=ctx.resp_status),
+            remediation=(
+                "Serialise state-changing operations with a unique "
+                "database constraint, row-level lock, or idempotency "
+                "key; reject duplicate submissions inside the same "
+                "window."
+            ),
+            cwe="CWE-362", owasp="A04:2021-Insecure Design",
+            host=ctx.host, url=ctx.full_url,
+            request_id=ctx.history_id,
+            payload=f"parallel x{self._PARALLEL}",
+            evidence=f"statuses={statuses}",
+        )
+
+
+BUILTIN_ACTIVE_CHECKS.append(StoredXSSCheck())
+BUILTIN_ACTIVE_CHECKS.append(IDORAltIdentityCheck())
+BUILTIN_ACTIVE_CHECKS.append(RaceConditionCheck())
 
 
 # ---- runner ----
