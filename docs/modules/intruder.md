@@ -46,9 +46,20 @@ payload-processor pipeline that includes per-payload JWT signing.
 | `clusterbomb` | Cluster Bomb — every combination (cartesian)        | up to 4 (cartesian product)         |
 
 Sets 2-4 are hidden in a `<details>` element on the form, opened by default
-only when you pick Pitchfork or Cluster Bomb. If the current attack type only
-uses Set 1, the form notes that anything in Sets 2-4 is kept for later but
-ignored on this submission.
+only when you pick Pitchfork or Cluster Bomb. The form itself preserves any
+text you typed across the page (so switching attack type doesn't wipe the
+textareas in your current browser tab), but **on submit only the sets the
+attack type actually consumes are saved** with the attack:
+
+- `sniper` / `battering` keep Set 1 only — anything in Sets 2-4 is
+  silently dropped by `_payload_sources_from_form` (`return sets[:1]`).
+  It is **not** stored on the attack record and **not** available if you
+  later edit / clone the attack.
+- `pitchfork` / `clusterbomb` keep every non-empty set, up to four.
+
+If you typed something into Set 2 and then changed your mind about the
+attack type, switch to Pitchfork or Cluster Bomb before clicking
+**Create attack**, or paste the contents elsewhere first.
 
 ## Payload sources
 
