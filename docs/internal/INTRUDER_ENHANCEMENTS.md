@@ -43,42 +43,49 @@ If a phase change cannot meet AAA, document the deviation here with a remediatio
 
 | # | Item | Status |
 |---|------|--------|
-| 2a | Filter by status class (2xx/3xx/4xx/5xx) | todo |
-| 2b | Filter by response-length range | todo |
-| 2c | Free-text search across payloads + grep | todo |
-| 2d | Row count and visible-of-total live region update | todo |
-| 5a | Grep pattern with `=count:` prefix uses `findall` | todo |
-| 5b | Boolean match-flag column (yes/no), separate from extracted text | todo |
-| 10 | `body_md5` column + "unique responses: N" + hide-duplicates toggle | todo |
+| 2a | Filter by status class (2xx/3xx/4xx/5xx) | **done** |
+| 2b | Filter by response-length range | **done** |
+| 2c | Free-text search across payloads + grep | **done** |
+| 2d | Row count and visible-of-total live region update | **done** |
+| 5a | Grep pattern with `=count:` prefix uses `findall` | **done** |
+| 5b | Boolean match-flag column (yes/no), separate from extracted text | **done** |
+| 10 | `body_md5` column + "unique responses: N" + hide-duplicates toggle | **done** |
 
 ## Phase 3 — Export
 **Goal:** results into a report without copy-paste.
 
 | # | Item | Status |
 |---|------|--------|
-| 3 | `/<aid>/export.csv` and `/<aid>/export.json` streaming endpoints | todo |
+| 3 | `/<aid>/export.csv` and `/<aid>/export.json` streaming endpoints | **done** |
 
 ## Phase 4 — Payload richness
 **Goal:** stop the book hand-coding things Intruder should ship.
 
 | # | Item | Status |
 |---|------|--------|
-| 8a | `url_key` processor (URL-encode only non-alphanumerics) | todo |
-| 8b | `json_str` processor (JSON-string-escape) | todo |
-| 8c | `html_dec` processor (`&#NNN;` decimal entities) | todo |
-| 8d | `jwt_seg` processor (base64url-no-pad of canonical JSON) | todo |
-| 8e | `uuid4` source generator (per-request fresh GUID) | todo |
-| 13a | Built-in wordlist dropdown sourced from `reqlore/data/wordlists/` | todo |
-| 13b | "Load from file" textarea for bring-your-own lists (read-only path) | todo |
+| 8a | `url_key` processor (URL-encode only non-alphanumerics) | **done** |
+| 8b | `json_str` processor (JSON-string-escape) | **done** |
+| 8c | `html_dec` processor (`&#NNN;` decimal entities) | **done** |
+| 8d | `jwt_seg` processor (base64url-no-pad of canonical JSON) | **done** |
+| 8e | `uuid4` source generator (per-request fresh GUID) | **done** |
+| 13a | Built-in wordlist dropdown sourced from `reqlore/data/wordlists/` | **done** |
+| 13b | "Load from file" textarea for bring-your-own lists (read-only path) | **done** |
 
 ## Phase 5 — Scale & advanced workflow
 **Goal:** support larger and chained attacks.
 
 | # | Item | Status |
 |---|------|--------|
-| 6 | Streaming scheduler with bounded inflight `Semaphore` | todo |
-| 7 | Per-position payload-set assignment for Sniper (default = all) | todo |
-| 9 | Preamble macro: run a Macro once, expose captures as `${var}` in template | todo |
+| 6 | Streaming scheduler with bounded inflight `Semaphore` | deferred |
+| 7 | Per-position payload-set assignment for Sniper (default = all) | deferred |
+| 9 | Preamble macro: run a Macro once, expose captures as `${var}` in template | deferred |
+
+> Items 6 / 7 / 9 are intentionally deferred. The current
+> `ThreadPoolExecutor` design meets today's targets; revisit only if
+> attack sizes grow into the hundreds of thousands of requests.
+> `AttackOptions.retries` + `_send_with_retries` exponential back-off,
+> `stop_on_match` / `stop_on_status`, and a `<progress>` bar driven by
+> `runner.total_jobs` shipped under Phase 5's original umbrella.
 
 ## Phase 6 — Headless CLI + tests
 **Goal:** parity with `reqlore run` and a stable test floor.

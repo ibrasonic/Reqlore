@@ -73,7 +73,11 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | Auto-refresh while running (server-driven, no JS) | ✅ | `?auto=1` + `/results.json?since=<seq>`. |
 | Engine picker (4 transports + curl-cffi profiles) | ✅ | |
 | Per-host concurrency limiter | ✅ | |
-| Streaming CSV / JSON export | 🚧 | Phase 3 of Intruder enhancement plan. |
+| Results triage — status-class / length-range / free-text / matched-only / dedupe-by-body-md5 | ✅ | |
+| Streaming CSV / JSON export (filter-aware) | ✅ | `/<aid>/export.csv`, `/<aid>/export.json`. |
+| Built-in wordlists (common-pw / usernames / LFI / XSS / SQLi / subdomains) + `load_wordlist_file()` | ✅ | 5 MB / 100k-line caps. |
+| Headless CLI (`reqlore intruder {run,list,show,export}`) | ✅ | YAML / JSON spec via `intruder_spec.py`; `--dry-run`. |
+| Per-position payload-set assignment for Sniper / preamble macro / bounded-inflight scheduler | 🚧 | Phase 5 items 6/7/9 of intruder enhancement plan. |
 
 ## Decoder / encoder
 

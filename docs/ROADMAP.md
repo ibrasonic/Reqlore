@@ -186,11 +186,15 @@ Scanner gap-closure (16 items from the 2026-06-09 audit, all `[x]` shipped):
 - [x] Web-cache deception (`/x.css` / `/x.js` suffix probe)
 - [x] Resumable scans (`test_resumable_scans_b5.py`); cancel mid-row leaves a recoverable checkpoint
 
-Intruder enhancement plan (phases 0–1 shipped, phases 2–4 in progress):
+Intruder enhancement plan (phases 0–6 shipped, three Phase-5 items deferred):
 
 - [x] **P0** template AAA fixes — sort links toggle `desc`, long payload cells wrap in `<details>`, payload-set 2-4 visibility tied to attack type (server-rendered, no JS), detail page action buttons in a labelled `<nav>` toolbar, `role="status"` for last-known runner state
 - [x] **P1** operator control — pause / resume POST routes + buttons + status update, `?auto=1` server-driven refresh (with stop toggle), `/<aid>/results.json?since=<seq>`, cancel event check before each network call
-- [ ] **P2** results triage — status-class filter, length-range filter, free-text search, dedupe by `body_md5`
-- [ ] **P3** export — `/<aid>/export.csv`, `/<aid>/export.json`
+- [x] **P2** results triage — status-class filter, length-range filter, free-text contains, matched-only toggle, dedupe by `body_md5` (server-side, filter form on the detail page)
+- [x] **P3** export — `/<aid>/export.csv` (9 cols) and `/<aid>/export.json` streaming endpoints; both honour the visible filter
+- [x] **P4** payload richness — `ARG_PROCESSORS` (prefix / suffix / repeat), extra `PROCESSORS` (length / strip / b64dec / sql-quote), built-in `WORDLISTS` (common-passwords / usernames / LFI / XSS / SQLi / subdomains), `load_wordlist_file()` with 5 MB / 100 k-line caps
+- [x] **P5** scale — `AttackOptions.retries` + `_send_with_retries` exponential back-off, `stop_on_match` / `stop_on_status` cancel logic, `runner.total_jobs` powers a `<progress>` bar in the detail view
+- [x] **P6** headless CLI + tests — `reqlore intruder {run,list,show,export}` subcommands wired via `intruder_spec.py`; YAML / JSON spec files with payload sources resolved relative to the spec dir; `--dry-run` reports planned request count without sending
+- [ ] **Deferred** (Phase 5 items 6 / 7 / 9): streaming scheduler with bounded inflight `Semaphore`, per-position payload-set assignment for Sniper, preamble macro that runs a Macro once and exposes captures as `${var}` in the template. The current `ThreadPoolExecutor` design meets today's targets; revisit if attack sizes grow into the hundreds of thousands of requests.
 
 Phase totals: **884 → 1368 passing, 239 skipped**. All routes still serve 200; all CLI subcommands still respond to `--help` with exit code 0.
