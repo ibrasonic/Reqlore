@@ -2,7 +2,7 @@
 
 Burp-grade web application pentesting suite. Python-native. Accessible-first. Local web UI.
 
-> **Status:** Phase 8 complete — 346/346 unit tests pass. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status:** Active development past Phase 9. Full unit suite: **1368 passed, 239 skipped**. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## What it is
 
@@ -69,7 +69,7 @@ cd Reqlore
 py -m venv .venv
 .venv\Scripts\Activate.ps1            # Linux/macOS: source .venv/bin/activate
 py -m pip install -e ".[dev]"         # editable install + test/lint tools
-py -m pytest reqlore/tests/unit -q    # should be 346 passed
+py -m pytest reqlore/tests/unit -q    # should be 1368 passed, 239 skipped
 reqlore init demo.rlr
 reqlore both --project demo.rlr
 ```
@@ -113,18 +113,26 @@ Project file persists in `./data/my.rlr`. Both listeners are pinned to loopback 
 
 ## Documentation
 
+Start with [`docs/USAGE.md`](docs/USAGE.md) — it indexes everything else.
+
 | File | What |
 |---|---|
-| [`docs/USAGE.md`](docs/USAGE.md) | **Complete user guide — every module, every shortcut, every flag.** |
-| [`docs/STORY-blind-pentester.txt`](docs/STORY-blind-pentester.txt) | A narrated, blind-pentester walkthrough of vuln-bank / vuln-shop / vuln-social. |
-| [`docs/PLAN.md`](docs/PLAN.md) | Top-level why + non-goals |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Process model, engines, storage |
-| [`docs/FEATURES.md`](docs/FEATURES.md) | Module-by-module status |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phase plan |
-| [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md) | WCAG checklist + patterns |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model of the tool |
-| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Plugin API |
-| [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Dev workflow |
+| [`docs/USAGE.md`](docs/USAGE.md) | **Entry point.** Install, first run, CLI, links into the per-module guides. |
+| [`docs/modules/`](docs/modules/) | One reference page per panel (Proxy, History, Repeater, Intruder, Scanner, …). |
+| [`docs/engines.md`](docs/engines.md) | The six request engines (`httpx`, `raw`, `h3`, `curl-cffi:*`) and when to pick each. |
+| [`docs/workflows.md`](docs/workflows.md) | End-to-end worked engagements (auth bypass, IDOR, SSRF, JWT, smuggling). |
+| [`docs/KEYBINDINGS.md`](docs/KEYBINDINGS.md) | Consolidated keyboard map across every page. |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Symptom → fix lookup. |
+| [`docs/login.md`](docs/login.md) | argon2id UI password gate, `--no-password`, reverse-proxy fronting. |
+| [`docs/browser-launcher.md`](docs/browser-launcher.md) | `reqlore browser` Firefox cache, prefetch, WSL → host, auto-deps. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Process model, engines, storage. |
+| [`docs/FEATURES.md`](docs/FEATURES.md) | Module-by-module status matrix. |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phase plan. |
+| [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md) | WCAG 2.2 AA conformance + AAA-strict patterns. |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model of the tool itself. |
+| [`docs/PLUGINS.md`](docs/PLUGINS.md) | Plugin API. |
+| [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Dev workflow. |
+| [`docs/internal/`](docs/internal/) | Historical dev plans (scanner gaps, reliability matrix, intruder enhancements). Not user-facing. |
 
 ## License
 
