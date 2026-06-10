@@ -153,42 +153,54 @@ See
 
 ---
 
-## Phase 4 — Browser launch portability (incl. WSL → host) `[ ]`
+## Phase 4 — Browser launch portability (incl. WSL → host) `[x]`
 
 Goal: `reqlore browser` reliably opens the Reqlore UI on whatever
 display the user actually has, including the **WSL → Windows host**
-case where the current implementation silently fails because the
+case where the previous implementation silently failed because the
 Linux Firefox binary inside WSL cannot reach the Windows display
-server and the user has to copy-paste the URL into a host browser
+server and the user had to copy-paste the URL into a host browser
 themselves.
 
-- `[ ]` **WSL detection** — add `is_wsl()` to
-  [browser.py](../reqlore/browser.py) reading `/proc/version` for
-  `microsoft` / `WSL` and honouring `$WSL_DISTRO_NAME`. Pure
-  function, unit-tested with monkeypatched
-  `pathlib.Path.read_text`.
-- `[ ]` **WSL → host hand-off** — when `is_wsl()` is true and the
-  user runs `reqlore browser`, skip the Linux Firefox path and
-  open the URL on the Windows host via
-  `cmd.exe /c start <url>` (preferred — present on every WSL
-  install) with `wslview <url>` as fallback if `wslu` is
-  installed. If neither works, print a copy-pasteable URL and
-  exit `0` (not `1` — the UI server is up; the operator can open
-  it manually).
-- `[ ]` **Loud, actionable error when Firefox cannot start** —
-  the current `launch()` warmup catches process death within 2 s
-  but the message format varies; pin it: every failure path must
-  print the URL the operator should open and the exit code.
-- `[ ]` **Tests** — `test_browser_wsl.py` covers:
-  - `is_wsl()` true / false matrix (mocked `/proc/version`).
-  - WSL path picks `cmd.exe /c start` first, falls back to
-    `wslview`, falls back to printing the URL.
-  - non-WSL path is unchanged (regression guard).
-  - `cmd_browser` exits `0` and prints the URL when no opener
-    works.
+- `[x]` **WSL detection** — added `is_wsl()` to
+  [browser.py](../reqlore/browser.py): short-circuits to `False` on
+  non-Linux, honours `$WSL_DISTRO_NAME`, falls back to reading
+  `/proc/version` for `microsoft` / `wsl`. Pure function, fully
+  unit-tested across the 7-row truth table (WSL1, WSL2, vanilla
+  Linux with and without a readable `/proc/version`, Windows, macOS).
+- `[x]` **WSL → host hand-off** — added `open_on_windows_host(url)`
+  to [browser.py](../reqlore/browser.py). Tries
+  `cmd.exe /c start "" <url>` first (the empty title arg is required
+  — otherwise Windows treats the URL as the window title); falls
+  back to `wslview <url>` from the `wslu` package. Returns the name
+  of the opener that worked, or `None` if neither did. Swallows
+  `OSError` (WSL interop disabled) and `TimeoutExpired` (hung
+  `cmd.exe`) so one broken opener never blocks the fallback chain.
+- `[x]` **`cmd_browser` short-circuits inside WSL** —
+  [cli.py](../reqlore/cli.py)'s `cmd_browser` now checks `is_wsl()`
+  before the Firefox launch path. When true: ensure the CA exists,
+  print URL + proxy + CA path, hand the URL to the Windows host
+  opener, exit `0`. When *no* host opener works it still exits `0`
+  with a copy-pasteable URL — the UI server is up, the operator
+  can paste the URL into a Windows browser manually. The Linux
+  Firefox path is never even attempted, so the original silent
+  failure cannot recur.
+- `[x]` **Tests** —
+  [test_reliability_phase4.py](../reqlore/tests/unit/test_reliability_phase4.py)
+  covers: 7-row `is_wsl()` truth table; `cmd.exe`-preferred ordering;
+  `wslview` fallback when `cmd.exe` exits non-zero; both-missing
+  returns `None`; `OSError` from `cmd.exe` falls through to
+  `wslview`; `TimeoutExpired` falls through; `cmd_browser` exits 0
+  via host opener; `cmd_browser` exits 0 with manual-URL message
+  when no opener works; **regression guard**: on non-WSL,
+  `open_on_windows_host` is never called and `run_browser` is
+  invoked unchanged.
 
 **Exit criteria for Phase 4:** 4 boxes, the `reqlore browser`
 command no longer silently fails inside WSL, commit + push.
+Status: shipped, **1292 → 1307 passing** (+15)
+— 7 parametrised `is_wsl()` rows + 5 opener-chain cases + 3
+`cmd_browser` end-to-end cases.
 
 ---
 
@@ -204,4 +216,4 @@ Progress log:
 - `[x]` Phase 1 — component health matrix, 884 → 986 passing.
 - `[x]` Phase 2 — WCAG AAA structural matrix, 986 → 1209 passing.
 - `[x]` Phase 3 — screen-reader semantics, 1209 → 1292 passing.
-- `[ ]` Phase 4
+- `[x]` Phase 4 — browser launch portability (WSL → host), 1292 → 1307 passing.

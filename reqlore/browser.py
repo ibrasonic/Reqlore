@@ -104,6 +104,69 @@ def cache_root() -> Path:
     return d
 
 
+# ---------------------------------------------------------------------------
+# WSL detection + Windows-host hand-off
+# ---------------------------------------------------------------------------
+
+def is_wsl() -> bool:
+    """True when running inside the Windows Subsystem for Linux.
+
+    Detects WSL1 and WSL2 by reading ``/proc/version`` (contains
+    ``microsoft`` or ``WSL`` on every WSL kernel since 2017) and by
+    honouring the ``$WSL_DISTRO_NAME`` env var that WSL2 always sets.
+    Pure function, safe to call on any platform — Windows / macOS /
+    native Linux all return False.
+    """
+    if platform.system() != "Linux":
+        return False
+    if os.environ.get("WSL_DISTRO_NAME"):
+        return True
+    try:
+        proc_version = Path("/proc/version").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    lowered = proc_version.lower()
+    return "microsoft" in lowered or "wsl" in lowered
+
+
+def open_on_windows_host(url: str, *, timeout_s: float = 10.0) -> str | None:
+    """Open *url* on the Windows host browser from inside WSL.
+
+    Tries ``cmd.exe /c start "" <url>`` first (present on every WSL
+    install) and falls back to ``wslview <url>`` (from the ``wslu``
+    package). Returns the name of the opener that worked
+    (``"cmd.exe"`` or ``"wslview"``), or ``None`` if neither succeeded.
+
+    The empty-string title in ``start "" <url>`` is required: Windows
+    treats the first quoted argument as the window title, not the URL.
+    """
+    candidates: list[tuple[str, list[str]]] = []
+    cmd_exe = shutil.which("cmd.exe") or "/mnt/c/Windows/System32/cmd.exe"
+    if Path(cmd_exe).exists() or shutil.which("cmd.exe"):
+        candidates.append(("cmd.exe", [cmd_exe, "/c", "start", "", url]))
+    wslview = shutil.which("wslview")
+    if wslview:
+        candidates.append(("wslview", [wslview, url]))
+
+    for name, argv in candidates:
+        try:
+            proc = subprocess.run(  # noqa: S603
+                argv,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_s,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log.info("WSL host opener %s failed: %s", name, exc)
+            continue
+        if proc.returncode == 0:
+            log.info("opened %s via %s", url, name)
+            return name
+        log.info("WSL host opener %s exited %d", name, proc.returncode)
+    return None
+
+
 def profile_root() -> Path:
     """Where the dedicated Firefox profile lives."""
     return cache_root().parent / "firefox-profile"

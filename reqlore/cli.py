@@ -471,6 +471,31 @@ def cmd_browser(args: argparse.Namespace) -> int:
     proxy_port = args.proxy_port or settings.proxy_port
     ui_url = args.url or f"http://{settings.ui_host}:{settings.ui_port}/"
 
+    # WSL hand-off: the Linux Firefox we ship cannot reach the Windows
+    # display server, so silently dying inside WSL is the original bug
+    # report. Detect WSL, open the URL on the Windows host browser
+    # instead, and print everything the operator needs to wire host-side
+    # proxy + CA trust manually. Exit 0 — the UI server is up.
+    if fxmod.is_wsl():
+        opener = fxmod.open_on_windows_host(ui_url)
+        print(f"Reqlore UI: {ui_url}")
+        print(f"Proxy:      {proxy_host}:{proxy_port}")
+        print(f"CA cert:    {ca_path}")
+        if opener:
+            print(f"Opened on Windows host via {opener}.")
+            print(
+                "Note: configure your Windows browser to use the proxy "
+                "above and trust the CA cert. Reqlore cannot wire those "
+                "automatically from inside WSL."
+            )
+            return 0
+        print(
+            "Could not auto-open a browser on the Windows host "
+            "(neither cmd.exe /c start nor wslview worked)."
+        )
+        print(f"Open this URL manually in your Windows browser: {ui_url}")
+        return 0
+
     archive_path = Path(args.firefox_zip).expanduser().resolve() if args.firefox_zip else None
 
     try:
