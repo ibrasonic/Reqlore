@@ -1,0 +1,81 @@
+{# Server-side find-in-text widgets (paired with a11y.find_in_text).
+
+   GET-only — the URL fully describes the current search, so back/forward
+   buttons work and bookmarks are shareable. No JavaScript. WCAG hooks:
+     * 2.1.1 (no JS)
+     * 2.4.10 AAA (real <h3>/<h4> headings on the form, jump list,
+       and each match container — NVDA H-key skim works)
+     * 3.2.5 AAA (page only changes when the user submits)
+     * 4.1.3 (role="status" announces the count + truncation note)
+
+   Two macros: `find_form(ctx)` renders the form; `find_result(ctx)`
+   renders the marked-up body, jump list and status sentence (or
+   nothing when no query has been submitted). `ctx` is built by
+   `a11y.build_find_context()`.
+#}
+
+{% macro find_form(ctx) -%}
+<form method="get" action="{{ ctx.action }}" class="find-form" role="search"
+      aria-labelledby="{{ ctx.prefix }}-find-h">
+  <h3 id="{{ ctx.prefix }}-find-h" class="find-form-h">Find in {{ ctx.region_label }}</h3>
+  {#- Preserve every other URL param so submitting one region's find
+      form does not blow away the other region's current search. -#}
+  {%- for k, vlist in request.args.lists() -%}
+    {%- if k != ctx.prefix + '_find' and k != ctx.prefix + '_re' -%}
+      {%- for vv in vlist -%}
+        <input type="hidden" name="{{ k }}" value="{{ vv }}">
+      {%- endfor -%}
+    {%- endif -%}
+  {%- endfor %}
+  <label for="{{ ctx.prefix }}-find-q">Search text</label>
+  <input id="{{ ctx.prefix }}-find-q" name="{{ ctx.prefix }}_find"
+         value="{{ ctx.q }}" type="search" autocomplete="off"
+         inputmode="search" spellcheck="false">
+  <label class="checkbox">
+    <input type="checkbox" name="{{ ctx.prefix }}_re" value="1"
+           {% if ctx.regex %}checked{% endif %}>
+    Treat as regular expression (always case-insensitive)
+  </label>
+  <button type="submit">Find</button>
+  {% if ctx.q %}
+    {%- set _clear = request.args.to_dict(flat=True) -%}
+    {%- set _ = _clear.pop(ctx.prefix + '_find', none) -%}
+    {%- set _ = _clear.pop(ctx.prefix + '_re', none) -%}
+    <a class="find-clear"
+       href="{{ ctx.action }}{% if _clear %}?{{ _clear|urlencode }}{% endif %}">
+      Clear search
+    </a>
+  {% endif %}
+</form>
+{%- endmacro %}
+
+
+{% macro find_result(ctx) -%}
+{% if ctx.q %}
+<div class="find-result" aria-labelledby="{{ ctx.prefix }}-find-status">
+  <p id="{{ ctx.prefix }}-find-status" role="status" class="find-status">
+    {{ ctx.status }}
+  </p>
+  {% if ctx.result.matches %}
+  <nav aria-labelledby="{{ ctx.prefix }}-find-jumps-h">
+    <h4 id="{{ ctx.prefix }}-find-jumps-h" class="find-jumps-h">Jump to a match</h4>
+    <ol class="find-match-list">
+      {% for m in ctx.result.matches %}
+        <li>
+          <a href="#{{ ctx.prefix }}-m{{ m.index }}">Match {{ m.index }} of {{ ctx.result.matches|length }} in {{ ctx.region_label }} (line {{ m.line_no }})</a>
+        </li>
+      {% endfor %}
+    </ol>
+  </nav>
+  {#- One contiguous <pre> so screen-reader line navigation stays in
+      one block; each <mark> carries a stable id that the jump list
+      above and any deep link can target. -#}
+  <pre class="block findable"
+       aria-label="Marked-up {{ ctx.region_label }} with {{ ctx.result.matches|length }} highlighted match{% if ctx.result.matches|length != 1 %}es{% endif %}"><code
+  >{%- for seg in ctx.segments -%}
+{%- if seg.kind == 'match' -%}<mark id="{{ ctx.prefix }}-m{{ seg.index }}">{{ seg.text }}</mark>{%- else -%}{{ seg.text }}{%- endif -%}
+{%- endfor -%}</code></pre>
+  {% endif %}
+</div>
+{% endif %}
+{%- endmacro %}

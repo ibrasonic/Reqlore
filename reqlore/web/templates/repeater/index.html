@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_find.html" import find_form, find_result %}
 {% block title %}Reqlore — Repeater{% endblock %}
 {% block main %}
 <h1>Repeater</h1>
@@ -84,10 +85,12 @@
 
     <h3 id="resp-body-h">Body</h3>
     {% set _body_text = resp.body.decode('utf-8', 'replace') %}
+    {% if find_resp_body %}{{ find_form(find_resp_body) }}{% endif %}
     <pre class="block" data-resp-view="raw"
          aria-labelledby="resp-body-h"><code>{{ _body_text }}</code></pre>
     <pre class="block" data-resp-view="decoded" hidden
          aria-labelledby="resp-body-h"><code>{{ _body_text|url_unquote }}</code></pre>
+    {% if find_resp_body %}{{ find_result(find_resp_body) }}{% endif %}
   {% endif %}
 </section>
 {% endif %}

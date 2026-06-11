@@ -221,6 +221,33 @@ patterns below.
   `role="status"` (polite) or `role="alert"` (assertive) regions, not
   raw flash messages.
 
+### Find-in-body (no-JS, AAA-clean)
+
+Long request / response bodies on **History detail**, **Repeater**
+(response side) and **Intercept detail** carry a server-side find
+widget powered by [`reqlore.a11y.find_in_text`](../reqlore/a11y.py)
+and the shared
+[`templates/_find.html`](../reqlore/web/templates/_find.html) macros.
+Browser Ctrl+F cannot search inside an editable `<textarea>`, and a
+JS incremental-find would violate 2.2.2 + 3.2.5, so the only
+AAA-clean answer is a GET form that re-renders the page with each
+hit wrapped in `<mark id="prefix-mN">`, a `role="status"` sentence
+("3 matches for \"admin\" in request body."), and a `<nav>` of
+"Match N of M in {section} (line L)" anchor links. The textarea
+above the marked-up `<pre>` on Intercept-detail stays untouched, so
+the edit form remains usable.
+
+The pattern hits 2.1.1 (no JS required), 2.4.9 AAA (link purpose
+out of context — each match link reads as a full sentence), 2.4.10
+AAA (real `<h3>`/`<h4>` headings on the form, the jump list, and
+the marked-up body), 3.2.5 AAA (page only changes when the user
+submits) and 4.1.3 (status region announces the count). See
+[`test_a11y_find.py`](../reqlore/tests/unit/test_a11y_find.py),
+[`test_history_find_smoke.py`](../reqlore/tests/unit/test_history_find_smoke.py),
+[`test_repeater_find_smoke.py`](../reqlore/tests/unit/test_repeater_find_smoke.py)
+and
+[`test_intercept_find_smoke.py`](../reqlore/tests/unit/test_intercept_find_smoke.py).
+
 ### Structural matrix — what the test enforces
 
 [`test_wcag_aaa.py`](../reqlore/tests/unit/test_wcag_aaa.py) walks

@@ -20,6 +20,8 @@
   --ok-bg:   #e1f5e2;
   --ok-fg:   #0d4c1e;
   --code-bg: #f4f5f8;
+  --mark-bg: #fff3a8;
+  --mark-fg: #14181f;
   --focus:   #b85a00;
   --shadow:  rgba(0,0,0,0.08);
   --maxw:    72rem;
@@ -39,6 +41,8 @@ html[data-theme="dark"] {
   --ok-bg:   #0f3018;
   --ok-fg:   #b8f0c4;
   --code-bg: #161a22;
+  --mark-bg: #6a4f00;
+  --mark-fg: #fff7d6;
   --focus:   #ffb84d;
   --shadow:  rgba(0,0,0,0.4);
 }
@@ -57,6 +61,8 @@ html[data-theme="high-contrast"] {
   --ok-bg: #000000;
   --ok-fg: #88ff88;
   --code-bg: #000000;
+  --mark-bg: #ffff00;
+  --mark-fg: #000000;
   --focus: #ffff00;
   --shadow: transparent;
 }
@@ -66,6 +72,7 @@ html[data-theme="high-contrast"] {
     --bg: #0e1116; --fg: #e7ebf2; --muted: #aab2c0;
     --accent: #6aa6ff; --accent-fg: #0a0d12;
     --border: #3a4150; --code-bg: #161a22;
+    --mark-bg: #6a4f00; --mark-fg: #fff7d6;
   }
 }
 
@@ -823,3 +830,97 @@ html[data-theme="high-contrast"] .login-error {
 }
 .btn-download:hover { filter: brightness(0.95); }
 .btn-download:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+/* Server-side find-in-text widget (templates/_find.html).
+   Pairs with reqlore.a11y.find_in_text + build_find_context. The form
+   posts back over GET so the URL fully describes the search; <mark>
+   ids match the jump-list anchors so keyboard users can step through
+   matches with no script. */
+
+.find-form {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--code-bg);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+}
+.find-form .find-form-h {
+  flex-basis: 100%;
+  margin: 0 0 0.25rem 0;
+  font-size: 1rem;
+}
+.find-form label { font-weight: 600; }
+.find-form label.checkbox { font-weight: 400; }
+.find-form input[type="search"] {
+  flex: 1 1 14rem;
+  min-width: 12rem;
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.find-form button[type="submit"] {
+  font: inherit;
+  padding: 0.35rem 0.9rem;
+  border: 2px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.find-form button[type="submit"]:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.find-form .find-clear {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+}
+
+.find-result { margin: 0.5rem 0 1rem 0; }
+.find-status {
+  margin: 0.5rem 0;
+  padding: 0.4rem 0.6rem;
+  border-left: 4px solid var(--accent);
+  background: var(--code-bg);
+}
+.find-jumps-h {
+  margin: 0.5rem 0 0.25rem 0;
+  font-size: 0.95rem;
+}
+.find-match-list {
+  margin: 0 0 0.5rem 1.5rem;
+  padding: 0;
+  max-height: 14rem;
+  overflow: auto;
+}
+.find-match-list li { margin: 0.1rem 0; }
+
+pre.block.findable {
+  /* Same look as other read-only blocks but visually distinct so the
+     marked-up sibling cannot be mistaken for the editable textarea
+     above it on Intercept-detail. */
+  border-style: dashed;
+}
+
+/* <mark> works inside the marked-up <pre> and anywhere else on the
+   page. The thick border keeps matches discernible even when the
+   user has high-contrast or a custom theme that flattens colour. */
+mark {
+  background: var(--mark-bg);
+  color: var(--mark-fg);
+  padding: 0 0.1rem;
+  border: 1px solid var(--mark-fg);
+  border-radius: 2px;
+}
+mark:target {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+

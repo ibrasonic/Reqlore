@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_find.html" import find_form, find_result %}
 {% block title %}Reqlore — Intercept #{{ item.id }}{% endblock %}
 {% block main %}
 <nav aria-label="Breadcrumb">
@@ -47,6 +48,17 @@
       </button>
     </fieldset>
   </form>
+</section>
+
+{# Find-in-body is a SEPARATE <form method="get"> so submitting it
+   never accidentally forwards or drops the held flow. Browser Ctrl+F
+   cannot search inside the editable <textarea> above, so this form
+   is the only AAA-clean way for a screen-reader or keyboard-only
+   user to locate a token inside a long held request. #}
+<section aria-labelledby="if-h">
+  <h2 id="if-h">Find in held request</h2>
+  {{ find_form(find_body) }}
+  {{ find_result(find_body) }}
 </section>
 
 {% if send_targets %}

@@ -116,6 +116,19 @@ The accesskey letter is wrapped in `<u>…</u>` inside the label so it's
 visually discoverable. Browser modifier varies — Alt (Chrome/Edge),
 Alt+Shift (Firefox), Ctrl+Alt (macOS).
 
+## Find in held request
+
+Below the edit form sits a SEPARATE `<form method="get">` find widget
+(`?body_find=<text>&body_re=1`) so submitting it cannot accidentally
+forward or drop the held flow. On submit the page renders a read-only
+`<pre>` with each hit wrapped in `<mark id="body-mN">`, a
+`role="status"` count, and a list of "Match N of M in held request
+(line L)" anchors. The editable textarea above stays untouched —
+edits are not lost. Browser Ctrl+F cannot search inside a
+`<textarea>`, so this is the only AAA-clean way to point a
+screen-reader user at a substring in the held bytes. See
+[ACCESSIBILITY.md § Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
+
 ## Send-to menu
 
 Same six targets as the History detail page:

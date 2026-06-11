@@ -262,8 +262,21 @@ def show_intercept(iid: int):
     item = g.project.get_intercept(iid)
     if item is None:
         abort(404)
+    body_text = _safe_text(item.req_blob)
+    # Server-side find — the editable textarea cannot be searched with
+    # browser Ctrl+F, so this is the only AAA-clean way to point a
+    # screen-reader user at a token inside a long held request.
+    from ...a11y import build_find_context
+    find_body = build_find_context(
+        body_text, prefix="body",
+        q=request.args.get("body_find", ""),
+        regex=request.args.get("body_re") == "1",
+        region_label="held request",
+        action=url_for("proxy.show_intercept", iid=iid),
+    )
     return render_template("proxy/intercept_detail.html", item=item,
-                           body_text=_safe_text(item.req_blob),
+                           body_text=body_text,
+                           find_body=find_body,
                            send_targets=_available_targets(item))
 
 

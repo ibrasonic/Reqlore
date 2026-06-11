@@ -5,6 +5,7 @@ renderers. No I/O. Heavily unit-tested.
 """
 from __future__ import annotations
 
+import bisect
 import difflib
 import re
 from dataclasses import dataclass
@@ -398,3 +399,200 @@ def summarise_jwt(header: dict, payload: dict) -> str:
     if alg.lower() == "none":
         bits.append("warning: alg=none means no signature is verified")
     return "; ".join(bits) + "."
+
+
+# ---------- Find-in-text (server-side body search) ----------
+#
+# Server-side find lets screen-reader and keyboard-only users locate a
+# substring inside a long request or response body without having to
+# read it linearly. Browser Ctrl+F cannot search inside an editable
+# <textarea> (intercept-detail), so the same pattern doubles as the
+# only AAA-clean way to point at content there too.
+#
+# Design notes (see docs/ACCESSIBILITY.md):
+#   * Pure function; the view layer collects the query, calls
+#     `find_in_text`, then passes the result + `find_segments` to a
+#     Jinja macro that emits the form, a role="status" sentence, a
+#     skip-list of in-page anchors, and a read-only <pre> with each
+#     hit wrapped in <mark id="{prefix}-mN">.
+#   * Case-insensitive always; regex opt-in.
+#   * Hard cap on matches so a one-character query against a huge
+#     body cannot blow up the rendered page.
+
+@dataclass(frozen=True)
+class FindMatch:
+    """One match returned by :func:`find_in_text`.
+
+    `index` is 1-based and contiguous over the returned matches (so
+    template anchors `#prefix-m1`, `#prefix-m2` ... line up with the
+    skip-list ordinals a screen reader announces).
+    """
+    index: int
+    start: int
+    end: int
+    line_no: int
+    line_text: str
+
+
+@dataclass(frozen=True)
+class FindResult:
+    """Outcome of one find call.
+
+    `truncated` is True when at least one further match exists past
+    the `max_matches` cap so the UI can advise the user to narrow the
+    query instead of silently hiding hits. `error` is set (and matches
+    is empty) when a regex query failed to compile.
+    """
+    q: str
+    regex: bool
+    matches: tuple[FindMatch, ...]
+    truncated: bool
+    error: str | None
+
+
+@dataclass(frozen=True)
+class FindSegment:
+    """One run of text in a marked-up body, suitable for template loops.
+
+    `kind` is ``'text'`` for unmatched runs and ``'match'`` for hits;
+    `index` is the 1-based match ordinal for match segments (None
+    otherwise).
+    """
+    kind: str
+    text: str
+    index: int | None
+
+
+def find_in_text(
+    text: str,
+    q: str,
+    *,
+    regex: bool = False,
+    max_matches: int = 500,
+) -> FindResult:
+    """Locate `q` inside `text` and return per-match metadata.
+
+    Matching is always case-insensitive. With ``regex=False`` the query
+    is treated as a literal substring (``re.escape``). With
+    ``regex=True`` it is compiled as a Python regular expression; on
+    `re.error` the returned result carries the error message and an
+    empty match tuple.
+
+    Zero-width regex matches are skipped to avoid empty ``<mark>``
+    blocks and infinite loops at one offset.
+    """
+    if not q:
+        return FindResult(q="", regex=regex, matches=(),
+                          truncated=False, error=None)
+    try:
+        pat = re.compile(q if regex else re.escape(q), re.IGNORECASE)
+    except re.error as exc:
+        return FindResult(q=q, regex=regex, matches=(),
+                          truncated=False, error=str(exc))
+
+    # Pre-compute line start offsets so each match -> line lookup is
+    # O(log n) instead of O(n).
+    line_starts = [0]
+    for i, ch in enumerate(text):
+        if ch == "\n":
+            line_starts.append(i + 1)
+
+    def _line_at(off: int) -> tuple[int, str]:
+        idx = bisect.bisect_right(line_starts, off) - 1
+        start = line_starts[idx]
+        end = (line_starts[idx + 1] - 1
+               if idx + 1 < len(line_starts) else len(text))
+        return idx + 1, text[start:end]
+
+    out: list[FindMatch] = []
+    truncated = False
+    for m in pat.finditer(text):
+        if m.start() == m.end():
+            continue
+        if len(out) >= max_matches:
+            truncated = True
+            break
+        ln, line_text = _line_at(m.start())
+        out.append(FindMatch(
+            index=len(out) + 1,
+            start=m.start(), end=m.end(),
+            line_no=ln, line_text=line_text,
+        ))
+    return FindResult(q=q, regex=regex, matches=tuple(out),
+                      truncated=truncated, error=None)
+
+
+def find_segments(
+    text: str,
+    matches: tuple[FindMatch, ...] | list[FindMatch],
+) -> list[FindSegment]:
+    """Split `text` into alternating plain / matched segments.
+
+    The template iterates the result and emits either ``{{ seg.text }}``
+    (Jinja auto-escapes) or ``<mark id="prefix-mN">{{ seg.text }}</mark>``
+    for matches.
+    """
+    out: list[FindSegment] = []
+    cursor = 0
+    for m in matches:
+        if cursor < m.start:
+            out.append(FindSegment(kind="text",
+                                   text=text[cursor:m.start], index=None))
+        out.append(FindSegment(kind="match",
+                               text=text[m.start:m.end], index=m.index))
+        cursor = m.end
+    if cursor < len(text):
+        out.append(FindSegment(kind="text",
+                               text=text[cursor:], index=None))
+    return out
+
+
+def find_status_sentence(result: FindResult, *, region: str = "body") -> str:
+    """Return a one-sentence summary suitable for a ``role="status"`` line.
+
+    Empty string when no query has been submitted (so the template can
+    skip the region entirely).
+    """
+    if not result.q:
+        return ""
+    if result.error:
+        return f'Regex error in {region}: {result.error}.'
+    n = len(result.matches)
+    quoted = f'"{result.q}"'
+    if n == 0:
+        return f"No matches for {quoted} in {region}."
+    if result.truncated:
+        return (f"Stopped after {n} matches for {quoted} in {region}; "
+                f"refine your search to see them all.")
+    word = "match" if n == 1 else "matches"
+    return f"{n} {word} for {quoted} in {region}."
+
+
+def build_find_context(
+    text: str,
+    *,
+    prefix: str,
+    q: str,
+    regex: bool,
+    region_label: str,
+    action: str,
+) -> dict:
+    """Bundle everything the `_find.html` macros need into one dict.
+
+    Views call this once per searchable region. `prefix` namespaces the
+    URL params (``{prefix}_find``, ``{prefix}_re``) and the HTML mark
+    IDs (``{prefix}-mN``) so a single page can host independent search
+    regions without ID or query-string collisions.
+    """
+    result = find_in_text(text, q, regex=regex)
+    segments = find_segments(text, result.matches) if result.q else []
+    return {
+        "prefix": prefix,
+        "q": q or "",
+        "regex": bool(regex),
+        "result": result,
+        "segments": segments,
+        "status": find_status_sentence(result, region=region_label),
+        "region_label": region_label,
+        "action": action,
+    }

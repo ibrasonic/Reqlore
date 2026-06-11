@@ -99,6 +99,12 @@ Right pane:
 - **Headers** — single `<pre>` block, one header per line. Not a `<dl>` —
   screen readers wouldn't enjoy term-definition mode for 30 headers.
 - **Body** — separate `<pre>` block, decoded UTF-8 (errors=replace).
+  Above the block sits a server-side **Find in response body** form
+  (`?resp_body_find=<text>&resp_body_re=1`); on submit the page
+  re-renders the body with each hit wrapped in `<mark id="resp-body-mN">`
+  plus a `role="status"` count and a list of "Match N of M in
+  response body (line L)" anchor links. See
+  [ACCESSIBILITY.md § Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
 - **URL-decode view** — toggle button with `aria-pressed`; percent-decodes
   visible text in place. State is per-page; not persisted.
 - **Copy-as** — `render` action re-shows the right pane with curl,

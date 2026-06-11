@@ -148,9 +148,16 @@ with `.has-new` adding accent colour.
 - **Send-to menu** — `<section aria-labelledby="hs-h">` plus a `<p id="hs-help">` explaining the accesskey modifier per browser.
 - **Plugin copy-as links** (when any).
 - **Request (`<len_req>` bytes)** — `<pre><code>` with the raw bytes,
-  decoded UTF-8 with latin-1 fallback.
-- **Response (`<len_resp>` bytes)** — `<pre><code>` with the raw bytes,
-  same decoding strategy.
+  decoded UTF-8 with latin-1 fallback. Above it sits a server-side
+  **Find in request** form; on submit the page re-renders with each
+  hit wrapped in `<mark id="req-mN">`, a `role="status"` count, and
+  a list of "Match N of M in request (line L)" anchor links. URL
+  params: `?req_find=<text>&req_re=1` (regex opt-in; matching is
+  always case-insensitive). See [ACCESSIBILITY.md §
+  Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
+- **Response (`<len_resp>` bytes)** — same shape with its own form
+  (`?resp_find=<text>&resp_re=1`). Request and response find state
+  is independent so a search in one pane never blows away the other.
 - **Back to history** link at the foot.
 
 ## Storage

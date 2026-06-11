@@ -5,7 +5,8 @@ import json
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for, Response
 
-from ...a11y import ResponseSummaryInput, summarise_response
+from ...a11y import (ResponseSummaryInput, build_find_context,
+                     summarise_response)
 from ...plugins import get_registry
 from ..send_targets import (available_targets, bearer_token,
                               parse_raw_request, target_label)
@@ -80,12 +81,31 @@ def show(hid: int):
     ))
     plugin_copy_as = [h.name for h in get_registry().active_copy_as()]
     send_targets = available_targets(row.req_blob)
+
+    # Server-side find-in-body (a11y.find_in_text). Independent state
+    # for request and response so a search in one pane does not blow
+    # away a search in the other.
+    detail_url = url_for("history.show", hid=hid)
+    find_req = build_find_context(
+        req_text, prefix="req",
+        q=request.args.get("req_find", ""),
+        regex=request.args.get("req_re") == "1",
+        region_label="request", action=detail_url,
+    )
+    find_resp = build_find_context(
+        resp_text, prefix="resp",
+        q=request.args.get("resp_find", ""),
+        regex=request.args.get("resp_re") == "1",
+        region_label="response", action=detail_url,
+    )
+
     return render_template(
         "history/detail.html",
         row=row, req_text=req_text, resp_text=resp_text,
         summary=summary, status_line=status_line,
         plugin_copy_as=plugin_copy_as,
         send_targets=send_targets,
+        find_req=find_req, find_resp=find_resp,
     )
 
 

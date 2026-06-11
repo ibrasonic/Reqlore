@@ -10,7 +10,7 @@ from flask import (
 
 from .._prg import PRGCache
 from ...a11y import (
-    ResponseSummaryInput, render_curl, render_fetch,
+    ResponseSummaryInput, build_find_context, render_curl, render_fetch,
     render_httpx, render_raw_http, render_requests, summarise_response,
 )
 from ...engines import Request
@@ -201,6 +201,29 @@ def index():
         resp_headers_text=(_render_headers_text(resp_obj)
                            if resp_obj and not resp_obj.error else ""),
         summary=summary, render_blocks=render_blocks,
+        find_resp_body=_build_resp_body_find_ctx(resp_obj),
+    )
+
+
+def _build_resp_body_find_ctx(resp_obj):
+    """Return the find-in-text context for the response body, or None
+    when there is no response to search.
+
+    The Repeater response body is the high-value find target (the
+    request side is editable so the textareas already let the user
+    paste/inspect); searching here lets a screen-reader user locate a
+    token in a large JSON or HTML payload without reading it line by
+    line.
+    """
+    if not resp_obj or resp_obj.error:
+        return None
+    body_text = resp_obj.body.decode("utf-8", errors="replace")
+    return build_find_context(
+        body_text, prefix="resp-body",
+        q=request.args.get("resp_body_find", ""),
+        regex=request.args.get("resp_body_re") == "1",
+        region_label="response body",
+        action=url_for("repeater.index"),
     )
 
 
