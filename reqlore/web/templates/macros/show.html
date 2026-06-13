@@ -4,6 +4,14 @@
 {% block main %}
 <h1>Macro: {{ macro.name }}</h1>
 
+{% if find_def %}
+  <section aria-labelledby="def-find-h-section">
+    <h2 id="def-find-h-section">Find in definition</h2>
+    {{ find_form(find_def) }}
+    {{ find_result(find_def) }}
+  </section>
+{% endif %}
+
 <form method="post" class="stack">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <p>
@@ -15,14 +23,6 @@
     <button type="submit" name="action" value="run">Run now</button>
   </p>
 </form>
-
-{% if find_def %}
-  <section aria-labelledby="def-find-h-section">
-    <h2 id="def-find-h-section">Find in definition</h2>
-    {{ find_form(find_def) }}
-    {{ find_result(find_def) }}
-  </section>
-{% endif %}
 
 {% if last_run %}
   <h2>Last run ({{ last_run.elapsed_ms }} ms)</h2>

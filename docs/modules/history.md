@@ -154,7 +154,7 @@ with `.has-new` adding accent colour.
   server-side find form. On submit the page re-renders with each
   hit wrapped in `<mark id="body-mN">`, a `role="status"` count, and
   a list of "Match N of M in exchange (line L)" anchor links. URL
-  params: `?find=<text>&re=1` (regex opt-in; matching is always
+  params: `?body_find=<text>&body_re=1` (regex opt-in; matching is always
   case-insensitive). When both request and response bodies are
   present they are merged with visible `--- Request ---` /
   `--- Response ---` section markers so screen-reader users can

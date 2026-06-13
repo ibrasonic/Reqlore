@@ -52,6 +52,14 @@
   </p>
 {% endif %}
 
+{% if find_body %}
+<section aria-labelledby="body-find-h-section">
+  <h2 id="body-find-h-section">Find in this exchange</h2>
+  {{ find_form(find_body) }}
+  {{ find_result(find_body) }}
+</section>
+{% endif %}
+
 <section aria-labelledby="req-h">
   <h2 id="req-h">Request ({{ row.len_req }} bytes)</h2>
   <pre class="block"><code>{{ req_text }}</code></pre>
@@ -61,14 +69,6 @@
   <h2 id="resp-h">Response ({{ row.len_resp }} bytes)</h2>
   <pre class="block"><code>{{ resp_text }}</code></pre>
 </section>
-
-{% if find_body %}
-<section aria-labelledby="body-find-h-section">
-  <h2 id="body-find-h-section" class="visually-hidden">Find in this exchange</h2>
-  {{ find_form(find_body) }}
-  {{ find_result(find_body) }}
-</section>
-{% endif %}
 
 <p><a href="{{ url_for('history.index') }}">Back to history</a></p>
 {% endblock %}

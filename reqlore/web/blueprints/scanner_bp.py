@@ -272,8 +272,8 @@ def show(fid: int):
         merged = evidence or payload
     find_body = build_find_context(
         merged, prefix="body",
-        q=request.args.get("find", ""),
-        regex=request.args.get("re") == "1",
+        q=request.args.get("body_find", ""),
+        regex=request.args.get("body_re") == "1",
         region_label="finding body",
         action=url_for(".show", fid=fid),
     ) if merged else None

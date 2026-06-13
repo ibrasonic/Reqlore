@@ -66,7 +66,7 @@ def test_finding_detail_renders_without_query(client):
 
 
 def test_find_marks_matches_in_payload_only(client):
-    raw, body = _text(client, "/scanner/1?find=script")
+    raw, body = _text(client, "/scanner/1?body_find=script")
     # The payload is "<script>admin=true</script>" — two occurrences of "script".
     assert '2 matches for "script" in finding body.' in body
     assert 'id="body-m1"' in raw
@@ -78,7 +78,7 @@ def test_find_spans_both_regions(client):
     return one combined match count and visible section markers so a
     screen-reader user can tell which region each highlighted match
     lives in."""
-    raw, body = _text(client, "/scanner/1?find=admin")
+    raw, body = _text(client, "/scanner/1?body_find=admin")
     # 2 in evidence + 1 in payload = 3 across the merged blob.
     assert '3 matches for "admin" in finding body.' in body
     assert "Match 1 of 3 in finding body" in body
@@ -105,7 +105,25 @@ def test_only_evidence_present_no_section_markers(tmp_path):
     app = create_app(db, Settings())
     app.config["TESTING"] = True
     with app.test_client() as c:
-        raw, body = _text(c, "/scanner/1?find=admin")
+        raw, body = _text(c, "/scanner/1?body_find=admin")
     assert '1 match for "admin" in finding body.' in body
     assert "--- Evidence ---" not in body
     assert "--- Payload ---" not in body
+
+
+def test_form_action_and_input_name_round_trip(client):
+    """Regression guard: the URL the form actually submits must match
+    what the blueprint reads. Render the page, scrape the form's
+    `action` URL and the search-input's `name`, then submit a GET to
+    that URL with that name — it must produce the same matches as a
+    hand-crafted ``?body_find=...`` URL would."""
+    raw, _ = _text(client, "/scanner/1")
+    # The form's action is set by build_find_context(action=...).
+    assert 'action="/scanner/1"' in raw
+    # The search input name must be exactly body_find (matching what
+    # the blueprint reads from request.args).
+    assert 'name="body_find"' in raw
+    # Now drive the form as a browser would.
+    raw2, body2 = _text(client, "/scanner/1?body_find=admin")
+    assert '3 matches for "admin" in finding body.' in body2
+    assert 'id="body-m1"' in raw2

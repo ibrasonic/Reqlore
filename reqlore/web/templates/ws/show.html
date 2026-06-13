@@ -6,6 +6,14 @@
 <p>URL: <code>{{ t.url }}</code> · {{ t.messages|length }} message(s) ·
    {{ 'closed' if t.closed else 'open (read-only snapshot)' }}</p>
 
+{% if t.messages %}
+  <section aria-labelledby="tx-find-h-section">
+    <h2 id="tx-find-h-section">Find in transcript</h2>
+    {{ find_form(find_tx) }}
+    {{ find_result(find_tx) }}
+  </section>
+{% endif %}
+
 <table>
   <caption>Messages</caption>
   <thead><tr><th scope="col">Dir</th><th scope="col">Kind</th><th scope="col">Size</th><th scope="col">Content</th></tr></thead>
@@ -20,14 +28,6 @@
     {% endfor %}
   </tbody>
 </table>
-
-{% if t.messages %}
-  <section aria-labelledby="tx-find-h-section">
-    <h2 id="tx-find-h-section">Find in transcript</h2>
-    {{ find_form(find_tx) }}
-    {{ find_result(find_tx) }}
-  </section>
-{% endif %}
 
 <h2>Send another message</h2>
 <form method="post" action="{{ url_for('.send_more', tid=tid) }}" class="stack">

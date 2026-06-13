@@ -75,7 +75,7 @@ def _text(client, url):
 def test_find_marks_matches_across_both_regions(client):
     """One query covers both request (2 hits) and response (1 hit) →
     one combined count of 3 and ordered jump anchors."""
-    raw, body = _text(client, "/history/1?find=admin")
+    raw, body = _text(client, "/history/1?body_find=admin")
     assert '3 matches for "admin" in exchange.' in body
     assert 'id="body-m1"' in raw
     assert 'id="body-m2"' in raw
@@ -88,19 +88,19 @@ def test_find_marks_matches_across_both_regions(client):
 
 
 def test_find_singular_sentence(client):
-    raw, body = _text(client, "/history/1?find=session")
+    raw, body = _text(client, "/history/1?body_find=session")
     assert '1 match for "session" in exchange.' in body
     assert 'id="body-m1"' in raw
 
 
 def test_no_match_renders_clear_status(client):
-    raw, body = _text(client, "/history/1?find=nope-not-there")
+    raw, body = _text(client, "/history/1?body_find=nope-not-there")
     assert 'No matches for "nope-not-there" in exchange.' in body
     assert 'id="body-m1"' not in raw
 
 
 def test_regex_error_is_reported_in_status(client):
-    raw, body = _text(client, "/history/1?find=%28unclosed&re=1")
+    raw, body = _text(client, "/history/1?body_find=%28unclosed&body_re=1")
     assert "Regex error in exchange" in body
 
 
@@ -118,9 +118,22 @@ def test_only_request_present_no_section_markers(tmp_path):
     app = create_app(db, Settings())
     app.config["TESTING"] = True
     with app.test_client() as c:
-        r = c.get("/history/1?find=admin")
+        r = c.get("/history/1?body_find=admin")
         assert r.status_code == 200
         body = html.unescape(r.get_data(as_text=True))
     assert '1 match for "admin" in exchange.' in body
     assert "--- Request ---" not in body
     assert "--- Response ---" not in body
+
+
+def test_form_action_and_input_name_round_trip(client):
+    """Regression guard: the URL the form actually submits must match
+    what the blueprint reads. Render the page, confirm the form's
+    `action` URL and the search-input's `name`, then submit a GET via
+    those names — it must produce matches."""
+    raw, _ = _text(client, "/history/1")
+    assert 'action="/history/1"' in raw
+    assert 'name="body_find"' in raw
+    raw2, body2 = _text(client, "/history/1?body_find=admin")
+    assert '3 matches for "admin" in exchange.' in body2
+    assert 'id="body-m1"' in raw2

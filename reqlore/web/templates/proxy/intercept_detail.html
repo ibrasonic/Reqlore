@@ -18,6 +18,17 @@
   <dt>Status</dt><dd>Pending &mdash; Forward or Drop below to release.</dd>
 </dl>
 
+{# Find-in-body is a SEPARATE <form method="get"> so submitting it
+   never accidentally forwards or drops the held flow. Placed BEFORE
+   the editable textarea so the search and its jump list are the
+   first thing a keyboard or screen-reader user encounters, instead
+   of having to skim past a 20-row textarea to reach them. #}
+<section aria-labelledby="if-h">
+  <h2 id="if-h">Find in held request</h2>
+  {{ find_form(find_body) }}
+  {{ find_result(find_body) }}
+</section>
+
 <section aria-labelledby="ir-h">
   <h2 id="ir-h">Request</h2>
   <form method="post"
@@ -48,17 +59,6 @@
       </button>
     </fieldset>
   </form>
-</section>
-
-{# Find-in-body is a SEPARATE <form method="get"> so submitting it
-   never accidentally forwards or drops the held flow. Browser Ctrl+F
-   cannot search inside the editable <textarea> above, so this form
-   is the only AAA-clean way for a screen-reader or keyboard-only
-   user to locate a token inside a long held request. #}
-<section aria-labelledby="if-h">
-  <h2 id="if-h">Find in held request</h2>
-  {{ find_form(find_body) }}
-  {{ find_result(find_body) }}
 </section>
 
 {% if send_targets %}

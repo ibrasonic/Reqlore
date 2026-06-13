@@ -98,8 +98,8 @@ def show(hid: int):
         merged_text = req_text or resp_text
     find_body = build_find_context(
         merged_text, prefix="body",
-        q=request.args.get("find", ""),
-        regex=request.args.get("re") == "1",
+        q=request.args.get("body_find", ""),
+        regex=request.args.get("body_re") == "1",
         region_label="exchange",
         action=url_for("history.show", hid=hid),
     )

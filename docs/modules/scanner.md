@@ -213,7 +213,7 @@ Layout:
 - **Payload** — `<pre class="wrap">` rendering the attack string (active
   findings only).
 - **Find in finding body** — a single server-side find widget (URL
-  params `find` / `re`) that searches **both** the evidence and payload
+  params `body_find` / `body_re`) that searches **both** the evidence and payload
   blocks in one pass. When both regions are populated they are merged
   with visible `--- Evidence ---` / `--- Payload ---` section markers so
   screen-reader users can tell which region each highlighted match lives

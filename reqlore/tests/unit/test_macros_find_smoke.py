@@ -58,11 +58,14 @@ def test_macro_find_marks_admin(client):
 
 def test_find_form_is_separate_from_edit_form(client):
     """The Find form must sit OUTSIDE the POST edit form so submitting it
-    cannot trip the save/run actions on the textarea."""
+    cannot trip the save/run actions on the textarea. Find now renders
+    ABOVE the textarea form so screen-reader users reach the search
+    and its jump list first; the non-nesting invariant still holds."""
     raw, _ = _text(client, "/macros/1")
     edit_form_start = raw.find('<form method="post"')
     edit_form_end = raw.find("</form>", edit_form_start)
-    find_form_pos = raw.find('class="find-form"')
+    find_form_start = raw.find('class="find-form"')
+    find_form_end = raw.find("</form>", find_form_start)
     assert edit_form_start != -1
-    assert find_form_pos != -1
-    assert find_form_pos > edit_form_end
+    assert find_form_start != -1
+    assert find_form_end < edit_form_start or find_form_start > edit_form_end

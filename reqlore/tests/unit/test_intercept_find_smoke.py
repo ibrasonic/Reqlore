@@ -59,18 +59,25 @@ def test_intercept_find_marks_two_matches(client):
 
 
 def test_find_form_is_separate_from_edit_form(client):
-    """The Find form must NOT be nested inside the POST edit form — a
+    """The Find form must NOT be nested inside the POST edit form \u2014 a
     nested <form> would either be silently dropped by the browser or,
-    worse, let the find submit re-issue the edit (forward edited)."""
+    worse, let the find submit re-issue the edit (forward edited).
+
+    Find now renders ABOVE the editable textarea so a screen-reader
+    user reaches the search and its jump list first, but the
+    non-nesting invariant still holds: the find form must close
+    before the edit form opens (or open after it closes).
+    """
     raw, _ = _text(client, "/proxy/intercept/1")
-    # Find the position of the textarea-bearing form and the find form.
     edit_form_start = raw.find('<form method="post"')
     edit_form_end = raw.find("</form>", edit_form_start)
-    find_form_pos = raw.find('class="find-form"')
+    find_form_start = raw.find('class="find-form"')
+    find_form_end = raw.find("</form>", find_form_start)
     assert edit_form_start != -1
-    assert find_form_pos != -1
-    # The find form must appear AFTER the edit form closes.
-    assert find_form_pos > edit_form_end
+    assert find_form_start != -1
+    # Non-nesting invariant: either find closes before edit opens, or
+    # find opens after edit closes. Either way, no overlap.
+    assert find_form_end < edit_form_start or find_form_start > edit_form_end
 
 
 def test_intercept_no_match(client):
