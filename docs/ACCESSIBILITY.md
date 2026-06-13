@@ -225,7 +225,8 @@ patterns below.
 
 Long request / response / evidence / payload / transcript bodies on
 **History detail**, **Repeater** (response side), **Intercept
-detail**, **Scanner finding detail** (evidence + payload),
+detail**, **Scanner finding detail** (evidence and payload merged
+with visible section markers — one Find box covers both),
 **WebSocket transcript** and **Macros detail** (JSON definition)
 carry a server-side find widget powered by
 [`reqlore.a11y.find_in_text`](../reqlore/a11y.py) and the shared

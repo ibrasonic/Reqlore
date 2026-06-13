@@ -209,12 +209,17 @@ Layout:
 - **Severity** badge.
 - Header pairs: **CWE**, **OWASP**, **Host**, **URL**, **Status**,
   **Originating request** (link to history row when available).
-- **Evidence** — `<pre class="wrap">`, with an independent server-side
-  find widget below it (URL params `evidence_find` / `evidence_re`).
-- **Payload** — `<pre class="wrap">`, with its own find widget
-  (URL params `payload_find` / `payload_re`). Each region marks hits as
-  `<mark id="{prefix}-mN">` and announces the count via `role="status"`.
-  See [ACCESSIBILITY.md § Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
+- **Evidence** — `<pre class="wrap">` rendering the captured snippet.
+- **Payload** — `<pre class="wrap">` rendering the attack string (active
+  findings only).
+- **Find in finding body** — a single server-side find widget (URL
+  params `find` / `re`) that searches **both** the evidence and payload
+  blocks in one pass. When both regions are populated they are merged
+  with visible `--- Evidence ---` / `--- Payload ---` section markers so
+  screen-reader users can tell which region each highlighted match lives
+  in. Hits are tagged as `<mark id="body-mN">` and the running count is
+  announced via `role="status"`. See
+  [ACCESSIBILITY.md § Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
 - **Triage** form — status dropdown + *Update status* button. Setting
   status to `false_positive` auto-creates a suppression matching the rule
   + host + URL.

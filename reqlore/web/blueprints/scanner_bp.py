@@ -255,24 +255,32 @@ def show(fid: int):
     if not f:
         abort(404)
     from ...a11y import build_find_context
-    detail_url = url_for(".show", fid=fid)
-    find_evidence = build_find_context(
-        f.get("evidence") or "", prefix="evidence",
-        q=request.args.get("evidence_find", ""),
-        regex=request.args.get("evidence_re") == "1",
-        region_label="evidence", action=detail_url,
-    ) if (f.get("evidence") or "") else None
-    find_payload = build_find_context(
-        f.get("payload") or "", prefix="payload",
-        q=request.args.get("payload_find", ""),
-        regex=request.args.get("payload_re") == "1",
-        region_label="payload", action=detail_url,
-    ) if (f.get("payload") or "") else None
+    evidence = f.get("evidence") or ""
+    payload = f.get("payload") or ""
+    # Merge into one searchable blob so a single Find box covers both
+    # regions. When both are present we insert visible section markers
+    # so screen-reader users can tell which region a highlighted match
+    # sits in; when only one region is present we feed it through raw.
+    if evidence and payload:
+        merged = (
+            "--- Evidence ---\n"
+            f"{evidence}\n\n"
+            "--- Payload ---\n"
+            f"{payload}"
+        )
+    else:
+        merged = evidence or payload
+    find_body = build_find_context(
+        merged, prefix="body",
+        q=request.args.get("find", ""),
+        regex=request.args.get("re") == "1",
+        region_label="finding body",
+        action=url_for(".show", fid=fid),
+    ) if merged else None
     return render_template("scanner/detail.html", f=f,
                            statuses=("open", "triaged", "false_positive", "fixed"),
                            active="findings",
-                           find_evidence=find_evidence,
-                           find_payload=find_payload)
+                           find_body=find_body)
 
 
 @bp.route("/<int:fid>/status", methods=["POST"])
