@@ -184,6 +184,43 @@ def index():
                            supported_methods=SUPPORTED_METHODS)
 
 
+def _next_pending_id() -> int | None:
+    """Lowest-id intercept that has not yet been decided, or ``None``.
+
+    Used by the auto-advance flow after a Forward/Drop decision so the
+    operator lands on the next held request directly instead of going
+    back to the queue page and clicking the next row.
+    """
+    for it in g.project.list_intercept():
+        if g.project.get_intercept_decision(it.id)[0] is None:
+            return it.id
+    return None
+
+
+def _after_decision_redirect():
+    """Where to send the user after they Forward / Drop an intercept.
+
+    If another request is currently held, jump straight to its detail
+    page (one round-trip per decision instead of the old two). When the
+    queue is empty fall back to ``/proxy/`` so the operator sees the
+    "no intercepts held" landing state.
+    """
+    nxt = _next_pending_id()
+    if nxt is None:
+        return redirect(url_for(".index"))
+    return redirect(url_for(".show_intercept", iid=nxt))
+
+
+@bp.route("/intercept/next")
+def next_intercept():
+    """Go to the oldest still-pending intercept, or back to the queue.
+
+    Bookmarkable shortcut for "open whatever is held right now". When
+    nothing is pending it just renders the queue page.
+    """
+    return _after_decision_redirect()
+
+
 @bp.route("/intercept/count")
 def intercept_count():
     """Cheap polling endpoint: how many requests are currently held.
@@ -284,14 +321,14 @@ def show_intercept(iid: int):
 def drop_intercept(iid: int):
     g.project.decide_intercept(iid, "drop")
     flash("Intercept dropped.", "ok")
-    return redirect(url_for(".index"))
+    return _after_decision_redirect()
 
 
 @bp.route("/intercept/<int:iid>/forward", methods=["POST"])
 def forward_intercept(iid: int):
     g.project.decide_intercept(iid, "forward")
     flash("Intercept forwarded.", "ok")
-    return redirect(url_for(".index"))
+    return _after_decision_redirect()
 
 
 @bp.route("/intercept/forward_all", methods=["POST"])
@@ -364,7 +401,7 @@ def forward_edited(iid: int):
     raw = request.form.get("raw", "")
     g.project.decide_intercept(iid, "forward_edited", raw.encode("utf-8", errors="replace"))
     flash("Edited intercept forwarded.", "ok")
-    return redirect(url_for(".index"))
+    return _after_decision_redirect()
 
 
 @bp.route("/ca")

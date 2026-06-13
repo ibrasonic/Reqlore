@@ -30,6 +30,7 @@ see in [History](history.md).
 | `/proxy/stop`                                  | POST   | Stop the listener.                                                                       |
 | `/proxy/intercept/toggle`                      | POST   | Global intercept on/off; persists to `project_state["intercept_on"]`.                    |
 | `/proxy/intercept/config`                      | POST   | Update filter (methods, host regex, path regex, excludes); persisted as JSON.            |
+| `/proxy/intercept/next`                        | GET    | Redirect to the oldest still-pending intercept, or back to the queue if none are held.    |
 | `/proxy/intercept/<iid>`                       | GET    | Detail page: raw bytes editor, Forward/Drop/Forward-edited bar, Send-to menu.            |
 | `/proxy/intercept/<iid>/forward`               | POST   | Forward as-is.                                                                            |
 | `/proxy/intercept/<iid>/drop`                  | POST   | Drop (mitmproxy flow killed).                                                             |
@@ -115,6 +116,17 @@ On `/proxy/intercept/<iid>`:
 The accesskey letter is wrapped in `<u>…</u>` inside the label so it's
 visually discoverable. Browser modifier varies — Alt (Chrome/Edge),
 Alt+Shift (Firefox), Ctrl+Alt (macOS).
+
+### Auto-advance after a decision
+
+Forward / Forward-edited / Drop all redirect to the next still-pending
+intercept (oldest first) instead of bouncing back to the queue page.
+When the queue is empty they land on `/proxy/` so the "no intercepts
+held" state is visible. This trims a triage decision from two round
+trips (decide → queue → row click → detail) down to one (decide → next
+detail). The bookmarkable `/proxy/intercept/next` shortcut does the
+same thing on demand. Pinned by
+[`test_intercept_auto_advance.py`](../../reqlore/tests/unit/test_intercept_auto_advance.py).
 
 ## Find in held request
 
