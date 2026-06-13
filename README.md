@@ -136,13 +136,22 @@ Start with [`docs/USAGE.md`](docs/USAGE.md) — it indexes everything else.
 
 ## License
 
-**Source-available, noncommercial.** Reqlore is released under the
-[PolyForm Noncommercial License 1.0.0](LICENSE). You're free to use,
-modify, study, and contribute it for any noncommercial purpose —
-research, learning, hobby work, education, charity, public safety,
-etc. Pull requests are very welcome. Commercial use (selling it,
-re-selling derivatives, paid consulting *built around* Reqlore as the
-product) is not permitted under this license; contact the author
-(`ibrahim.badawy@aucegypt.edu`) if you need a commercial arrangement.
+**Open source under the [Apache License 2.0](LICENSE).** You're free
+to use, modify, distribute, and embed Reqlore in any setting —
+personal, academic, charitable, or commercial — including inside
+security teams at companies that hire blind and low-vision
+practitioners, and inside paid consulting engagements. The Apache 2.0
+license also grants an explicit patent license, which is why most
+mainstream open-source security tooling (e.g. OWASP ZAP) standardises
+on it. The only obligations are the usual ones: keep the copyright
+notice and the LICENSE file with copies, state significant changes
+you make, and don't use the Reqlore name or logo to imply endorsement
+of your fork. Contributions are welcome — by submitting a pull
+request you license your contribution under the same terms
+(Apache 2.0, § 5).
+
+Report security issues privately to
+[ibrahim.m.badawy@gmail.com](mailto:ibrahim.m.badawy@gmail.com) — see
+[docs/SECURITY.md](docs/SECURITY.md) for the disclosure policy.
 
 Copyright (c) 2026 Ibrahim Badawy.

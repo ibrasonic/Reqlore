@@ -36,7 +36,19 @@ Reqlore is itself a high-privilege tool: it sees plaintext of all proxied traffi
 
 ## Reporting vulnerabilities
 
-`SECURITY.md` at repo root will publish `security@<your-domain>` PGP key and a 90-day disclosure window.
+Report security issues privately by email to
+**ibrahim.m.badawy@gmail.com** with subject line starting
+`[reqlore-security]`. Please include reproduction steps, the
+Reqlore version (`reqlore --version`), and your assessment of impact.
+
+Policy:
+
+- I aim to acknowledge within 7 days and to ship a fix or a public
+  workaround within 90 days of acknowledgement.
+- Coordinated disclosure: please give me until the fix is released
+  before publishing details. CVE assignment and credit on request.
+- GitHub Security Advisories on this repo are also welcome and route
+  to the same inbox; use whichever channel is easier.
 
 ## UI authentication
 
