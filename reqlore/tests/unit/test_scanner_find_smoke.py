@@ -2,12 +2,12 @@
 
 Findings can carry long evidence and payload blocks that sit inside
 read-only ``<pre>`` elements; the find widget adds line-numbered jump
-anchors and a marked-up second view so screen-reader users can skim
-without scrolling the whole evidence block. A single Find box searches
-both regions at once — when both are populated the regions are merged
-with visible ``--- Evidence ---`` / ``--- Payload ---`` section
-markers so screen-reader users can tell which region a highlighted
-match lives in.
+anchors and marks each match in place inside its original pane so
+screen-reader users can skim without scrolling the whole evidence
+block. A single Find box searches both regions at once. Each pane has
+its own anchor namespace (``evidence-mN`` / ``payload-mN``) so the
+jump list links into the natural pane location — no synthetic merged
+duplicate.
 """
 from __future__ import annotations
 
@@ -69,32 +69,35 @@ def test_find_marks_matches_in_payload_only(client):
     raw, body = _text(client, "/scanner/1?body_find=script")
     # The payload is "<script>admin=true</script>" — two occurrences of "script".
     assert '2 matches for "script" in finding body.' in body
-    assert 'id="body-m1"' in raw
-    assert 'id="body-m2"' in raw
+    assert 'id="payload-m1"' in raw
+    assert 'id="payload-m2"' in raw
+    # "script" does not appear in evidence — no evidence anchors.
+    assert 'id="evidence-m1"' not in raw
 
 
 def test_find_spans_both_regions(client):
     """A single query that occurs in both evidence and payload should
-    return one combined match count and visible section markers so a
-    screen-reader user can tell which region each highlighted match
-    lives in."""
+    return one combined match count, with anchors landing in each
+    pane's own namespace so the jump list links into the original
+    pane location — not a synthetic merged copy."""
     raw, body = _text(client, "/scanner/1?body_find=admin")
-    # 2 in evidence + 1 in payload = 3 across the merged blob.
+    # 2 in evidence + 1 in payload = 3 across both panes.
     assert '3 matches for "admin" in finding body.' in body
-    assert "Match 1 of 3 in finding body" in body
-    assert "Match 3 of 3 in finding body" in body
-    # Both section markers survive intact (the query doesn't break them).
-    assert "--- Evidence ---" in body
-    assert "--- Payload ---" in body
-    # Three highlighted marks with stable ids.
-    assert 'id="body-m1"' in raw
-    assert 'id="body-m2"' in raw
-    assert 'id="body-m3"' in raw
+    assert "Match 1 of 2 in evidence" in body
+    assert "Match 1 of 1 in payload" in body
+    # Old merged-blob section markers must not leak through.
+    assert "--- Evidence ---" not in body
+    assert "--- Payload ---" not in body
+    # Per-pane anchor namespaces.
+    assert 'id="evidence-m1"' in raw
+    assert 'id="evidence-m2"' in raw
+    assert 'id="payload-m1"' in raw
 
 
 def test_only_evidence_present_no_section_markers(tmp_path):
-    """When a finding has only evidence (no payload) the merged blob
-    is just the raw evidence — no '--- Evidence ---' marker appears."""
+    """When a finding has only evidence (no payload) the marked-up
+    pane is the evidence alone — no payload anchors, no legacy
+    section markers."""
     db = tmp_path / "ev_only.rlr"
     project = Project(db)
     fid = project.add_finding(
@@ -107,6 +110,8 @@ def test_only_evidence_present_no_section_markers(tmp_path):
     with app.test_client() as c:
         raw, body = _text(c, "/scanner/1?body_find=admin")
     assert '1 match for "admin" in finding body.' in body
+    assert 'id="evidence-m1"' in raw
+    assert 'id="payload-m1"' not in raw
     assert "--- Evidence ---" not in body
     assert "--- Payload ---" not in body
 
@@ -118,7 +123,7 @@ def test_form_action_and_input_name_round_trip(client):
     that URL with that name — it must produce the same matches as a
     hand-crafted ``?body_find=...`` URL would."""
     raw, _ = _text(client, "/scanner/1")
-    # The form's action is set by build_find_context(action=...).
+    # The form's action is set by build_find_multi(action=...).
     assert 'action="/scanner/1"' in raw
     # The search input name must be exactly body_find (matching what
     # the blueprint reads from request.args).
@@ -126,4 +131,5 @@ def test_form_action_and_input_name_round_trip(client):
     # Now drive the form as a browser would.
     raw2, body2 = _text(client, "/scanner/1?body_find=admin")
     assert '3 matches for "admin" in finding body.' in body2
-    assert 'id="body-m1"' in raw2
+    assert 'id="evidence-m1"' in raw2
+    assert 'id="payload-m1"' in raw2

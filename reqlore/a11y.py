@@ -596,3 +596,79 @@ def build_find_context(
         "region_label": region_label,
         "action": action,
     }
+
+
+def build_find_multi(
+    panes_input: list,
+    *,
+    form_prefix: str,
+    q: str,
+    regex: bool,
+    region_label: str,
+    action: str,
+) -> dict:
+    """Multi-pane variant of :func:`build_find_context`.
+
+    One shared search query highlights matches across several
+    separately-displayed panes (e.g. Request + Response on the History
+    page, Evidence + Payload on the Scanner page). The caller provides
+    a list of ``(prefix, region_label, text)`` tuples — empty texts
+    are skipped. Each pane gets its own anchor namespace
+    (``{pane_prefix}-mN``) so the jump list can link into the correct
+    pane and the template can render highlights in-place rather than
+    in a duplicated combined block.
+
+    Returns a dict shaped for the ``find_jumps`` / ``find_pane_pre``
+    macros plus a ``form`` sub-ctx compatible with ``find_form``.
+    """
+    panes = []
+    total = 0
+    truncated = False
+    first_error = ""
+    for prefix, label, text in panes_input:
+        if not text:
+            continue
+        result = find_in_text(text, q, regex=regex)
+        segments = find_segments(text, result.matches) if result.q else []
+        panes.append({
+            "prefix": prefix,
+            "region_label": label,
+            "text": text,
+            "result": result,
+            "segments": segments,
+            "matches": result.matches,
+        })
+        total += len(result.matches)
+        truncated = truncated or result.truncated
+        if result.error and not first_error:
+            first_error = result.error
+
+    if not q:
+        status = ""
+    elif first_error:
+        status = f"Regex error in {region_label}: {first_error}."
+    elif total == 0:
+        status = f'No matches for "{q}" in {region_label}.'
+    elif truncated:
+        status = (f'Stopped after {total} matches for "{q}" in {region_label}; '
+                  f"refine your search to see them all.")
+    else:
+        word = "match" if total == 1 else "matches"
+        status = f'{total} {word} for "{q}" in {region_label}.'
+
+    return {
+        "form": {
+            "prefix": form_prefix,
+            "q": q or "",
+            "regex": bool(regex),
+            "action": action,
+            "region_label": region_label,
+        },
+        "panes": panes,
+        "q": q or "",
+        "regex": bool(regex),
+        "status": status,
+        "total": total,
+        "truncated": truncated,
+        "error": first_error,
+    }

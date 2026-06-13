@@ -10,10 +10,10 @@ one history row whose request and response bodies each contain a known
 token, then issues GETs and asserts what the screen reader and the
 sighted user actually see.
 
-A single Find box searches **both** the request and the response — when
-both are populated the two regions are merged with visible
-``--- Request ---`` / ``--- Response ---`` section markers so
-screen-reader users can tell which region each highlighted match lives in.
+A single Find box searches **both** the request and the response
+and marks matches in their original panes in place. Each pane has its
+own anchor namespace (``req-mN`` / ``resp-mN``) so the jump list links
+into the natural pane location — no synthetic merged duplicate.
 """
 from __future__ import annotations
 
@@ -74,29 +74,31 @@ def _text(client, url):
 
 def test_find_marks_matches_across_both_regions(client):
     """One query covers both request (2 hits) and response (1 hit) →
-    one combined count of 3 and ordered jump anchors."""
+    one combined count of 3 with anchors in the original panes."""
     raw, body = _text(client, "/history/1?body_find=admin")
     assert '3 matches for "admin" in exchange.' in body
-    assert 'id="body-m1"' in raw
-    assert 'id="body-m2"' in raw
-    assert 'id="body-m3"' in raw
-    assert "Match 1 of 3 in exchange" in body
-    assert "Match 3 of 3 in exchange" in body
-    # Both section markers survive intact in the merged blob.
-    assert "--- Request ---" in body
-    assert "--- Response ---" in body
+    # Each pane has its own anchor namespace.
+    assert 'id="req-m1"' in raw
+    assert 'id="req-m2"' in raw
+    assert 'id="resp-m1"' in raw
+    assert "Match 1 of 2 in request" in body
+    assert "Match 1 of 1 in response" in body
+    # No synthetic combined block, no '--- Request ---' markers.
+    assert "--- Request ---" not in body
+    assert "--- Response ---" not in body
 
 
 def test_find_singular_sentence(client):
     raw, body = _text(client, "/history/1?body_find=session")
     assert '1 match for "session" in exchange.' in body
-    assert 'id="body-m1"' in raw
+    assert 'id="resp-m1"' in raw
 
 
 def test_no_match_renders_clear_status(client):
     raw, body = _text(client, "/history/1?body_find=nope-not-there")
     assert 'No matches for "nope-not-there" in exchange.' in body
-    assert 'id="body-m1"' not in raw
+    assert 'id="req-m1"' not in raw
+    assert 'id="resp-m1"' not in raw
 
 
 def test_regex_error_is_reported_in_status(client):
@@ -106,7 +108,8 @@ def test_regex_error_is_reported_in_status(client):
 
 def test_only_request_present_no_section_markers(tmp_path):
     """When a row has only a request blob (no response captured yet)
-    the merged blob is just the request — no section markers appear."""
+    the marked-up pane is the request alone — no response anchors and
+    no legacy section markers leak through."""
     db = tmp_path / "req_only.rlr"
     project = Project(db)
     project.add_history(
@@ -120,8 +123,11 @@ def test_only_request_present_no_section_markers(tmp_path):
     with app.test_client() as c:
         r = c.get("/history/1?body_find=admin")
         assert r.status_code == 200
-        body = html.unescape(r.get_data(as_text=True))
+        raw = r.get_data(as_text=True)
+        body = html.unescape(raw)
     assert '1 match for "admin" in exchange.' in body
+    assert 'id="req-m1"' in raw
+    assert 'id="resp-m1"' not in raw
     assert "--- Request ---" not in body
     assert "--- Response ---" not in body
 
@@ -136,4 +142,4 @@ def test_form_action_and_input_name_round_trip(client):
     assert 'name="body_find"' in raw
     raw2, body2 = _text(client, "/history/1?body_find=admin")
     assert '3 matches for "admin" in exchange.' in body2
-    assert 'id="body-m1"' in raw2
+    assert 'id="req-m1"' in raw2

@@ -213,12 +213,13 @@ Layout:
 - **Payload** — `<pre class="wrap">` rendering the attack string (active
   findings only).
 - **Find in finding body** — a single server-side find widget (URL
-  params `body_find` / `body_re`) that searches **both** the evidence and payload
-  blocks in one pass. When both regions are populated they are merged
-  with visible `--- Evidence ---` / `--- Payload ---` section markers so
-  screen-reader users can tell which region each highlighted match lives
-  in. Hits are tagged as `<mark id="body-mN">` and the running count is
-  announced via `role="status"`. See
+  params `body_find` / `body_re`) sits ABOVE the Evidence / Payload
+  panes and searches **both** regions in one pass. Matches are
+  marked in place inside their original pane (no duplicated combined
+  block) — Evidence hits as `<mark id="evidence-mN">`, Payload hits
+  as `<mark id="payload-mN">` — and the combined count is announced
+  via `role="status"`. The jump list links into the natural pane
+  location. See
   [ACCESSIBILITY.md § Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
 - **Triage** form — status dropdown + *Update status* button. Setting
   status to `false_positive` auto-creates a suppression matching the rule

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_find.html" import find_form, find_result %}
+{% from "_find.html" import find_form, find_jumps, find_pane_pre %}
 {% block title %}Reqlore — History #{{ row.id }}{% endblock %}
 {% block main %}
 <h1>Request #{{ row.id }}</h1>
@@ -55,19 +55,27 @@
 {% if find_body %}
 <section aria-labelledby="body-find-h-section">
   <h2 id="body-find-h-section">Find in this exchange</h2>
-  {{ find_form(find_body) }}
-  {{ find_result(find_body) }}
+  {{ find_form(find_body.form) }}
+  {{ find_jumps(find_body) }}
 </section>
 {% endif %}
 
 <section aria-labelledby="req-h">
   <h2 id="req-h">Request ({{ row.len_req }} bytes)</h2>
-  <pre class="block"><code>{{ req_text }}</code></pre>
+  {% if find_req %}
+    {{ find_pane_pre(find_req, aria_labelledby="req-h") }}
+  {% else %}
+    <pre class="block"><code>{{ req_text }}</code></pre>
+  {% endif %}
 </section>
 
 <section aria-labelledby="resp-h">
   <h2 id="resp-h">Response ({{ row.len_resp }} bytes)</h2>
-  <pre class="block"><code>{{ resp_text }}</code></pre>
+  {% if find_resp %}
+    {{ find_pane_pre(find_resp, aria_labelledby="resp-h") }}
+  {% else %}
+    <pre class="block"><code>{{ resp_text }}</code></pre>
+  {% endif %}
 </section>
 
 <p><a href="{{ url_for('history.index') }}">Back to history</a></p>

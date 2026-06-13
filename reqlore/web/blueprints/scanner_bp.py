@@ -254,33 +254,30 @@ def show(fid: int):
     f = g.project.get_finding(fid)
     if not f:
         abort(404)
-    from ...a11y import build_find_context
+    from ...a11y import build_find_multi
     evidence = f.get("evidence") or ""
     payload = f.get("payload") or ""
-    # Merge into one searchable blob so a single Find box covers both
-    # regions. When both are present we insert visible section markers
-    # so screen-reader users can tell which region a highlighted match
-    # sits in; when only one region is present we feed it through raw.
-    if evidence and payload:
-        merged = (
-            "--- Evidence ---\n"
-            f"{evidence}\n\n"
-            "--- Payload ---\n"
-            f"{payload}"
-        )
-    else:
-        merged = evidence or payload
-    find_body = build_find_context(
-        merged, prefix="body",
+    # One shared Find form drives highlights across both Evidence and
+    # Payload panes. Each pane is marked up in place via its own anchor
+    # namespace ({prefix}-mN) so the jump list links into the original
+    # panes — no synthetic merged duplicate.
+    find_body = build_find_multi(
+        [("evidence", "evidence", evidence),
+         ("payload", "payload", payload)],
+        form_prefix="body",
         q=request.args.get("body_find", ""),
         regex=request.args.get("body_re") == "1",
         region_label="finding body",
         action=url_for(".show", fid=fid),
-    ) if merged else None
+    ) if (evidence or payload) else None
+    panes_by_prefix = ({p["prefix"]: p for p in find_body["panes"]}
+                       if find_body else {})
     return render_template("scanner/detail.html", f=f,
                            statuses=("open", "triaged", "false_positive", "fixed"),
                            active="findings",
-                           find_body=find_body)
+                           find_body=find_body,
+                           find_evidence=panes_by_prefix.get("evidence"),
+                           find_payload=panes_by_prefix.get("payload"))
 
 
 @bp.route("/<int:fid>/status", methods=["POST"])

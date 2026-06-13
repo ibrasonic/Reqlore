@@ -5,7 +5,7 @@ import json
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for, Response
 
-from ...a11y import (ResponseSummaryInput, build_find_context,
+from ...a11y import (ResponseSummaryInput, build_find_multi,
                      summarise_response)
 from ...plugins import get_registry
 from ..send_targets import (available_targets, bearer_token,
@@ -82,27 +82,20 @@ def show(hid: int):
     plugin_copy_as = [h.name for h in get_registry().active_copy_as()]
     send_targets = available_targets(row.req_blob)
 
-    # Server-side find-in-body (a11y.find_in_text). One unified Find
-    # box covers both the request and response panes — when both are
-    # populated we merge them with visible '--- Request ---' /
-    # '--- Response ---' section markers so screen-reader users can
-    # tell which region each highlighted match lives in.
-    if req_text and resp_text:
-        merged_text = (
-            "--- Request ---\n"
-            f"{req_text}\n\n"
-            "--- Response ---\n"
-            f"{resp_text}"
-        )
-    else:
-        merged_text = req_text or resp_text
-    find_body = build_find_context(
-        merged_text, prefix="body",
+    # Server-side find-in-body. One shared Find form drives highlights
+    # across both panes; each pane is marked up in place (no duplicated
+    # combined block) so screen-reader users meet the matches in their
+    # natural location instead of in a synthetic merged copy.
+    find_body = build_find_multi(
+        [("req", "request", req_text),
+         ("resp", "response", resp_text)],
+        form_prefix="body",
         q=request.args.get("body_find", ""),
         regex=request.args.get("body_re") == "1",
         region_label="exchange",
         action=url_for("history.show", hid=hid),
     )
+    panes_by_prefix = {p["prefix"]: p for p in find_body["panes"]}
 
     return render_template(
         "history/detail.html",
@@ -111,6 +104,8 @@ def show(hid: int):
         plugin_copy_as=plugin_copy_as,
         send_targets=send_targets,
         find_body=find_body,
+        find_req=panes_by_prefix.get("req"),
+        find_resp=panes_by_prefix.get("resp"),
     )
 
 

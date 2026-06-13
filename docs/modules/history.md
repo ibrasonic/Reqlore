@@ -148,17 +148,18 @@ with `.has-new` adding accent colour.
 - **Send-to menu** — `<section aria-labelledby="hs-h">` plus a `<p id="hs-help">` explaining the accesskey modifier per browser.
 - **Plugin copy-as links** (when any).
 - **Request (`<len_req>` bytes)** — `<pre><code>` with the raw bytes,
-  decoded UTF-8 with latin-1 fallback.
-- **Response (`<len_resp>` bytes)** — same shape with its own pane.
-- **Find in this exchange** — below both panes sits a single
-  server-side find form. On submit the page re-renders with each
-  hit wrapped in `<mark id="body-mN">`, a `role="status"` count, and
-  a list of "Match N of M in exchange (line L)" anchor links. URL
-  params: `?body_find=<text>&body_re=1` (regex opt-in; matching is always
-  case-insensitive). When both request and response bodies are
-  present they are merged with visible `--- Request ---` /
-  `--- Response ---` section markers so screen-reader users can
-  tell which region each highlighted match lives in. See
+  decoded UTF-8 with latin-1 fallback. When a Find query is active,
+  matches in the request body are wrapped in `<mark id="req-mN">`
+  in this same pane (no duplicated combined block).
+- **Response (`<len_resp>` bytes)** — same shape with its own pane;
+  matches are wrapped in `<mark id="resp-mN">` in place.
+- **Find in this exchange** — a single server-side find form sits
+  ABOVE the two panes. On submit the page re-renders with each
+  hit wrapped in place inside its native pane (request or response),
+  a `role="status"` count, and a list of "Match N of M in request|
+  response (line L)" anchor links that jump into the original
+  panes. URL params: `?body_find=<text>&body_re=1` (regex opt-in;
+  matching is always case-insensitive). See
   [ACCESSIBILITY.md §
   Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
 - **Back to history** link at the foot.

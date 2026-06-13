@@ -14,10 +14,14 @@
    `a11y.build_find_context()`.
 #}
 
+{# Visible section heading is provided by the caller (one <h2> per page).
+   We deliberately do NOT emit an extra <h3> here — duplicating the
+   heading just clutters screen-reader heading nav. The input keeps a
+   visually-hidden <label> (placeholder alone is not an accessible name)
+   and the form's accessible name comes from aria-label. #}
 {% macro find_form(ctx) -%}
 <form method="get" action="{{ ctx.action }}" class="find-form" role="search"
-      aria-labelledby="{{ ctx.prefix }}-find-h">
-  <h3 id="{{ ctx.prefix }}-find-h" class="find-form-h">Find in {{ ctx.region_label }}</h3>
+      aria-label="Find in {{ ctx.region_label }}">
   {#- Preserve every other URL param so submitting one region's find
       form does not blow away the other region's current search. -#}
   {%- for k, vlist in request.args.lists() -%}
@@ -27,10 +31,11 @@
       {%- endfor -%}
     {%- endif -%}
   {%- endfor %}
-  <label for="{{ ctx.prefix }}-find-q">Search text</label>
+  <label for="{{ ctx.prefix }}-find-q" class="visually-hidden">Search text</label>
   <input id="{{ ctx.prefix }}-find-q" name="{{ ctx.prefix }}_find"
          value="{{ ctx.q }}" type="search" autocomplete="off"
-         inputmode="search" spellcheck="false">
+         inputmode="search" spellcheck="false"
+         placeholder="Find in {{ ctx.region_label }}…">
   <label class="checkbox">
     <input type="checkbox" name="{{ ctx.prefix }}_re" value="1"
            {% if ctx.regex %}checked{% endif %}>
@@ -77,5 +82,60 @@
 {%- endfor -%}</code></pre>
   {% endif %}
 </div>
+{% endif %}
+{%- endmacro %}
+
+
+{# Multi-pane variant: one shared form drives highlights across multiple
+   separately-displayed panes (e.g. Request + Response on the History
+   page). The form + status + jump list are rendered ONCE at the top of
+   the page; each pane's <pre> is then marked up in place via
+   `find_pane_pre`. No duplicated combined block.
+
+   `find_panes` is the dict from a11y.build_find_multi(): it has
+   `form` (ctx for find_form), `panes` (list of per-pane dicts), `q`,
+   `status`, `total`, `truncated`. #}
+{% macro find_jumps(multi) -%}
+{% if multi.q %}
+<div class="find-result" aria-labelledby="{{ multi.form.prefix }}-find-status">
+  <p id="{{ multi.form.prefix }}-find-status" role="status" class="find-status">
+    {{ multi.status }}
+  </p>
+  {% if multi.total %}
+  <nav aria-labelledby="{{ multi.form.prefix }}-find-jumps-h">
+    <h4 id="{{ multi.form.prefix }}-find-jumps-h" class="find-jumps-h">Jump to a match</h4>
+    <ol class="find-match-list">
+      {% for p in multi.panes %}
+        {% for m in p.matches %}
+          <li>
+            <a href="#{{ p.prefix }}-m{{ m.index }}">Match {{ m.index }} of {{ p.matches|length }} in {{ p.region_label }} (line {{ m.line_no }})</a>
+          </li>
+        {% endfor %}
+      {% endfor %}
+    </ol>
+  </nav>
+  {% endif %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+
+{# Renders one pane's text as a marked-up <pre>. When the pane has no
+   matches (or no active query) it falls back to the plain pane text
+   inside the same <pre> structure, so the rendered region stays a
+   single contiguous block whether or not a search is active.
+   `pane` is one entry from multi.panes (or any dict with
+   prefix / region_label / text / segments / matches).
+   `caption` (optional) overrides the aria-label / labelledby target. #}
+{% macro find_pane_pre(pane, aria_labelledby=none, css_class='block') -%}
+{% if pane.matches %}
+<pre class="{{ css_class }} findable"
+     {% if aria_labelledby %}aria-labelledby="{{ aria_labelledby }}"{% else %}aria-label="Marked-up {{ pane.region_label }} with {{ pane.matches|length }} highlighted match{% if pane.matches|length != 1 %}es{% endif %}"{% endif %}><code
+>{%- for seg in pane.segments -%}
+{%- if seg.kind == 'match' -%}<mark id="{{ pane.prefix }}-m{{ seg.index }}">{{ seg.text }}</mark>{%- else -%}{{ seg.text }}{%- endif -%}
+{%- endfor -%}</code></pre>
+{% else %}
+<pre class="{{ css_class }}"
+     {% if aria_labelledby %}aria-labelledby="{{ aria_labelledby }}"{% endif %}><code>{{ pane.text }}</code></pre>
 {% endif %}
 {%- endmacro %}

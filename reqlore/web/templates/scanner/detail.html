@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_find.html" import find_form, find_result %}
+{% from "_find.html" import find_form, find_jumps, find_pane_pre %}
 {% block title %}Reqlore — Finding {{ f.id }}{% endblock %}
 {% block main %}
 {% include "scanner/_section_nav.html" %}
@@ -23,19 +23,27 @@
 {% if find_body %}
   <section aria-labelledby="body-find-h-section">
     <h2 id="body-find-h-section">Find in finding body</h2>
-    {{ find_form(find_body) }}
-    {{ find_result(find_body) }}
+    {{ find_form(find_body.form) }}
+    {{ find_jumps(find_body) }}
   </section>
 {% endif %}
 
 {% if f.evidence %}
-  <h2>Evidence</h2>
-  <pre class="wrap-pre">{{ f.evidence }}</pre>
+  <h2 id="ev-h">Evidence</h2>
+  {% if find_evidence %}
+    {{ find_pane_pre(find_evidence, aria_labelledby="ev-h", css_class="wrap-pre") }}
+  {% else %}
+    <pre class="wrap-pre">{{ f.evidence }}</pre>
+  {% endif %}
 {% endif %}
 
 {% if f.payload %}
-  <h2>Payload</h2>
-  <pre class="wrap-pre">{{ f.payload }}</pre>
+  <h2 id="pl-h">Payload</h2>
+  {% if find_payload %}
+    {{ find_pane_pre(find_payload, aria_labelledby="pl-h", css_class="wrap-pre") }}
+  {% else %}
+    <pre class="wrap-pre">{{ f.payload }}</pre>
+  {% endif %}
 {% endif %}
 
 <h2>Triage</h2>
