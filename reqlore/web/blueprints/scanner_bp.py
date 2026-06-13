@@ -254,9 +254,25 @@ def show(fid: int):
     f = g.project.get_finding(fid)
     if not f:
         abort(404)
+    from ...a11y import build_find_context
+    detail_url = url_for(".show", fid=fid)
+    find_evidence = build_find_context(
+        f.get("evidence") or "", prefix="evidence",
+        q=request.args.get("evidence_find", ""),
+        regex=request.args.get("evidence_re") == "1",
+        region_label="evidence", action=detail_url,
+    ) if (f.get("evidence") or "") else None
+    find_payload = build_find_context(
+        f.get("payload") or "", prefix="payload",
+        q=request.args.get("payload_find", ""),
+        regex=request.args.get("payload_re") == "1",
+        region_label="payload", action=detail_url,
+    ) if (f.get("payload") or "") else None
     return render_template("scanner/detail.html", f=f,
                            statuses=("open", "triaged", "false_positive", "fixed"),
-                           active="findings")
+                           active="findings",
+                           find_evidence=find_evidence,
+                           find_payload=find_payload)
 
 
 @bp.route("/<int:fid>/status", methods=["POST"])

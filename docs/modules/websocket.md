@@ -83,6 +83,12 @@ ID counter at `project_state["ws:next_id"]`. Iteration walks `1` to
   `<th scope="row">`.
 - Headings `<h1>` page, `<h2>` per section.
 - Errors render in the global flash region.
+- **Find in transcript** — a server-side find widget flattens every
+  message body into one searchable text block (one `[N] dir kind size`
+  header line per message) so substring searches resolve to a real line
+  number instead of paging through table rows. URL params `tx_find` /
+  `tx_re`. See
+  [ACCESSIBILITY.md § Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
 
 ## How it integrates
 

@@ -223,10 +223,12 @@ patterns below.
 
 ### Find-in-body (no-JS, AAA-clean)
 
-Long request / response bodies on **History detail**, **Repeater**
-(response side) and **Intercept detail** carry a server-side find
-widget powered by [`reqlore.a11y.find_in_text`](../reqlore/a11y.py)
-and the shared
+Long request / response / evidence / payload / transcript bodies on
+**History detail**, **Repeater** (response side), **Intercept
+detail**, **Scanner finding detail** (evidence + payload),
+**WebSocket transcript** and **Macros detail** (JSON definition)
+carry a server-side find widget powered by
+[`reqlore.a11y.find_in_text`](../reqlore/a11y.py) and the shared
 [`templates/_find.html`](../reqlore/web/templates/_find.html) macros.
 Browser Ctrl+F cannot search inside an editable `<textarea>`, and a
 JS incremental-find would violate 2.2.2 + 3.2.5, so the only
@@ -244,9 +246,12 @@ the marked-up body), 3.2.5 AAA (page only changes when the user
 submits) and 4.1.3 (status region announces the count). See
 [`test_a11y_find.py`](../reqlore/tests/unit/test_a11y_find.py),
 [`test_history_find_smoke.py`](../reqlore/tests/unit/test_history_find_smoke.py),
-[`test_repeater_find_smoke.py`](../reqlore/tests/unit/test_repeater_find_smoke.py)
+[`test_repeater_find_smoke.py`](../reqlore/tests/unit/test_repeater_find_smoke.py),
+[`test_intercept_find_smoke.py`](../reqlore/tests/unit/test_intercept_find_smoke.py),
+[`test_scanner_find_smoke.py`](../reqlore/tests/unit/test_scanner_find_smoke.py),
+[`test_ws_find_smoke.py`](../reqlore/tests/unit/test_ws_find_smoke.py)
 and
-[`test_intercept_find_smoke.py`](../reqlore/tests/unit/test_intercept_find_smoke.py).
+[`test_macros_find_smoke.py`](../reqlore/tests/unit/test_macros_find_smoke.py).
 
 ### Structural matrix — what the test enforces
 

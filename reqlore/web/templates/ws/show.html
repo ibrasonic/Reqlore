@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_find.html" import find_form, find_result %}
 {% block title %}Reqlore — WS transcript #{{ tid }}{% endblock %}
 {% block main %}
 <h1>WebSocket transcript #{{ tid }}</h1>
@@ -19,6 +20,14 @@
     {% endfor %}
   </tbody>
 </table>
+
+{% if t.messages %}
+  <section aria-labelledby="tx-find-h-section">
+    <h2 id="tx-find-h-section">Find in transcript</h2>
+    {{ find_form(find_tx) }}
+    {{ find_result(find_tx) }}
+  </section>
+{% endif %}
 
 <h2>Send another message</h2>
 <form method="post" action="{{ url_for('.send_more', tid=tid) }}" class="stack">

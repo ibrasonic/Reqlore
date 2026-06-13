@@ -117,6 +117,11 @@ After **Run**:
 - Definition textarea is plain (no JSON syntax highlighting — keeps it
   accessible to screen readers; pair with [Decoder](decoder.md)
   `json_pretty` for inspection).
+- **Find in definition** — the definition textarea is editable, so
+  browser Ctrl+F cannot search inside it. A separate GET-only find
+  form below the edit form renders a marked-up read-only copy with
+  `<mark>` hits and a jump list. URL params `def_find` / `def_re`. See
+  [ACCESSIBILITY.md § Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
 
 ## How it integrates
 

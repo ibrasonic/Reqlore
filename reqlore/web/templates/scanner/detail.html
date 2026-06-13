@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_find.html" import find_form, find_result %}
 {% block title %}Reqlore — Finding {{ f.id }}{% endblock %}
 {% block main %}
 {% include "scanner/_section_nav.html" %}
@@ -22,11 +23,19 @@
 {% if f.evidence %}
   <h2>Evidence</h2>
   <pre class="wrap-pre">{{ f.evidence }}</pre>
+  {% if find_evidence %}
+    {{ find_form(find_evidence) }}
+    {{ find_result(find_evidence) }}
+  {% endif %}
 {% endif %}
 
 {% if f.payload %}
   <h2>Payload</h2>
   <pre class="wrap-pre">{{ f.payload }}</pre>
+  {% if find_payload %}
+    {{ find_form(find_payload) }}
+    {{ find_result(find_payload) }}
+  {% endif %}
 {% endif %}
 
 <h2>Triage</h2>

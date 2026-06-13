@@ -56,7 +56,7 @@ def show(mid: int):
                 flash(f"Definition is not valid JSON: {exc}", "err")
                 return render_template("macros/show.html", mid=mid,
                                         macro=macro, definition=body,
-                                        last_run=None)
+                                        last_run=None, find_def=None)
             new_macro.name = macro.name
             _save(g.project, new_macro, mid=mid)
             flash("Saved.", "ok")
@@ -69,8 +69,17 @@ def show(mid: int):
             return redirect(url_for(".show", mid=mid, t=tok))
     if tok := request.args.get("t"):
         last_run = _run_cache.get(tok)
+    definition = macro.to_json()
+    from ...a11y import build_find_context
+    find_def = build_find_context(
+        definition, prefix="def",
+        q=request.args.get("def_find", ""),
+        regex=request.args.get("def_re") == "1",
+        region_label="definition", action=url_for(".show", mid=mid),
+    )
     return render_template("macros/show.html", mid=mid, macro=macro,
-                            definition=macro.to_json(), last_run=last_run)
+                            definition=definition, last_run=last_run,
+                            find_def=find_def)
 
 
 @bp.route("/<int:mid>/delete", methods=["POST"])

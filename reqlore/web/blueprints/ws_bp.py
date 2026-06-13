@@ -50,8 +50,31 @@ def show(tid: int):
     if transcript is None:
         flash(f"No transcript #{tid}.", "err")
         return redirect(url_for(".index"))
+    from ...a11y import build_find_context
+    tx_text = _transcript_text(transcript)
+    find_tx = build_find_context(
+        tx_text, prefix="tx",
+        q=request.args.get("tx_find", ""),
+        regex=request.args.get("tx_re") == "1",
+        region_label="transcript", action=url_for(".show", tid=tid),
+    )
     return render_template("ws/show.html", tid=tid, t=transcript,
-                           ws_available=WS_AVAILABLE)
+                           ws_available=WS_AVAILABLE,
+                           find_tx=find_tx)
+
+
+def _transcript_text(transcript: WSTranscript) -> str:
+    """Flatten the message list into one searchable text block.
+
+    Each message gets a one-line header (``[N] dir kind size``) so the
+    find widget's line numbers point inside a stable, scannable layout.
+    """
+    parts: list[str] = []
+    for i, m in enumerate(transcript.messages, start=1):
+        parts.append(f"[{i}] {m.direction} {m.kind} {m.size}")
+        parts.append(m.data)
+        parts.append("")
+    return "\n".join(parts)
 
 
 @bp.route("/<int:tid>/send", methods=["POST"])
