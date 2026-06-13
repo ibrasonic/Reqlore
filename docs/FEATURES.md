@@ -168,7 +168,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | Copy as: curl / httpx / requests / raw / fetch + plugin handlers | ✅ | See [PLUGINS.md](PLUGINS.md). |
 | Live regions for all status messages | ✅ | `role="status"` / `role="alert"` per phase. |
 | Server-driven auto-refresh (no `setInterval`) | ✅ | `<meta http-equiv="refresh">` + `/results.json?since=N`. |
-| Server-side find-in-body (no JS) | ✅ | History detail, Repeater response, Intercept detail, Scanner finding detail (one Find box across the merged evidence + payload blob), WebSocket transcript, Macros detail (JSON definition). See [ACCESSIBILITY.md § Find-in-body](ACCESSIBILITY.md#find-in-body-no-js-aaa-clean). |
+| Server-side find-in-body (no JS) | ✅ | History detail (one Find box across the merged request + response blob), Repeater response, Intercept detail, Scanner finding detail (one Find box across the merged evidence + payload blob), WebSocket transcript, Macros detail (JSON definition). See [ACCESSIBILITY.md § Find-in-body](ACCESSIBILITY.md#find-in-body-no-js-aaa-clean). |
 
 ## Out of scope
 

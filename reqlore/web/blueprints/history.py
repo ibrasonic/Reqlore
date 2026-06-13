@@ -82,21 +82,26 @@ def show(hid: int):
     plugin_copy_as = [h.name for h in get_registry().active_copy_as()]
     send_targets = available_targets(row.req_blob)
 
-    # Server-side find-in-body (a11y.find_in_text). Independent state
-    # for request and response so a search in one pane does not blow
-    # away a search in the other.
-    detail_url = url_for("history.show", hid=hid)
-    find_req = build_find_context(
-        req_text, prefix="req",
-        q=request.args.get("req_find", ""),
-        regex=request.args.get("req_re") == "1",
-        region_label="request", action=detail_url,
-    )
-    find_resp = build_find_context(
-        resp_text, prefix="resp",
-        q=request.args.get("resp_find", ""),
-        regex=request.args.get("resp_re") == "1",
-        region_label="response", action=detail_url,
+    # Server-side find-in-body (a11y.find_in_text). One unified Find
+    # box covers both the request and response panes — when both are
+    # populated we merge them with visible '--- Request ---' /
+    # '--- Response ---' section markers so screen-reader users can
+    # tell which region each highlighted match lives in.
+    if req_text and resp_text:
+        merged_text = (
+            "--- Request ---\n"
+            f"{req_text}\n\n"
+            "--- Response ---\n"
+            f"{resp_text}"
+        )
+    else:
+        merged_text = req_text or resp_text
+    find_body = build_find_context(
+        merged_text, prefix="body",
+        q=request.args.get("find", ""),
+        regex=request.args.get("re") == "1",
+        region_label="exchange",
+        action=url_for("history.show", hid=hid),
     )
 
     return render_template(
@@ -105,7 +110,7 @@ def show(hid: int):
         summary=summary, status_line=status_line,
         plugin_copy_as=plugin_copy_as,
         send_targets=send_targets,
-        find_req=find_req, find_resp=find_resp,
+        find_body=find_body,
     )
 
 
