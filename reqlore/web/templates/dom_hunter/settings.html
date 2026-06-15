@@ -26,8 +26,8 @@
   <fieldset>
     <legend>Scope</legend>
     <label for="s-scope">Hosts (one per line; <code>*.example.com</code> for subdomains)</label>
-    <textarea id="s-scope" name="scope" rows="4">{{ scope }}</textarea>
-    <p><small>Empty = every host. Outside-of-scope tabs receive no hooks.</small></p>
+    <textarea id="s-scope" name="scope" rows="4" placeholder="example.com&#10;*.example.com&#10;localhost:3001">{{ scope }}</textarea>
+    <p><small>Empty = every host. Outside-of-scope tabs receive no hooks. Full URLs work too (e.g. <code>http://localhost:3001/login</code>) &mdash; the host (with port) is extracted automatically.</small></p>
   </fieldset>
 
   <fieldset>

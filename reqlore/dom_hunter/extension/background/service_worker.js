@@ -14,11 +14,18 @@ const STORE_KEYS = {
   tabOff:  "dom_hunter.tabOff",   // map { tabId: true } -- tabs the user disabled
 };
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:8080";
+// Reqlore's UI server (where /dom-hunter/__bridge/* lives). NOT the
+// proxy port (8080). The managed-policy config from `reqlore browser
+// --project` overrides this; the default only kicks in when the user
+// loaded the extension manually and hasn't touched the options page.
+const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
 
 let cachedCfg = null;
 let cachedAt = 0;
-const CFG_TTL_MS = 15_000;
+// Short TTL so toggles in the Reqlore UI (Enabled, Scope, auto-inject)
+// take effect within a few seconds without the user having to reload
+// the extension or restart Firefox.
+const CFG_TTL_MS = 3_000;
 
 // -------------------- settings storage --------------------
 
@@ -112,6 +119,29 @@ async function sendReport(payload, tabId) {
 
 // -------------------- per-tab gating --------------------
 
+// -------------------- scope helpers --------------------
+
+/* Mirrors reqlore.dom_hunter.normalize_scope_entry on the JS side --
+ * defensive only: the server normalizes too, but the bridge config is
+ * cached for up to CFG_TTL_MS so legacy / hand-edited entries flow
+ * through here unaltered for a short window. */
+function normalizeScopeEntry(s) {
+  s = String(s == null ? "" : s).trim().toLowerCase();
+  if (!s) return "";
+  if (s.startsWith("*.")) {
+    let rest = s.slice(2);
+    const i = rest.indexOf("://");
+    if (i >= 0) rest = rest.slice(i + 3);
+    rest = rest.split(/[\/?#]/)[0];
+    return rest ? ("*." + rest) : "";
+  }
+  if (s.indexOf("://") >= 0) {
+    try { return new URL(s).host.toLowerCase(); } catch (_) { return ""; }
+  }
+  if (s.startsWith("//")) s = s.slice(2);
+  return s.split(/[\/?#]/)[0];
+}
+
 async function configForTab(tabId, url) {
   const cfg = await fetchConfig();
   if (!cfg) return null;
@@ -125,7 +155,8 @@ async function configForTab(tabId, url) {
   const scope = Array.isArray(cfg.scope) ? cfg.scope : [];
   if (scope.length) {
     const inScope = scope.some(p => {
-      const pat = String(p || "").toLowerCase();
+      const pat = normalizeScopeEntry(p);
+      if (!pat) return false;
       if (pat.startsWith("*.")) {
         const base = pat.slice(2);
         return host === base || host.endsWith("." + base);

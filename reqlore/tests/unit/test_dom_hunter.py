@@ -55,6 +55,44 @@ def test_host_in_scope_wildcards():
     assert S.host_in_scope("anything", [])
 
 
+def test_normalize_scope_entry_accepts_urls_and_wildcards():
+    """Users naturally paste URLs (with scheme/path/port) into the scope
+    box. Strip everything but host[:port]. Wildcards survive intact."""
+    n = S.normalize_scope_entry
+    assert n("example.com") == "example.com"
+    assert n(" EXAMPLE.COM ") == "example.com"
+    assert n("http://example.com/path?x=1") == "example.com"
+    assert n("https://localhost:3001/") == "localhost:3001"
+    assert n("//example.com") == "example.com"
+    assert n("example.com/foo") == "example.com"
+    assert n("*.example.com") == "*.example.com"
+    assert n("https://*.example.com/login") == "*.example.com"
+    assert n("") == ""
+    assert n("   ") == ""
+
+
+def test_set_scope_normalizes_url_form(project: Project):
+    """Reported bug: user types 'http://localhost:3001' as scope, the
+    extension's per-tab gate compares host 'localhost:3001' against
+    pattern 'http://localhost:3001', returns out-of-scope, no canary
+    is injected, panel shows 'off'."""
+    S.set_scope(project, ["http://localhost:3001", "https://*.example.com/path"])
+    stored = S.get_scope(project)
+    assert stored == ["localhost:3001", "*.example.com"]
+    assert S.host_in_scope("localhost:3001", stored)
+    assert S.host_in_scope("api.example.com", stored)
+    assert not S.host_in_scope("localhost", stored)  # port mismatch is strict
+    assert not S.host_in_scope("example.org", stored)
+
+
+def test_get_scope_normalizes_legacy_entries(project: Project):
+    """Old projects may have raw URLs stored from before the
+    normalizer. get_scope() must clean them up on read so we don't
+    require a forced re-save."""
+    project.set_state(S.SCOPE_KEY, "http://localhost:3001,HTTPS://Foo.com/x")
+    assert S.get_scope(project) == ["localhost:3001", "foo.com"]
+
+
 def test_dedupe_key_is_stable_and_distinguishing():
     a = S.dedupe_key(sink="eval", source="location.hash",
                      page_url="https://x/", stack="at f (a:1)\n", canary_seen=True)

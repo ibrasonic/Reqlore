@@ -162,13 +162,66 @@ def get_or_make_canary(project) -> str:
     return c
 
 
+def normalize_scope_entry(s: str) -> str:
+    """Convert a user-typed scope entry to a canonical bare host[:port].
+
+    Accepts the natural forms a user might paste in:
+
+        example.com               -> example.com
+        EXAMPLE.com               -> example.com
+        http://example.com/path   -> example.com
+        https://localhost:3001/   -> localhost:3001
+        //example.com             -> example.com
+        *.example.com             -> *.example.com   (wildcards preserved)
+        ""                        -> ""               (caller filters)
+    """
+    s = (s or "").strip().lower()
+    if not s:
+        return ""
+    if s.startswith("*."):
+        # Wildcard. Still strip path/scheme just in case the user wrote
+        # http://*.example.com/foo -- shouldn't happen, but be forgiving.
+        rest = s[2:]
+        if "://" in rest:
+            rest = rest.split("://", 1)[1]
+        for sep in ("/", "?", "#"):
+            i = rest.find(sep)
+            if i >= 0:
+                rest = rest[:i]
+        return "*." + rest if rest else ""
+    if "://" in s:
+        from urllib.parse import urlsplit
+        try:
+            u = urlsplit(s)
+            return (u.netloc or "").lower()
+        except Exception:
+            return ""
+    if s.startswith("//"):
+        s = s[2:]
+    for sep in ("/", "?", "#"):
+        i = s.find(sep)
+        if i >= 0:
+            s = s[:i]
+    return s
+
+
 def get_scope(project) -> list[str]:
     raw = project.get_state(SCOPE_KEY, "")
-    return [s.strip() for s in raw.split(",") if s.strip()]
+    # Normalize on read too, so legacy entries (saved before the
+    # normalizer existed) are still matched correctly without forcing
+    # the user to re-save.
+    out: list[str] = []
+    for s in raw.split(","):
+        n = normalize_scope_entry(s)
+        if n:
+            out.append(n)
+    return out
 
 
 def set_scope(project, hosts: list[str]) -> None:
-    cleaned = ",".join(h.strip() for h in hosts if h.strip())
+    cleaned = ",".join(
+        n for n in (normalize_scope_entry(h) for h in hosts) if n
+    )
     project.set_state(SCOPE_KEY, cleaned)
 
 
