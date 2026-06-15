@@ -1,7 +1,7 @@
 """DOM Hunter - DOM XSS source/sink tracer for Reqlore.
 
 This package holds the server-side pieces. The browser-side agent lives
-in ``extensions/dom-hunter/`` and POSTs findings to ``/_dom_hunter/report``.
+in ``reqlore/dom_hunter/extension/`` and POSTs findings to ``/_dom_hunter/report``.
 """
 from __future__ import annotations
 

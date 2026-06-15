@@ -65,7 +65,7 @@ finishes starting. No options-page round-trip.
 
 1. Open `about:debugging#/runtime/this-firefox`.
 2. Choose **Load Temporary Add-on...**
-3. Pick `extensions/dom-hunter/manifest.json`.
+3. Pick `reqlore/dom_hunter/extension/manifest.json`.
 4. Open `about:addons` -> DOM Hunter -> Preferences and paste:
    - **Reqlore base URL** -- usually `http://127.0.0.1:8080`.
    - **Bridge token** -- shown in Reqlore at *DOM Hunter -> Settings*.
@@ -85,7 +85,7 @@ Rebind any of them at `about:addons` -> gear icon ->
 ## File layout
 
 ```
-extensions/dom-hunter/
+reqlore/dom_hunter/extension/
   manifest.json
   background/service_worker.js   bridge to Reqlore + shortcuts + per-tab state
   content/

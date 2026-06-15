@@ -139,11 +139,13 @@ renderer, h3, hpack) are *not* involved.
 
 Globals (Reqlore web UI):
 
-- `Alt`+`7` — open DOM Hunter findings (`accesskey="7"` on the nav
-  link, after the badge-bearing label).
-- `1`–`6` / `8`–`9` / `0` — the other module nav accesskeys
-  (Dashboard, Proxy, History, Repeater, Intruder, Scanner, Decoder,
-  JWT, Settings, Help). See [KEYBINDINGS.md](../KEYBINDINGS.md).
+- DOM Hunter does **not** currently have an `accesskey` on its nav
+  link — open it by clicking *DOM Hunter* in the top bar or by
+  visiting `/dom-hunter/` directly.
+- The numeric module accesskeys are: `Alt`+`1` Dashboard, `Alt`+`2`
+  Proxy, `Alt`+`3` History, `Alt`+`4` Repeater, `Alt`+`5` Intruder,
+  `Alt`+`6` Scanner, `Alt`+`7` Decoder, `Alt`+`8` JWT, `Alt`+`9`
+  Settings, `Alt`+`0` Help. See [KEYBINDINGS.md](../KEYBINDINGS.md).
 
 Browser extension (rebindable at `about:addons` → gear → *Manage
 Extension Shortcuts*):
@@ -202,13 +204,13 @@ focus traps and no custom widgets.
 
 ### 3. Verify a manual payload using the test harness
 
-`extensions/dom-hunter/tests/test_target.html` deliberately wires
+`reqlore/dom_hunter/extension/tests/test_target.html` deliberately wires
 four source→sink flows (`hash → innerHTML`, `hash → eval`,
 `postMessage → innerHTML`, `window.name → document.write`). Open it
 in the managed Firefox at:
 
 ```
-file:///D:/TechBooks/reqlore/extensions/dom-hunter/tests/test_target.html#<paste-canary-here>
+file:///D:/TechBooks/reqlore/reqlore/dom_hunter/extension/tests/test_target.html#<paste-canary-here>
 ```
 
 You should see four rows appear in `/dom-hunter/` within a second.
@@ -254,7 +256,7 @@ automatically.
 | Options page is editable when it should be locked | `storage.managed` was not delivered — the `3rdparty → Extensions` policy block is missing. | Open `about:policies` and confirm the block; if absent, relaunch Reqlore with `--project`. |
 | Page enforces `Trusted Types` and the agent throws | Expected. DOM Hunter still records the *attempt* in `dom_hunter_findings`; the assignment just doesn't execute. | Use a Trusted Types-aware payload (sink-specific) and re-test. |
 | Live updates stop arriving in the DevTools panel | The panel filters by `inspectedWindow.tabId`. Reloading or navigating that tab clears the local view; new rows still appear. | Click **Refresh** in the panel or switch tabs and back. |
-| `extension: DOM Hunter auto-installed for project` line missing from `reqlore browser` log | XPI build failed (usually because the source tree is missing). | Re-check `extensions/dom-hunter/manifest.json` exists; logs the actual `FileNotFoundError` immediately above. |
+| `extension: DOM Hunter auto-installed for project` line missing from `reqlore browser` log | XPI build failed (usually because the source tree is missing). | Re-check `reqlore/dom_hunter/extension/manifest.json` exists; logs the actual `FileNotFoundError` immediately above. |
 
 ## CLI equivalents
 
@@ -336,7 +338,7 @@ Re-inserts of an existing key bump `hit_count` and set `canary_seen
 
 ## See also
 
-- [Extension README](../../extensions/dom-hunter/README.md) — install
+- [Extension README](../../reqlore/dom_hunter/extension/README.md) — install
   flow, file layout, manifest details.
 - [browser-launcher.md](../browser-launcher.md) — how
   `reqlore browser` provisions the managed Firefox profile,

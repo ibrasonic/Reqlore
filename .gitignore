@@ -78,3 +78,4 @@ _push_to_github.ps1
 # ---------- Transient test output ----------
 pytest_*.txt
 
+XSS-EXPLAINED.txt

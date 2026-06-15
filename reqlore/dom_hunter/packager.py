@@ -17,27 +17,27 @@ _SKIP_TOP_LEVEL = {"tests", "README.md"}
 
 
 def find_extension_source() -> Path | None:
-    """Locate the ``extensions/dom-hunter`` folder on disk.
+    """Locate the DOM Hunter extension source folder on disk.
 
     Returns:
         Absolute path to the extension source directory, or ``None`` if
-        not found. We look in two places:
-        1. ``<repo>/extensions/dom-hunter/`` (dev / source checkout).
-        2. ``<reqlore-package>/dom_hunter/extension/`` (packaged copy,
-           when installed via pip and the extension was shipped as
-           package data).
+        not found. We look in two places, in order:
+        1. ``<reqlore-package>/dom_hunter/extension/`` (the shipped
+           location — works for any pip / pipx install).
+        2. ``<repo>/extensions/dom-hunter/`` (legacy dev layout, kept
+           for back-compat with older checkouts).
     """
     here = Path(__file__).resolve()
-    # Walk upward looking for the repo-level extensions dir.
+    # Preferred: packaged-as-data copy next to this module.
+    packaged = here.parent / "extension"
+    if (packaged / "manifest.json").exists():
+        return packaged
+    # Fallback: legacy repo-level extensions dir.
     for ancestor in (here.parent, here.parent.parent, here.parent.parent.parent,
                      here.parent.parent.parent.parent):
         candidate = ancestor / "extensions" / "dom-hunter"
         if (candidate / "manifest.json").exists():
             return candidate
-    # Fallback: packaged-as-data copy next to this module.
-    packaged = here.parent / "extension"
-    if (packaged / "manifest.json").exists():
-        return packaged
     return None
 
 
@@ -56,8 +56,8 @@ def build_xpi(*, out_path: Path, src_dir: Path | None = None) -> Path:
     if src is None:
         raise FileNotFoundError(
             "DOM Hunter extension source not found. Looked under "
-            "<repo>/extensions/dom-hunter/ and "
-            "<reqlore-package>/dom_hunter/extension/."
+            "<reqlore-package>/dom_hunter/extension/ and "
+            "<repo>/extensions/dom-hunter/."
         )
     if not src.is_dir():
         raise FileNotFoundError(

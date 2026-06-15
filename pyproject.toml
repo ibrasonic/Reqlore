@@ -87,6 +87,7 @@ include = ["reqlore*"]
 
 [tool.setuptools.package-data]
 "reqlore.web" = ["templates/**/*.html", "static/**/*"]
+"reqlore.dom_hunter" = ["extension/**/*"]
 
 [tool.ruff]
 line-length = 100
