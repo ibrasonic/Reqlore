@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DOM Hunter test harness</title>
+</head>
+<body>
+  <h1>DOM Hunter test harness</h1>
+  <p>Load this page in a browser that has the Reqlore DOM Hunter extension
+     installed, with the tracer ON in Reqlore. Then visit this URL with
+     the canary appended in the fragment, e.g.:</p>
+  <pre>file:///.../tests/test_target.html#&lt;CANARY&gt;</pre>
+
+  <h2>Source: location.hash -- Sink: Element.innerHTML</h2>
+  <div id="out1"></div>
+  <script>
+    var name = decodeURIComponent(location.hash.slice(1));
+    if (name) document.getElementById("out1").innerHTML = "Hello, " + name;
+  </script>
+
+  <h2>Source: location.hash -- Sink: eval</h2>
+  <script>
+    try {
+      var h = decodeURIComponent(location.hash.slice(1));
+      if (h && /^[\w =;.,'"+\-]*$/.test(h)) eval("/* canary check */ var _ = '" + h + "';");
+    } catch (_) {}
+  </script>
+
+  <h2>Source: postMessage -- Sink: Element.innerHTML</h2>
+  <div id="out3"></div>
+  <script>
+    window.addEventListener("message", function (ev) {
+      if (typeof ev.data === "string") {
+        document.getElementById("out3").innerHTML = ev.data;
+      }
+    });
+  </script>
+  <p>Trigger it from the console with:
+     <code>window.postMessage("&lt;img src=x onerror=1&gt;&lt;CANARY&gt;", "*")</code>
+  </p>
+
+  <h2>Source: window.name -- Sink: document.write</h2>
+  <script>
+    if (window.name && window.name.indexOf("rqdomh") !== -1) {
+      document.write("<p>name=" + window.name + "</p>");
+    }
+  </script>
+</body>
+</html>

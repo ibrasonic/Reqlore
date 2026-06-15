@@ -181,6 +181,35 @@ CREATE TABLE IF NOT EXISTS rule_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_rule_runs_host ON rule_runs(host, rule_id);
 CREATE INDEX IF NOT EXISTS idx_rule_runs_rule ON rule_runs(rule_id);
+
+CREATE TABLE IF NOT EXISTS dom_hunter_findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    page_url TEXT NOT NULL DEFAULT '',
+    frame_url TEXT NOT NULL DEFAULT '',
+    sink TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL DEFAULT 'medium',
+    canary_seen INTEGER NOT NULL DEFAULT 0,
+    value TEXT NOT NULL DEFAULT '',
+    stack TEXT NOT NULL DEFAULT '',
+    dedupe_key TEXT NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dom_hunter_dedupe ON dom_hunter_findings(dedupe_key);
+CREATE INDEX IF NOT EXISTS idx_dom_hunter_ts ON dom_hunter_findings(ts);
+CREATE INDEX IF NOT EXISTS idx_dom_hunter_sev ON dom_hunter_findings(severity);
+
+CREATE TABLE IF NOT EXISTS dom_hunter_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    page_url TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT '',
+    data TEXT NOT NULL DEFAULT '',
+    has_canary INTEGER NOT NULL DEFAULT 0,
+    handler_stack TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_dom_hunter_msg_ts ON dom_hunter_messages(ts);
 """
 
 
@@ -1073,3 +1102,134 @@ class Project:
              "reason": r[2] or "(none)", "count": int(r[3] or 0)}
             for r in rows
         ]
+
+    # ---- DOM Hunter (DOM XSS) findings ----
+    def add_dom_hunter_finding(self, *, page_url: str, frame_url: str, sink: str,
+                          source: str, severity: str, canary_seen: bool,
+                          value: str, stack: str, dedupe_key: str) -> int:
+        """Insert a DOM Hunter finding or bump hit_count if the dedupe_key exists.
+
+        Returns the row id of the inserted-or-updated finding.
+        """
+        now = int(time.time())
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO dom_hunter_findings(ts,page_url,frame_url,sink,source,"
+                "severity,canary_seen,value,stack,dedupe_key,hit_count) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,1) "
+                "ON CONFLICT(dedupe_key) DO UPDATE SET "
+                "hit_count=hit_count+1, ts=excluded.ts, "
+                "canary_seen=MAX(dom_hunter_findings.canary_seen, excluded.canary_seen)",
+                (now, page_url, frame_url, sink, source, severity,
+                 1 if canary_seen else 0, value, stack, dedupe_key),
+            )
+            r = cur.execute(
+                "SELECT id FROM dom_hunter_findings WHERE dedupe_key=?", (dedupe_key,)
+            ).fetchone()
+        return int(r[0]) if r else 0
+
+    def list_dom_hunter_findings(self, *, limit: int = 200, offset: int = 0,
+                            min_severity: str | None = None,
+                            q: str | None = None) -> list[dict]:
+        order = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+        sql = ("SELECT id,ts,page_url,frame_url,sink,source,severity,"
+               "canary_seen,value,stack,hit_count FROM dom_hunter_findings WHERE 1=1")
+        args: list = []
+        if q:
+            sql += " AND (page_url LIKE ? OR sink LIKE ? OR source LIKE ? OR value LIKE ?)"
+            like = f"%{q}%"
+            args += [like, like, like, like]
+        sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
+        args += [limit, offset]
+        with self._cursor() as cur:
+            rows = cur.execute(sql, args).fetchall()
+        out = []
+        floor = order.get((min_severity or "info").lower(), 0)
+        for r in rows:
+            sev = r[6] or "medium"
+            if order.get(sev, 2) < floor:
+                continue
+            out.append({
+                "id": r[0], "ts": r[1], "page_url": r[2], "frame_url": r[3],
+                "sink": r[4], "source": r[5], "severity": sev,
+                "canary_seen": bool(r[7]), "value": r[8], "stack": r[9],
+                "hit_count": r[10],
+            })
+        return out
+
+    def get_dom_hunter_finding(self, fid: int) -> dict | None:
+        with self._cursor() as cur:
+            r = cur.execute(
+                "SELECT id,ts,page_url,frame_url,sink,source,severity,"
+                "canary_seen,value,stack,hit_count FROM dom_hunter_findings WHERE id=?",
+                (fid,),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "ts": r[1], "page_url": r[2], "frame_url": r[3],
+            "sink": r[4], "source": r[5], "severity": r[6] or "medium",
+            "canary_seen": bool(r[7]), "value": r[8], "stack": r[9],
+            "hit_count": r[10],
+        }
+
+    def dom_hunter_findings_count(self) -> int:
+        with self._cursor() as cur:
+            return int(cur.execute(
+                "SELECT COUNT(*) FROM dom_hunter_findings"
+            ).fetchone()[0])
+
+    def clear_dom_hunter_findings(self) -> int:
+        with self._cursor() as cur:
+            n = int(cur.execute(
+                "SELECT COUNT(*) FROM dom_hunter_findings"
+            ).fetchone()[0])
+            cur.execute("DELETE FROM dom_hunter_findings")
+        return n
+
+    # ---- DOM Hunter postMessage log ----
+    def add_dom_hunter_message(self, *, page_url: str, origin: str, data: str,
+                          has_canary: bool, handler_stack: str = "") -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO dom_hunter_messages(ts,page_url,origin,data,"
+                "has_canary,handler_stack) VALUES (?,?,?,?,?,?)",
+                (int(time.time()), page_url, origin, data,
+                 1 if has_canary else 0, handler_stack),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_dom_hunter_messages(self, *, limit: int = 200,
+                            origin: str | None = None,
+                            only_canary: bool = False) -> list[dict]:
+        sql = ("SELECT id,ts,page_url,origin,data,has_canary,handler_stack "
+               "FROM dom_hunter_messages WHERE 1=1")
+        args: list = []
+        if origin:
+            sql += " AND origin=?"
+            args.append(origin)
+        if only_canary:
+            sql += " AND has_canary=1"
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(limit)
+        with self._cursor() as cur:
+            rows = cur.execute(sql, args).fetchall()
+        return [
+            {"id": r[0], "ts": r[1], "page_url": r[2], "origin": r[3],
+             "data": r[4], "has_canary": bool(r[5]), "handler_stack": r[6]}
+            for r in rows
+        ]
+
+    def dom_hunter_messages_count(self) -> int:
+        with self._cursor() as cur:
+            return int(cur.execute(
+                "SELECT COUNT(*) FROM dom_hunter_messages"
+            ).fetchone()[0])
+
+    def clear_dom_hunter_messages(self) -> int:
+        with self._cursor() as cur:
+            n = int(cur.execute(
+                "SELECT COUNT(*) FROM dom_hunter_messages"
+            ).fetchone()[0])
+            cur.execute("DELETE FROM dom_hunter_messages")
+        return n

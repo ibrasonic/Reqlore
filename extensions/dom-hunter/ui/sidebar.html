@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reqlore DOM Hunter findings</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="sidebar-body">
+  <a class="skip-link" href="#main">Skip to findings</a>
+
+  <header>
+    <h1>DOM Hunter findings</h1>
+    <p id="state" class="status status-warn" aria-live="polite">Loading...</p>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <section aria-labelledby="totals-h">
+      <h2 id="totals-h">Totals</h2>
+      <p id="totals">Total: ... findings reported.</p>
+      <p>
+        <button id="refreshBtn" type="button" class="secondary">Refresh</button>
+        <button id="openReqlore" type="button" class="secondary">Open in Reqlore</button>
+      </p>
+    </section>
+
+    <section aria-labelledby="latest-h">
+      <h2 id="latest-h">Latest findings</h2>
+      <p id="empty" hidden>No findings yet.</p>
+      <table id="findingsTable" hidden>
+        <caption class="visually-hidden">Most recent DOM Hunter findings.</caption>
+        <thead>
+          <tr>
+            <th scope="col">Sink</th>
+            <th scope="col">Source</th>
+            <th scope="col">Severity</th>
+            <th scope="col">Hits</th>
+            <th scope="col">Action</th>
+          </tr>
+        </thead>
+        <tbody id="findingsBody"></tbody>
+      </table>
+    </section>
+
+    <section aria-labelledby="help-h">
+      <h2 id="help-h">Keyboard shortcuts</h2>
+      <ul>
+        <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> &mdash; open this sidebar</li>
+        <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> &mdash; toggle hooks on current tab</li>
+        <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> &mdash; open Reqlore findings page</li>
+      </ul>
+    </section>
+  </main>
+
+  <script src="sidebar.js"></script>
+</body>
+</html>

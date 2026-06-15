@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — DOM Hunter finding {{ f.id }}{% endblock %}
+{% block main %}
+<h1>DOM Hunter finding {{ f.id }}</h1>
+
+<p><a href="{{ url_for('dom_hunter.index') }}">&larr; Back to findings</a></p>
+
+<section aria-labelledby="sum-h">
+  <h2 id="sum-h">Summary</h2>
+  <dl>
+    <dt>Page</dt>      <dd><code>{{ f.page_url }}</code></dd>
+    {% if f.frame_url and f.frame_url != f.page_url %}
+    <dt>Frame</dt>     <dd><code>{{ f.frame_url }}</code></dd>
+    {% endif %}
+    <dt>Sink</dt>      <dd><code>{{ f.sink }}</code></dd>
+    <dt>Source</dt>    <dd><code>{{ f.source }}</code></dd>
+    <dt>Severity</dt>  <dd>{{ f.severity }}</dd>
+    <dt>Hits</dt>      <dd>{{ f.hit_count }}</dd>
+    <dt>Canary seen in value?</dt>
+    <dd>{{ 'yes' if f.canary_seen else 'no' }}</dd>
+    <dt>First reported</dt>
+    <dd><time datetime="{{ f.ts }}">{{ f.ts }}</time></dd>
+  </dl>
+</section>
+
+{% if source_meta or sink_meta %}
+<section aria-labelledby="plain-h">
+  <h2 id="plain-h">In plain language</h2>
+  {% if source_meta %}
+  <p><strong>Source:</strong> {{ source_meta.label }} — {{ source_meta.plain }}</p>
+  {% endif %}
+  {% if sink_meta %}
+  <p><strong>Sink:</strong> {{ sink_meta.label }} — {{ sink_meta.plain }}</p>
+  {% endif %}
+  <p>If the canary appears in the value, the attacker's input reached the
+     sink unfiltered — confirm by replacing the canary with a real payload
+     like <code>&lt;img src=x onerror=alert(1)&gt;</code> and reloading.</p>
+</section>
+{% endif %}
+
+<section aria-labelledby="val-h">
+  <h2 id="val-h">Captured value (truncated)</h2>
+  <pre class="block"><code>{{ f.value }}</code></pre>
+</section>
+
+<section aria-labelledby="stk-h">
+  <h2 id="stk-h">JavaScript stack at sink call</h2>
+  <pre class="block"><code>{{ f.stack }}</code></pre>
+</section>
+{% endblock %}

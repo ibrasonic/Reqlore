@@ -437,9 +437,19 @@ def download_firefox(*, version: str | None = None,
 # ---------------------------------------------------------------------------
 
 def _policies_dict(*, ca_path: Path, proxy_host: str, proxy_port: int,
-                   homepage_url: str) -> dict:
-    """Enterprise-policy payload — controls cert trust + proxy + lock-down."""
-    return {
+                   homepage_url: str,
+                   dom_hunter_xpi: Path | None = None,
+                   dom_hunter_bridge_url: str | None = None,
+                   dom_hunter_token: str | None = None) -> dict:
+    """Enterprise-policy payload — controls cert trust + proxy + lock-down.
+
+    When ``dom_hunter_xpi`` is provided we also force-install the
+    DOM Hunter add-on via ``ExtensionSettings`` (Mozilla exempts
+    force-installed add-ons from signing) and seed its bridge URL +
+    token via ``3rdparty.Extensions`` (read by the add-on as
+    ``browser.storage.managed``).
+    """
+    pol: dict = {
         "policies": {
             "Certificates": {
                 "Install": [str(ca_path)],
@@ -472,6 +482,25 @@ def _policies_dict(*, ca_path: Path, proxy_host: str, proxy_port: int,
             "DisableSafeMode": False,
         }
     }
+    if dom_hunter_xpi is not None:
+        ext_id = "reqlore-dom-hunter@reqlore.local"
+        pol["policies"]["ExtensionSettings"] = {
+            ext_id: {
+                "installation_mode": "force_installed",
+                "install_url": dom_hunter_xpi.as_uri(),
+                "default_area": "navbar",
+            }
+        }
+        if dom_hunter_bridge_url or dom_hunter_token:
+            pol["policies"]["3rdparty"] = {
+                "Extensions": {
+                    ext_id: {
+                        "baseUrl": dom_hunter_bridge_url or "",
+                        "token": dom_hunter_token or "",
+                    }
+                }
+            }
+    return pol
 
 
 def _policies_target_dir(exe: Path) -> Path:
@@ -487,7 +516,10 @@ def _policies_target_dir(exe: Path) -> Path:
 
 def install_policies(*, exe: Path, ca_path: Path,
                      proxy_host: str, proxy_port: int,
-                     homepage_url: str) -> Path:
+                     homepage_url: str,
+                     dom_hunter_xpi: Path | None = None,
+                     dom_hunter_bridge_url: str | None = None,
+                     dom_hunter_token: str | None = None) -> Path:
     """Write policies.json next to the firefox binary. Returns its path."""
     if not ca_path.exists():
         raise FileNotFoundError(f"CA certificate not found: {ca_path}")
@@ -497,6 +529,9 @@ def install_policies(*, exe: Path, ca_path: Path,
     payload = _policies_dict(
         ca_path=ca_path, proxy_host=proxy_host, proxy_port=proxy_port,
         homepage_url=homepage_url,
+        dom_hunter_xpi=dom_hunter_xpi,
+        dom_hunter_bridge_url=dom_hunter_bridge_url,
+        dom_hunter_token=dom_hunter_token,
     )
     out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     log.info("wrote policies.json -> %s", out)
@@ -893,8 +928,13 @@ def run_browser(*, ca_path: Path,
                 version: str | None = None,
                 archive_path: Path | None = None,
                 prefer_cache: bool = True,
-                wait: bool = False) -> LaunchResult:
+                wait: bool = False,
+                project=None) -> LaunchResult:
     """End-to-end: find/download Firefox, install policies, spawn it.
+
+    When ``project`` is supplied we also build the DOM Hunter XPI and
+    force-install it into the Reqlore profile, pre-configured with the
+    project's bridge URL and bearer token.
 
     Returns a :class:`LaunchResult` so callers can show the user what was set.
     """
@@ -910,10 +950,34 @@ def run_browser(*, ca_path: Path,
             "installed automatically: " + ", ".join(leftover) +
             ". See message above for the install command."
         )
+
+    xpi_path: Path | None = None
+    bridge_url: str | None = None
+    token: str | None = None
+    if project is not None:
+        try:
+            from .dom_hunter import get_or_make_token
+            from .dom_hunter.packager import build_xpi
+        except ImportError as exc:
+            log.warning("DOM Hunter package unavailable, skipping auto-install: %s", exc)
+        else:
+            try:
+                token = get_or_make_token(project)
+                bridge_url = ui_url.rstrip("/")
+                xpi_dir = profile_root().parent / "dom-hunter"
+                xpi_path = build_xpi(out_path=xpi_dir / "dom-hunter.xpi")
+                log.info("DOM Hunter XPI built: %s", xpi_path)
+            except (OSError, FileNotFoundError) as exc:
+                log.warning("DOM Hunter auto-install skipped: %s", exc)
+                xpi_path = None
+
     install_policies(
         exe=exe, ca_path=ca_path,
         proxy_host=proxy_host, proxy_port=proxy_port,
         homepage_url=ui_url,
+        dom_hunter_xpi=xpi_path,
+        dom_hunter_bridge_url=bridge_url,
+        dom_hunter_token=token,
     )
     profile = ensure_profile()
     return launch(exe=exe, profile_dir=profile, url=ui_url, wait=wait)

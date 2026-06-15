@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DOM Hunter</title>
+  <link rel="stylesheet" href="../ui/styles.css">
+</head>
+<body class="panel-body">
+  <a class="skip-link" href="#findings-h">Skip to findings</a>
+
+  <header class="panel-header">
+    <h1>DOM Hunter</h1>
+    <p id="page-info" class="muted">Inspecting: <span id="page-url">(loading...)</span></p>
+  </header>
+
+  <nav aria-label="Sections" class="section-nav">
+    <a href="#status-h">Status</a>
+    <a href="#findings-h">Findings</a>
+    <a href="#messages-h">Messages</a>
+    <a href="#help-h">How this works</a>
+  </nav>
+
+  <div id="live" role="status" aria-live="polite" aria-atomic="true" class="visually-hidden"></div>
+
+  <section aria-labelledby="status-h" class="block">
+    <h2 id="status-h">Status</h2>
+    <dl class="kv">
+      <dt>Tracer</dt>
+      <dd id="status-tracer">unknown</dd>
+      <dt>Canary</dt>
+      <dd><code id="status-canary">-</code></dd>
+      <dt>Reqlore</dt>
+      <dd><a id="status-reqlore-link" href="#">findings page</a></dd>
+    </dl>
+    <form id="tab-form" class="stack" aria-label="Tracing on this tab">
+      <fieldset>
+        <legend>Tracing on this tab</legend>
+        <label><input type="radio" name="tab-onoff" value="on"> On</label>
+        <label><input type="radio" name="tab-onoff" value="off"> Off</label>
+      </fieldset>
+      <button type="submit">Apply and reload tab</button>
+    </form>
+  </section>
+
+  <section aria-labelledby="findings-h" class="block">
+    <h2 id="findings-h">Findings on this page <span id="findings-count" class="count">(0)</span></h2>
+    <p class="muted">Newest first. Findings on other tabs are filtered out.</p>
+    <table id="findings-table">
+      <caption class="visually-hidden">DOM XSS findings reported by the agent on the inspected page.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Time</th>
+          <th scope="col">Sink</th>
+          <th scope="col">Source</th>
+          <th scope="col">Severity</th>
+          <th scope="col">Canary</th>
+          <th scope="col">Hits</th>
+          <th scope="col">Open</th>
+        </tr>
+      </thead>
+      <tbody id="findings-rows">
+      </tbody>
+    </table>
+    <p id="findings-empty">No findings on this page yet.</p>
+    <p>
+      <button type="button" id="refresh-btn">Refresh now</button>
+      <button type="button" id="clear-local-btn">Hide all from view</button>
+    </p>
+  </section>
+
+  <section aria-labelledby="messages-h" class="block">
+    <h2 id="messages-h">Web messages on this page <span id="messages-count" class="count">(0)</span></h2>
+    <p class="muted">Every postMessage delivered while DevTools was open.</p>
+    <table id="messages-table">
+      <caption class="visually-hidden">Recent postMessage events on the inspected page.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Time</th>
+          <th scope="col">Origin</th>
+          <th scope="col">Canary</th>
+          <th scope="col">Data (truncated)</th>
+        </tr>
+      </thead>
+      <tbody id="messages-rows">
+      </tbody>
+    </table>
+    <p id="messages-empty">No messages on this page yet.</p>
+  </section>
+
+  <section aria-labelledby="help-h" class="block">
+    <h2 id="help-h">How this works</h2>
+    <p>
+      DOM Hunter hooks every common JavaScript sink that can execute
+      strings as code (<code>innerHTML</code>, <code>eval</code>,
+      <code>document.write</code>, and so on). When the canary value
+      above reaches one of those sinks, you see a finding here.
+    </p>
+    <p>
+      Auto-inject puts the canary in <code>location.hash</code>,
+      <code>location.search</code>, or <code>window.name</code> on every
+      page load, so source-to-sink flows surface without you having to
+      type anything by hand.
+    </p>
+    <p>
+      Everything also appears in the Reqlore web UI for later review,
+      filtering, and export. Use <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd>
+      from anywhere in the browser to jump there.
+    </p>
+  </section>
+
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — DOM Hunter (DOM XSS){% endblock %}
+{% block main %}
+<h1>DOM Hunter — DOM XSS tracer</h1>
+
+<p>DOM Hunter listens for attacker-shaped values flowing from page sources
+   (URL fragment, postMessage, cookies, &hellip;) into dangerous sinks
+   (<code>innerHTML</code>, <code>eval</code>, &hellip;). Hooks are
+   installed by the Reqlore DOM Hunter browser extension; this page is where
+   findings land.</p>
+
+<nav aria-label="DOM Hunter sections" class="section-nav">
+  <a href="{{ url_for('dom_hunter.index') }}" aria-current="page">Findings</a>
+  <a href="{{ url_for('dom_hunter.messages') }}">Web messages ({{ dom_hunter_messages_count }})</a>
+  <a href="{{ url_for('dom_hunter.settings') }}">Settings</a>
+</nav>
+
+<section aria-labelledby="state-h">
+  <h2 id="state-h">State</h2>
+  <dl>
+    <dt>Tracer</dt>
+    <dd>{{ 'on' if enabled else 'off' }}
+        (change in <a href="{{ url_for('dom_hunter.settings') }}">settings</a>)</dd>
+    <dt>Active canary</dt>
+    <dd><code>{{ canary }}</code> — paste this into URLs, forms,
+        and messages so DOM Hunter can attribute the source.</dd>
+    <dt>Scope</dt>
+    <dd>
+      {% if scope %}
+        {{ scope|join(', ') }}
+      {% else %}
+        every host (no scope filter set)
+      {% endif %}
+    </dd>
+  </dl>
+</section>
+
+<section aria-labelledby="filt-h">
+  <h2 id="filt-h">Filter findings</h2>
+  <form method="get" action="{{ url_for('dom_hunter.index') }}" class="stack">
+    <div>
+      <label for="s-q">Search (sink, source, URL, value)</label>
+      <input id="s-q" name="q" type="search" value="{{ q }}" autocomplete="off">
+    </div>
+    <div>
+      <label for="s-sev">Minimum severity</label>
+      <select id="s-sev" name="sev">
+        {% for s in severities %}
+          <option value="{{ s }}" {% if min_sev == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit">Apply filter</button>
+  </form>
+</section>
+
+<section aria-labelledby="list-h">
+  <h2 id="list-h">Findings</h2>
+  {% if findings %}
+  <p>{{ findings|length }} finding(s) shown
+     (most recent first; duplicates collapsed by hit count).</p>
+  <table>
+    <caption class="visually-hidden">DOM Hunter DOM XSS findings.</caption>
+    <thead>
+      <tr>
+        <th scope="col">When</th>
+        <th scope="col">Page</th>
+        <th scope="col">Sink</th>
+        <th scope="col">Source</th>
+        <th scope="col">Severity</th>
+        <th scope="col">Hits</th>
+        <th scope="col">Canary?</th>
+        <th scope="col">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in findings %}
+      <tr>
+        <td><time datetime="{{ f.ts }}">{{ f.ts }}</time></td>
+        <td><code>{{ f.page_url }}</code></td>
+        <td><code>{{ f.sink }}</code></td>
+        <td><code>{{ f.source }}</code></td>
+        <td>{{ f.severity }}</td>
+        <td>{{ f.hit_count }}</td>
+        <td>{{ 'yes' if f.canary_seen else 'no' }}</td>
+        <td>
+          <a href="{{ url_for('dom_hunter.detail', fid=f.id) }}"
+             aria-label="View finding {{ f.id }}: {{ f.source }} into {{ f.sink }} on {{ f.page_url }}">
+             View finding {{ f.id }}</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="{{ url_for('dom_hunter.clear_findings') }}" class="stack">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Clear all DOM Hunter findings</button>
+  </form>
+  {% else %}
+  <p>No findings yet. Install the Reqlore DOM Hunter browser extension, turn
+     the tracer on in <a href="{{ url_for('dom_hunter.settings') }}">settings</a>,
+     and visit a target page that reads any of these sources into a sink.</p>
+  {% endif %}
+</section>
+{% endblock %}

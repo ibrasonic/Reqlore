@@ -52,6 +52,11 @@ def create_app(project_path: Path, settings: Settings, *,
     # CSRF token (double-submit cookie pattern, kept simple)
     @app.before_request
     def _csrf() -> None:
+        # DOM Hunter bridge endpoints authenticate via a per-project bearer
+        # token (X-DOMHunter-Token) and are called by the browser extension
+        # which has no Reqlore session cookie. They handle their own auth.
+        if request.path.startswith("/dom-hunter/__bridge/"):
+            return
         token = session.get("csrf")
         if not token:
             session["csrf"] = secrets.token_urlsafe(32)
@@ -103,6 +108,7 @@ def create_app(project_path: Path, settings: Settings, *,
             "intercept_on": (proxy.intercept_on() if proxy else False),
             "cues_on": project.get_state("cues", "0") == "1",
             "findings_count": project.findings_count(),
+            "dom_hunter_findings_count": project.dom_hunter_findings_count(),
             "settings": settings,
             "auth_enabled": app.config.get("REQLORE_AUTH_ENABLED", False),
         }
@@ -150,6 +156,7 @@ def create_app(project_path: Path, settings: Settings, *,
     from .blueprints.smuggling_bp import bp as smuggling_bp
     from .blueprints.param_miner_bp import bp as param_miner_bp
     from .blueprints.schedule_bp import bp as schedule_bp
+    from .blueprints.dom_hunter_bp import bp as dom_hunter_bp
 
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(proxy_bp, url_prefix="/proxy")
@@ -177,6 +184,7 @@ def create_app(project_path: Path, settings: Settings, *,
     app.register_blueprint(smuggling_bp, url_prefix="/smuggling")
     app.register_blueprint(param_miner_bp, url_prefix="/param-miner")
     app.register_blueprint(schedule_bp, url_prefix="/schedule")
+    app.register_blueprint(dom_hunter_bp, url_prefix="/dom-hunter")
     app.register_blueprint(settings_bp, url_prefix="/settings")
     app.register_blueprint(help_bp, url_prefix="/help")
 

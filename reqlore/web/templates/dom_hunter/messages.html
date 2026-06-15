@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — DOM Hunter web messages{% endblock %}
+{% block main %}
+<h1>DOM Hunter — web messages</h1>
+
+<p>Every <code>window.postMessage</code> the agent observes on instrumented
+   pages is logged here. Watch for handlers that trust the data without
+   checking <code>event.origin</code>.</p>
+
+<nav aria-label="DOM Hunter sections" class="section-nav">
+  <a href="{{ url_for('dom_hunter.index') }}">Findings</a>
+  <a href="{{ url_for('dom_hunter.messages') }}" aria-current="page">Web messages</a>
+  <a href="{{ url_for('dom_hunter.settings') }}">Settings</a>
+</nav>
+
+<section aria-labelledby="filt-h">
+  <h2 id="filt-h">Filter</h2>
+  <form method="get" action="{{ url_for('dom_hunter.messages') }}" class="stack">
+    <div>
+      <label for="m-org">Origin</label>
+      <select id="m-org" name="origin">
+        <option value="">(any)</option>
+        {% for o in origins %}
+          <option value="{{ o }}" {% if origin == o %}selected{% endif %}>{{ o }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label><input type="checkbox" name="only_canary" value="1"
+                    {% if only_canary %}checked{% endif %}>
+             Only messages whose data contains the canary</label>
+    </div>
+    <button type="submit">Apply filter</button>
+  </form>
+</section>
+
+<section aria-labelledby="list-h">
+  <h2 id="list-h">Messages</h2>
+  {% if messages %}
+  <p>{{ messages|length }} message(s) shown.</p>
+  <table>
+    <caption class="visually-hidden">Recorded postMessage events.</caption>
+    <thead>
+      <tr>
+        <th scope="col">When</th>
+        <th scope="col">Page</th>
+        <th scope="col">Origin</th>
+        <th scope="col">Data (truncated)</th>
+        <th scope="col">Canary?</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in messages %}
+      <tr>
+        <td><time datetime="{{ m.ts }}">{{ m.ts }}</time></td>
+        <td><code>{{ m.page_url }}</code></td>
+        <td><code>{{ m.origin }}</code></td>
+        <td><pre class="block"><code>{{ m.data }}</code></pre></td>
+        <td>{{ 'yes' if m.has_canary else 'no' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <form method="post" action="{{ url_for('dom_hunter.clear_messages') }}" class="stack">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Clear all recorded messages</button>
+  </form>
+  {% else %}
+  <p>No messages recorded yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

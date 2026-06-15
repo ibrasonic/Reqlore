@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reqlore DOM Hunter</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="popup-body">
+  <a class="skip-link" href="#main">Skip to controls</a>
+  <main id="main" tabindex="-1">
+    <h1>Reqlore DOM Hunter</h1>
+
+    <p id="state" class="status status-warn" aria-live="polite">Loading state...</p>
+
+    <form id="tabForm" class="stack" aria-labelledby="tab-h">
+      <h2 id="tab-h">This tab</h2>
+      <fieldset>
+        <legend class="visually-hidden">Hooks on this tab</legend>
+        <label class="inline">
+          <input type="radio" name="state" value="on">
+          Hooks <strong>on</strong> -- record findings
+        </label>
+        <label class="inline">
+          <input type="radio" name="state" value="off">
+          Hooks <strong>off</strong> -- do not touch this tab
+        </label>
+      </fieldset>
+      <button type="submit">Apply and reload tab</button>
+    </form>
+
+    <h2>Quick links</h2>
+    <ul>
+      <li><button id="openSidebar" type="button" class="secondary">Open DOM Hunter sidebar</button></li>
+      <li><button id="openFindings" type="button" class="secondary">Open Reqlore findings page</button></li>
+      <li><button id="openOptions" type="button" class="secondary">Open extension options</button></li>
+    </ul>
+
+    <h2>Shortcuts</h2>
+    <ul>
+      <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> -- open sidebar</li>
+      <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> -- toggle hooks on this tab</li>
+      <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> -- open Reqlore findings</li>
+    </ul>
+    <p><small>Rebind any shortcut at
+       <code>about:addons</code> &rarr; gear icon &rarr;
+       <em>Manage Extension Shortcuts</em>.</small></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

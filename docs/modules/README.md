@@ -32,6 +32,7 @@ predict where to look:
 - [intruder.md](intruder.md)
 - [param-miner.md](param-miner.md)
 - [scanner.md](scanner.md)
+- [dom-hunter.md](dom-hunter.md)
 - [comparer.md](comparer.md)
 - [decoder.md](decoder.md)
 - [jwt.md](jwt.md)

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img"
+     aria-label="Reqlore DOM Hunter icon - concentric pulse arcs">
+  <title>Reqlore DOM Hunter</title>
+  <rect width="128" height="128" rx="22" fill="#0b4dca"/>
+  <g fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round">
+    <circle cx="64" cy="64" r="10" fill="#ffffff"/>
+    <path d="M64 38 A26 26 0 0 1 90 64"/>
+    <path d="M64 22 A42 42 0 0 1 106 64"/>
+    <path d="M64 8  A56 56 0 0 1 120 64"/>
+  </g>
+</svg>

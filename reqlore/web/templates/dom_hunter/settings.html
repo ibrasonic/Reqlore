@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — DOM Hunter settings{% endblock %}
+{% block main %}
+<h1>DOM Hunter — settings</h1>
+
+<nav aria-label="DOM Hunter sections" class="section-nav">
+  <a href="{{ url_for('dom_hunter.index') }}">Findings</a>
+  <a href="{{ url_for('dom_hunter.messages') }}">Web messages</a>
+  <a href="{{ url_for('dom_hunter.settings') }}" aria-current="page">Settings</a>
+</nav>
+
+<form method="post" action="{{ url_for('dom_hunter.settings') }}" class="stack" aria-label="DOM Hunter settings">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+  <fieldset>
+    <legend>Tracer</legend>
+    <label><input type="radio" name="enabled" value="1" {% if enabled %}checked{% endif %}>
+           On — extension will install sink hooks on every page</label>
+    <label><input type="radio" name="enabled" value="0" {% if not enabled %}checked{% endif %}>
+           Off — extension installs no hooks; pages run untouched</label>
+    <p><small>Off is the safe default. Turn on only against test targets you
+       are authorised to probe. Hooks add measurable runtime cost on heavy
+       pages.</small></p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Scope</legend>
+    <label for="s-scope">Hosts (one per line; <code>*.example.com</code> for subdomains)</label>
+    <textarea id="s-scope" name="scope" rows="4">{{ scope }}</textarea>
+    <p><small>Empty = every host. Outside-of-scope tabs receive no hooks.</small></p>
+  </fieldset>
+
+  <fieldset>
+    <legend>Auto-inject canary into</legend>
+    {% for tid, label in targets %}
+    <label><input type="checkbox" name="auto_inject" value="{{ tid }}"
+                  {% if tid in auto_inject %}checked{% endif %}>
+           {{ label }}</label>
+    {% endfor %}
+    <p><small>When enabled, the agent appends or sets the canary value on
+       page load so any source-to-sink flow is visible immediately. Leave
+       all off if you prefer to inject the canary manually.</small></p>
+  </fieldset>
+
+  <button type="submit" name="action" value="save">Save settings</button>
+</form>
+
+<section aria-labelledby="cred-h">
+  <h2 id="cred-h">Canary and bridge token</h2>
+  <p>The canary is the unique string DOM Hunter searches for inside sink
+     arguments. The bridge token authorises the extension to send findings
+     to this Reqlore instance.</p>
+  <dl>
+    <dt>Canary</dt>      <dd><code>{{ canary }}</code></dd>
+    <dt>Bridge token</dt><dd><code>{{ token }}</code></dd>
+  </dl>
+  <form method="post" action="{{ url_for('dom_hunter.settings') }}" class="stack">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" name="action" value="rotate_canary">Rotate canary</button>
+  </form>
+  <form method="post" action="{{ url_for('dom_hunter.settings') }}" class="stack">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" name="action" value="rotate_token">Rotate bridge token</button>
+  </form>
+  <p><small>Rotating the canary keeps existing findings; new ones use the
+     new value. Rotating the token requires reconfiguring the DOM Hunter
+     extension to keep reporting.</small></p>
+</section>
+
+<section aria-labelledby="ext-h">
+  <h2 id="ext-h">Using the DOM Hunter extension</h2>
+  <p>
+    Launching the Reqlore-managed browser with
+    <code>reqlore browser</code> automatically installs the DOM Hunter
+    add-on into that profile and wires it to this project's bridge token.
+    No manual setup is required.
+  </p>
+  <ul>
+    <li>Press <kbd>F12</kbd> in any page to open Firefox DevTools and
+        switch to the <em>DOM Hunter</em> tab. That panel shows live
+        findings and postMessages for the current page.</li>
+    <li>Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> to open the
+        sidebar version of the same view.</li>
+    <li>Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> to disable or
+        re-enable tracing on the current tab.</li>
+    <li>Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>F</kbd> to jump back to
+        this Reqlore findings page.</li>
+  </ul>
+  <p>
+    To use the extension in a browser other than Reqlore's managed Firefox
+    (for example, plain Chrome / Edge / Brave for a non-XSS workflow),
+    load the <code>extensions/dom-hunter/</code> folder via
+    <code>about:debugging</code> or your browser's developer-mode
+    extension loader, then paste the bridge token shown above into the
+    extension's Options page.
+  </p>
+</section>
+{% endblock %}

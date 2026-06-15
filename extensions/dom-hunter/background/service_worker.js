@@ -1,0 +1,225 @@
+/* Reqlore DOM Hunter -- background service worker.
+ *
+ * Responsibilities:
+ *   - Persist user settings (Reqlore base URL + bridge token).
+ *   - Fetch project config from Reqlore on demand and cache it.
+ *   - Receive reports from content scripts and POST them to the bridge.
+ *   - Handle command shortcuts (toggle, open findings page).
+ */
+"use strict";
+
+const STORE_KEYS = {
+  baseUrl: "dom_hunter.baseUrl",
+  token:   "dom_hunter.token",
+  tabOff:  "dom_hunter.tabOff",   // map { tabId: true } -- tabs the user disabled
+};
+
+const DEFAULT_BASE_URL = "http://127.0.0.1:8080";
+
+let cachedCfg = null;
+let cachedAt = 0;
+const CFG_TTL_MS = 15_000;
+
+// -------------------- settings storage --------------------
+
+async function getSettings() {
+  // Enterprise-managed values (set by Reqlore via the Firefox policy
+  // `3rdparty.Extensions`) take precedence over anything the user typed
+  // into the options page. This is what makes `reqlore browser` "just
+  // work" with zero manual configuration.
+  let managed = {};
+  try { managed = await browser.storage.managed.get(); } catch (_) {}
+  const r = await browser.storage.local.get([STORE_KEYS.baseUrl, STORE_KEYS.token]);
+  return {
+    baseUrl: (managed && managed.baseUrl)
+             || r[STORE_KEYS.baseUrl] || DEFAULT_BASE_URL,
+    token:   (managed && managed.token)
+             || r[STORE_KEYS.token]   || "",
+    managed: !!(managed && (managed.baseUrl || managed.token)),
+  };
+}
+
+async function setSettings(s) {
+  const obj = {};
+  if (typeof s.baseUrl === "string") obj[STORE_KEYS.baseUrl] = s.baseUrl;
+  if (typeof s.token   === "string") obj[STORE_KEYS.token]   = s.token;
+  await browser.storage.local.set(obj);
+  cachedCfg = null;
+}
+
+async function getTabOffMap() {
+  const r = await browser.storage.local.get(STORE_KEYS.tabOff);
+  return r[STORE_KEYS.tabOff] || {};
+}
+
+async function setTabOff(tabId, off) {
+  const map = await getTabOffMap();
+  if (off) map[tabId] = true; else delete map[tabId];
+  await browser.storage.local.set({ [STORE_KEYS.tabOff]: map });
+}
+
+// -------------------- bridge to Reqlore --------------------
+
+async function fetchConfig() {
+  const now = Date.now();
+  if (cachedCfg && (now - cachedAt) < CFG_TTL_MS) return cachedCfg;
+  const { baseUrl, token } = await getSettings();
+  if (!baseUrl || !token) return null;
+  try {
+    const r = await fetch(baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/config", {
+      method: "GET",
+      headers: { "X-DOMHunter-Token": token, "Accept": "application/json" },
+      cache: "no-store",
+      credentials: "omit",
+    });
+    if (!r.ok) return null;
+    cachedCfg = await r.json();
+    cachedAt = now;
+    return cachedCfg;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function sendReport(payload, tabId) {
+  const { baseUrl, token } = await getSettings();
+  if (!baseUrl || !token) return false;
+  try {
+    const r = await fetch(baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/report", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-DOMHunter-Token": token,
+        "Accept": "application/json",
+      },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+      credentials: "omit",
+    });
+    if (r.ok) {
+      // Broadcast to every interested view (popup, sidebar, devtools panel).
+      try {
+        browser.runtime.sendMessage({
+          type: "dom_hunter.eventAdded",
+          tabId: tabId || null,
+          payload: payload,
+        }).catch(() => {});
+      } catch (_) {}
+    }
+    return r.ok;
+  } catch (_) { return false; }
+}
+
+// -------------------- per-tab gating --------------------
+
+async function configForTab(tabId, url) {
+  const cfg = await fetchConfig();
+  if (!cfg) return null;
+  if (!cfg.enabled) return { enabled: false };
+  const offMap = await getTabOffMap();
+  if (offMap[tabId]) return { enabled: false };
+
+  // Scope check (host string match; same logic as the server).
+  let host = "";
+  try { host = new URL(url || "").host.toLowerCase(); } catch (_) {}
+  const scope = Array.isArray(cfg.scope) ? cfg.scope : [];
+  if (scope.length) {
+    const inScope = scope.some(p => {
+      const pat = String(p || "").toLowerCase();
+      if (pat.startsWith("*.")) {
+        const base = pat.slice(2);
+        return host === base || host.endsWith("." + base);
+      }
+      return host === pat;
+    });
+    if (!inScope) return { enabled: false };
+  }
+  return {
+    enabled: true,
+    canary: cfg.canary,
+    auto_inject: cfg.auto_inject || [],
+    ui_url: cfg.ui_url || "",
+  };
+}
+
+// -------------------- message dispatch --------------------
+
+browser.runtime.onMessage.addListener((msg, sender) => {
+  if (!msg || typeof msg !== "object") return;
+
+  if (msg.type === "dom_hunter.requestConfig") {
+    const tabId = sender.tab && sender.tab.id;
+    const url = (sender.tab && sender.tab.url) || (sender.url || "");
+    return configForTab(tabId, url);
+  }
+
+  if (msg.type === "dom_hunter.report") {
+    return sendReport(msg.payload || {}, sender.tab && sender.tab.id);
+  }
+
+  if (msg.type === "dom_hunter.settings.get") {
+    return getSettings();
+  }
+
+  if (msg.type === "dom_hunter.settings.set") {
+    return setSettings(msg.settings || {}).then(() => ({ ok: true }));
+  }
+
+  if (msg.type === "dom_hunter.tabOff.get") {
+    return getTabOffMap().then(m => ({ off: !!m[msg.tabId] }));
+  }
+
+  if (msg.type === "dom_hunter.tabOff.set") {
+    return setTabOff(msg.tabId, !!msg.off).then(() => ({ ok: true }));
+  }
+
+  if (msg.type === "dom_hunter.findings.list") {
+    return (async () => {
+      const { baseUrl, token } = await getSettings();
+      if (!baseUrl || !token) return { findings: [], total: 0 };
+      try {
+        const r = await fetch(baseUrl.replace(/\/+$/, "")
+          + "/dom-hunter/__bridge/findings.json?limit=" + (msg.limit || 50), {
+          method: "GET",
+          headers: { "X-DOMHunter-Token": token, "Accept": "application/json" },
+          cache: "no-store",
+          credentials: "omit",
+        });
+        if (!r.ok) return { findings: [], total: 0 };
+        return await r.json();
+      } catch (_) { return { findings: [], total: 0 }; }
+    })();
+  }
+
+  return undefined;
+});
+
+// -------------------- keyboard shortcuts --------------------
+
+browser.commands.onCommand.addListener(async (name) => {
+  if (name === "toggle-on-tab") {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    if (!tab || tab.id == null) return;
+    const map = await getTabOffMap();
+    const next = !map[tab.id];
+    await setTabOff(tab.id, next);
+    try { await browser.tabs.reload(tab.id); } catch (_) {}
+    return;
+  }
+  if (name === "open-reqlore-findings") {
+    const cfg = await fetchConfig();
+    const url = (cfg && cfg.ui_url)
+      || ((await getSettings()).baseUrl.replace(/\/+$/, "") + "/dom-hunter/");
+    try { await browser.tabs.create({ url: url }); } catch (_) {}
+    return;
+  }
+});
+
+// Forget per-tab off state when the tab closes.
+browser.tabs.onRemoved.addListener(async (tabId) => {
+  const map = await getTabOffMap();
+  if (map[tabId]) {
+    delete map[tabId];
+    await browser.storage.local.set({ [STORE_KEYS.tabOff]: map });
+  }
+});

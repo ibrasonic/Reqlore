@@ -1,0 +1,9 @@
+{
+  "extName":        { "message": "Reqlore DOM Hunter", "description": "Extension display name." },
+  "extDesc":        { "message": "Accessibility-first DOM XSS source/sink tracer that reports findings to Reqlore." },
+  "actionTitle":    { "message": "Reqlore DOM Hunter" },
+  "sidebarTitle":   { "message": "Reqlore DOM Hunter findings" },
+  "cmdSidebar":     { "message": "Open the DOM Hunter sidebar." },
+  "cmdToggle":      { "message": "Toggle DOM Hunter hooks on the current tab and reload." },
+  "cmdOpenFindings":{ "message": "Open the Reqlore DOM Hunter findings page in a new tab." }
+}

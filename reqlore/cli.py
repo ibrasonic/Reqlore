@@ -498,6 +498,13 @@ def cmd_browser(args: argparse.Namespace) -> int:
 
     archive_path = Path(args.firefox_zip).expanduser().resolve() if args.firefox_zip else None
 
+    project = None
+    project_arg = getattr(args, "project", None)
+    if project_arg:
+        project_path = _resolve_project(project_arg)
+        from .storage import Project
+        project = Project(project_path)
+
     try:
         result = fxmod.run_browser(
             ca_path=ca_path,
@@ -507,6 +514,7 @@ def cmd_browser(args: argparse.Namespace) -> int:
             archive_path=archive_path,
             prefer_cache=not args.use_system,
             wait=args.wait,
+            project=project,
         )
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)
@@ -539,6 +547,10 @@ def cmd_browser(args: argparse.Namespace) -> int:
     log.info("  profile  : %s", result.profile)
     log.info("  policies : %s", result.policies)
     log.info("  proxy    : %s:%d", proxy_host, proxy_port)
+    if project is not None:
+        log.info("  extension: DOM Hunter auto-installed for project %s",
+                 project.path)
+        project.close()
     return 0
 
 
@@ -1160,6 +1172,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Launch a dedicated Firefox preconfigured with the Reqlore proxy + CA.",
         allow_abbrev=False,
     )
+    pb2.add_argument("--project", default=None,
+                     help="Project .rlr file. When given, the DOM Hunter "
+                          "WebExtension is force-installed into the Firefox "
+                          "profile, pre-configured with the project's bridge "
+                          "token. Without --project, Firefox is launched "
+                          "without the extension.")
     pb2.add_argument("--proxy-port", type=int, default=None,
                      help="Proxy port to point Firefox at (default: settings value).")
     pb2.add_argument("--url", default=None,

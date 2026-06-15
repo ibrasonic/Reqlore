@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Reqlore DOM Hunter -- options</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to options</a>
+
+  <main id="main" tabindex="-1">
+    <h1>Reqlore DOM Hunter -- options</h1>
+
+    <p id="state" class="status status-warn" aria-live="polite">Loading saved settings...</p>
+
+    <form id="optsForm" class="stack" aria-labelledby="conn-h">
+      <fieldset>
+        <legend id="conn-h">Reqlore connection</legend>
+
+        <label for="baseUrl">Reqlore base URL</label>
+        <input id="baseUrl" name="baseUrl" type="url" autocomplete="off"
+               placeholder="http://127.0.0.1:8080" required
+               aria-describedby="baseUrl-help">
+        <p id="baseUrl-help"><small>Where Reqlore's web UI is listening.
+           Default is <code>http://127.0.0.1:8080</code>. Must be HTTP/HTTPS.</small></p>
+
+        <label for="token">Bridge token</label>
+        <input id="token" name="token" type="password" autocomplete="off"
+               required aria-describedby="token-help">
+        <p id="token-help"><small>Found in Reqlore at
+           <em>DOM Hunter &rarr; Settings &rarr; Bridge token</em>. Stored locally in
+           the extension; never sent to anyone except the configured Reqlore.</small></p>
+
+        <p><label class="inline">
+          <input id="showToken" type="checkbox"> Show token while typing
+        </label></p>
+      </fieldset>
+
+      <button type="submit">Save settings</button>
+      <button type="button" id="testBtn" class="secondary">Test connection</button>
+    </form>
+
+    <section aria-labelledby="shortcut-h">
+      <h2 id="shortcut-h">Keyboard shortcuts</h2>
+      <p>Defaults:</p>
+      <ul id="shortcutList"><li>(loading...)</li></ul>
+      <p>To rebind: <code>about:addons</code> &rarr; gear icon &rarr;
+         <em>Manage Extension Shortcuts</em>.</p>
+    </section>
+
+    <section aria-labelledby="how-h">
+      <h2 id="how-h">How DOM Hunter works</h2>
+      <ol>
+        <li>Reqlore generates a <em>canary</em> string and a <em>bridge token</em>
+            for each project. You see them on the Reqlore DOM Hunter settings page.</li>
+        <li>This extension stores them locally and watches every page you visit
+            (within the in-scope hosts you configure in Reqlore).</li>
+        <li>The agent wraps dangerous JavaScript APIs (innerHTML, eval, ...) so
+            it can detect when the canary value reaches them.</li>
+        <li>Every match becomes a finding in Reqlore, complete with the JS
+            stack trace and the captured argument.</li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="a11y-h">
+      <h2 id="a11y-h">Accessibility</h2>
+      <p>The agent never modifies the inspected page's DOM tree, focus, or ARIA.
+         All extension UI is plain semantic HTML, keyboard-operable, and
+         designed to meet WCAG 2.2 AAA where practical.</p>
+    </section>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

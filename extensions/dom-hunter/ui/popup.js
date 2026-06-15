@@ -1,0 +1,63 @@
+"use strict";
+
+async function init() {
+  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+  const state = document.getElementById("state");
+  const form = document.getElementById("tabForm");
+  if (!tab || tab.id == null) {
+    state.className = "status status-err";
+    state.textContent = "No active tab.";
+    form.querySelector("button[type=submit]").disabled = true;
+    return;
+  }
+
+  const off = await browser.runtime.sendMessage({
+    type: "dom_hunter.tabOff.get", tabId: tab.id,
+  });
+  const onRadio  = form.querySelector('input[value="on"]');
+  const offRadio = form.querySelector('input[value="off"]');
+  if (off && off.off) offRadio.checked = true; else onRadio.checked = true;
+
+  const settings = await browser.runtime.sendMessage({ type: "dom_hunter.settings.get" });
+  if (!settings.token || !settings.baseUrl) {
+    state.className = "status status-warn";
+    state.textContent = "Not configured yet. Open the options page to set the "
+                       + "Reqlore base URL and bridge token.";
+  } else {
+    state.className = "status status-ok";
+    state.textContent = "Configured. Reporting to " + settings.baseUrl + ".";
+  }
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const chosen = form.querySelector('input[name="state"]:checked');
+    if (!chosen) return;
+    await browser.runtime.sendMessage({
+      type: "dom_hunter.tabOff.set", tabId: tab.id, off: chosen.value === "off",
+    });
+    try { await browser.tabs.reload(tab.id); } catch (_) {}
+    window.close();
+  });
+
+  document.getElementById("openSidebar").addEventListener("click", async () => {
+    try { await browser.sidebarAction.open(); window.close(); }
+    catch (_) { /* sidebar.open requires user gesture; the click counts */ }
+  });
+  document.getElementById("openFindings").addEventListener("click", async () => {
+    const cfg = await browser.runtime.sendMessage({ type: "dom_hunter.requestConfig" });
+    const base = (settings.baseUrl || "").replace(/\/+$/, "");
+    const url = (cfg && cfg.ui_url) || (base + "/dom-hunter/");
+    await browser.tabs.create({ url });
+    window.close();
+  });
+  document.getElementById("openOptions").addEventListener("click", () => {
+    browser.runtime.openOptionsPage();
+    window.close();
+  });
+}
+
+init().catch(err => {
+  const state = document.getElementById("state");
+  state.className = "status status-err";
+  state.textContent = "Error: " + (err && err.message || err);
+});
