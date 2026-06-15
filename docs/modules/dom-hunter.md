@@ -139,13 +139,13 @@ renderer, h3, hpack) are *not* involved.
 
 Globals (Reqlore web UI):
 
-- DOM Hunter does **not** currently have an `accesskey` on its nav
-  link — open it by clicking *DOM Hunter* in the top bar or by
-  visiting `/dom-hunter/` directly.
+- `Alt`+`7` — open DOM Hunter findings (`accesskey="7"` on the nav
+  link, after the badge-bearing label).
 - The numeric module accesskeys are: `Alt`+`1` Dashboard, `Alt`+`2`
   Proxy, `Alt`+`3` History, `Alt`+`4` Repeater, `Alt`+`5` Intruder,
-  `Alt`+`6` Scanner, `Alt`+`7` Decoder, `Alt`+`8` JWT, `Alt`+`9`
+  `Alt`+`6` Scanner, `Alt`+`7` DOM Hunter, `Alt`+`8` JWT, `Alt`+`9`
   Settings, `Alt`+`0` Help. See [KEYBINDINGS.md](../KEYBINDINGS.md).
+  Decoder no longer has a numeric shortcut; reach it from the nav.
 
 Browser extension (rebindable at `about:addons` → gear → *Manage
 Extension Shortcuts*):

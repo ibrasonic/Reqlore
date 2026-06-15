@@ -27,11 +27,11 @@
         <li><a href="{{ url_for('scanner.index') }}" accesskey="6">
           Scanner <span class="badge" aria-label="findings recorded">{{ findings_count }}</span>
         </a></li>
-        <li><a href="{{ url_for('dom_hunter.index') }}">
+        <li><a href="{{ url_for('dom_hunter.index') }}" accesskey="7">
           DOM Hunter <span class="badge" aria-label="DOM XSS findings">{{ dom_hunter_findings_count }}</span>
         </a></li>
         <li><a href="{{ url_for('comparer.index') }}">Comparer</a></li>
-        <li><a href="{{ url_for('decoder.index') }}" accesskey="7">Decoder</a></li>
+        <li><a href="{{ url_for('decoder.index') }}">Decoder</a></li>
         <li><a href="{{ url_for('jwt.index') }}" accesskey="8">JWT</a></li>
         <li><a href="{{ url_for('sitemap.index') }}">Sitemap</a></li>
         <li><a href="{{ url_for('matchreplace.index') }}">Match&amp;Replace</a></li>
