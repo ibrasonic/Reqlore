@@ -302,6 +302,20 @@ def test_packager_builds_xpi(tmp_path: Path):
     assert "README.md" not in names
 
 
+def test_devtools_panel_path_is_absolute_extension_url() -> None:
+    """`browser.devtools.panels.create` resolves relative paths against
+    the devtools page URL, so a literal 'devtools/panel.html' becomes
+    /devtools/devtools/panel.html and 404s. Must use runtime.getURL()."""
+    from reqlore.dom_hunter.packager import find_extension_source
+    src = find_extension_source()
+    assert src is not None
+    js = (src / "devtools" / "devtools.js").read_text(encoding="utf-8")
+    assert "browser.runtime.getURL(\"devtools/panel.html\")" in js
+    # And the literal-relative form must not be present.
+    assert "\"devtools/panel.html\"" not in js.replace(
+        "browser.runtime.getURL(\"devtools/panel.html\")", "")
+
+
 def test_browser_policy_embeds_dom_hunter(tmp_path: Path):
     from reqlore.browser import _policies_dict
     fake_ca = tmp_path / "ca.pem"

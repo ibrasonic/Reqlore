@@ -8,7 +8,7 @@
 browser.devtools.panels.create(
   "DOM Hunter",
   "icons/icon.svg",
-  "devtools/panel.html"
+  browser.runtime.getURL("devtools/panel.html")
 ).then(
   () => { /* registered */ },
   (err) => { console.warn("DOM Hunter panel registration failed:", err); }
