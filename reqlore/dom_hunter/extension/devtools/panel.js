@@ -314,7 +314,19 @@ $("tab-form").addEventListener("submit", async (ev) => {
     await browser.runtime.sendMessage({
       type: "dom_hunter.tabOff.set", tabId: INSPECTED_TAB_ID, off: off,
     });
-    await browser.tabs.reload(INSPECTED_TAB_ID);
+    // DevTools pages don't get `browser.tabs` in Firefox even with the
+    // `tabs` permission; use the inspected-window API instead, which
+    // reloads exactly the tab this panel is attached to.
+    if (browser.devtools && browser.devtools.inspectedWindow
+        && typeof browser.devtools.inspectedWindow.reload === "function") {
+      browser.devtools.inspectedWindow.reload({ ignoreCache: false });
+    } else {
+      // Last-resort fallback: ask the background (which DOES have
+      // tabs) to reload for us.
+      await browser.runtime.sendMessage({
+        type: "dom_hunter.reloadTab", tabId: INSPECTED_TAB_ID,
+      });
+    }
     live("Tracer " + (off ? "disabled" : "enabled") + " on this tab; reloading.");
   } catch (e) {
     live("Could not change tab state: " + (e && e.message ? e.message : e));

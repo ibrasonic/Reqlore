@@ -447,6 +447,29 @@ def test_extension_options_default_base_url_is_ui_port() -> None:
     assert '"http://127.0.0.1:8080"' not in options_js
 
 
+def test_extension_panel_reloads_via_devtools_api_not_browser_tabs() -> None:
+    """The DevTools panel must NOT call browser.tabs.reload(): in Firefox
+    `browser.tabs` is undefined inside a devtools page even with the
+    `tabs` permission, so the Apply-and-reload button blew up with
+    'browser.tabs is undefined'. The correct API is
+    browser.devtools.inspectedWindow.reload(), with a background-mediated
+    fallback for engines that don't expose it.
+    """
+    from reqlore.dom_hunter.packager import find_extension_source
+    src = find_extension_source()
+    assert src is not None
+    panel = (src / "devtools" / "panel.js").read_text(encoding="utf-8")
+    assert "browser.devtools.inspectedWindow.reload" in panel, (
+        "panel.js must reload via devtools.inspectedWindow.reload()"
+    )
+    assert "browser.tabs.reload" not in panel, (
+        "panel.js must not call browser.tabs.reload() directly -- "
+        "browser.tabs is undefined inside a Firefox devtools page"
+    )
+    sw = (src / "background" / "service_worker.js").read_text(encoding="utf-8")
+    assert '"dom_hunter.reloadTab"' in sw
+
+
 def test_extension_diagnose_surfaces_real_failure_reason() -> None:
     """When the bridge call returns null the panel must NOT just say
     'cannot reach Reqlore' -- the most common cause is a token mismatch

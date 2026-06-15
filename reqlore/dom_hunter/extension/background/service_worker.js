@@ -265,6 +265,16 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     return setTabOff(msg.tabId, !!msg.off).then(() => ({ ok: true }));
   }
 
+  if (msg.type === "dom_hunter.reloadTab") {
+    // Fallback used by the DevTools panel: extension pages can call
+    // browser.tabs from the background but NOT from a devtools panel
+    // (where `browser.tabs` is undefined regardless of the `tabs`
+    // permission). The panel prefers devtools.inspectedWindow.reload();
+    // this handler is only hit when that API is missing.
+    return browser.tabs.reload(msg.tabId).then(() => ({ ok: true }))
+                       .catch(e => ({ ok: false, error: String(e && e.message || e) }));
+  }
+
   if (msg.type === "dom_hunter.findings.list") {
     return (async () => {
       const { baseUrl, token } = await getSettings();
