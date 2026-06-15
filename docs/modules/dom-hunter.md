@@ -74,6 +74,32 @@ Full per-finding page rendering, in order:
 - value (truncated at 4 KiB on the server)
 - stack (truncated at 8 KiB), with the deduped top frame highlighted
 
+#### How the *source* is attributed
+
+When a sink fires with the canary in the value, the agent runs
+`detectSource(value)` to figure out which DOM source the canary came
+from. It compares the value against the live content of every readable
+source and returns the highest-precedence match, in this order:
+
+1. `location.hash`
+2. `postMessage` — last canary-bearing `MessageEvent.data` seen on the page
+3. `window.name`
+4. `document.referrer`
+5. `location.search`
+6. `document.cookie`
+7. `location.pathname`
+8. bounded scan of `localStorage` keys
+9. bounded scan of `sessionStorage` keys
+10. `unknown` — canary reached the sink but the agent could not match it
+    back to any readable source (e.g. the page derived the value from a
+    `fetch` response). The finding is still recorded.
+
+Pure-DOM vectors (hash, postMessage, window.name) intentionally outrank
+cross-cutting ones (referrer, search, cookie, storage) so that with
+multiple auto-inject toggles on at once the finding is attributed to the
+channel a real attacker would most naturally use. A leading `#` or `?`
+stripped by the page before use is tolerated.
+
 ### `/dom-hunter/messages` — `postMessage` log
 
 | Control | What it does |
@@ -89,7 +115,7 @@ Full per-finding page rendering, in order:
 |---|---|
 | **Tracer enabled** | Persists to `project_state["dom_hunter_enabled"]`. Off by default. The next page load in the browser picks it up. |
 | **Scope** | One host per line, `*.example.com` supported. Empty = every host. |
-| **Auto-inject targets** | Check any of `location.hash`, `location.search`, `window.name`, `document.referrer` — the agent rewrites those sources on each in-scope page load so source→sink flows surface without you crafting payloads. |
+| **Auto-inject targets** | Check any of `location.hash`, `location.search`, `window.name`, `document.referrer` — the agent rewrites those sources on each in-scope page load so source→sink flows surface without you crafting payloads. `document.referrer` is read-only from JavaScript, so Reqlore implements it by splicing `rqdomh=<canary>` into the **`Referer` request header** at the MITM proxy (only when a Referer is already present; never synthesised). |
 | **Rotate canary** | Generates a fresh `rqdomh<12-hex>` value. Existing findings keep their old canary; new findings use the new one. |
 | **Rotate token** | Generates a fresh URL-safe 32-byte bridge token. After rotation, run `reqlore browser --project my.rlr` again so the new token is written into Firefox's enterprise policy and picked up by the extension via `storage.managed`. |
 
@@ -254,6 +280,75 @@ this tab* and submit — the agent stops hooking for that tab only
 (`browser.storage.local["dom_hunter.tabOff"][tabId] = true`). Other
 tabs continue tracing. Closing the tab forgets the flag
 automatically.
+
+### 7. Prove a DOM Hunter finding with a custom payload
+
+A DOM Hunter finding is **evidence the source feeds the sink**; it is
+not yet a runnable PoC. Once a row appears, promote it to a real PoC
+in five steps:
+
+1. **Read the finding.** Open `/dom-hunter/finding/<id>` and write
+   down four things:
+   - **page URL** — where to navigate the victim browser.
+   - **source** — which channel to load the payload through (see the
+     attribution list above).
+   - **sink** — what the page does with the value; this picks the
+     payload shape (see the table below).
+   - **stack top frame** — the function name + file/line that read the
+     source. Useful for breakpoints and for the writeup.
+2. **Pick a payload that matches the sink.** Replace the canary with a
+   visible side effect (`alert(1)` is fine for a lab; for write-ups
+   prefer `document.title='PWN-<finding_id>'` so the proof appears in
+   the screenshot caption without needing a dialog).
+
+   | Sink (from the finding) | Minimal payload | Notes |
+   |---|---|---|
+   | `Element.innerHTML`, `Element.outerHTML`, `Element.insertAdjacentHTML`, `Range.createContextualFragment`, `HTMLIFrameElement.srcdoc` | `<img src=x onerror=alert(1)>` | `<script>` does *not* execute via `innerHTML`; use an event-handler tag. |
+   | `document.write`, `document.writeln` | `<script>alert(1)</script>` | Only before the page is closed; if the sink fires after `DOMContentLoaded`, fall back to the `<img onerror>` form. |
+   | `eval`, `Function`, `setTimeout(string)`, `setInterval(string)` | `alert(1)` | Bare JS; no HTML wrapping. |
+   | `Element.setAttribute(on*)` | `alert(1)` | The value of an `on*` attribute is JS source. |
+   | `HTMLScriptElement.src`, `HTMLIFrameElement.src`, `location.href` | `javascript:alert(1)` | Modern Firefox blocks `javascript:` in `iframe.src`; host an attacker JS file and use that URL instead for those. |
+   | `Worker`, `importScripts` | URL of a one-line attacker JS file (`self.postMessage('pwn')` or similar) | Same-origin or worker-allowed origin. |
+   | `DOMParser.parseFromString` | `<img src=x onerror=alert(1)>` | Only runs once the parsed node is **inserted** into the live document; check the stack for the inserter and pair with `innerHTML`. |
+3. **Inject through the same source channel** the finding used. The
+   delivery method depends on the source:
+
+   | Source | How to deliver the payload |
+   |---|---|
+   | `location.hash` | Edit the address bar: `https://target/page#<payload>` and press Enter. |
+   | `location.search` | Edit the query string: `?q=<payload>` (URL-encode `<`, `>`, `"`, space). |
+   | `location.pathname` | Navigate to a path the client router consumes verbatim, e.g. `/app/<payload>`. |
+   | `document.referrer` | Open an attacker page on a separate origin whose body is a single `<a href="https://target/page?...">go</a>`; click it. The Referer header carries the attacker URL — encode the payload into a query param the attacker URL exposes. |
+   | `window.name` | From an attacker page: `var w = window.open('https://target/page', 'name'); w.name = '<payload>';` then refresh the opened tab. |
+   | `postMessage` | From an attacker iframe or opener: `target.contentWindow.postMessage('<payload>', '*')`. Use the **origin** the page's message handler accepts (often `*` in vulnerable code). |
+   | `document.cookie` / `localStorage` / `sessionStorage` | Use DevTools → *Storage* on the same origin to write the value, then reload. These usually indicate a *stored* DOM XSS that needs prior taint. |
+4. **Watch DOM Hunter** confirm the second hit. Your payload string
+   does not contain `rqdomh…`, so `canary_seen` will be **no** on the
+   new row — that is correct: the canary proved reachability, this row
+   proves *execution* through the same sink. The `value` column will
+   show your payload verbatim. If no new row appears, the page sanitised
+   your payload but not the canary; switch to an alternative payload
+   for the same sink from the table above.
+5. **Capture proof.** Screenshot the page (`alert(1)` dialog, modified
+   `document.title`, or the `<img>` 404 in DevTools Network) **and** the
+   matching DOM Hunter row. Both are useful in a report: the alert
+   proves execution to a non-technical reader; the DOM Hunter row
+   proves the source→sink path to a technical reviewer.
+
+Troubleshooting:
+
+- *Payload appears in the DOM but does not execute.* Check the page's
+  CSP in DevTools → Network → response headers. A `script-src` without
+  `'unsafe-inline'` blocks event-handler payloads; a Trusted Types
+  policy blocks `innerHTML` assignment entirely. Try a sink with no
+  Trusted Types contract (`eval` if available, or `location.href` with
+  `javascript:`).
+- *Sink is `unknown` source.* Use the stack top frame from the finding
+  to set a breakpoint, reload with the canary in every plausible
+  source, and step until the canary value is read — that is your true
+  source. Common cases: data came from `fetch` (server reflects your
+  input), `IndexedDB`, or a deeply-cloned `postMessage` the agent
+  missed because of structured-clone proxies.
 
 ## Troubleshooting
 

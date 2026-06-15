@@ -22,14 +22,24 @@ no custom widgets, no focus traps, no ARIA roles fighting the platform.
 ## What it does
 
 - Injects a small JavaScript agent at `document_start` into every in-scope page.
-- Wraps dangerous sinks (`innerHTML`, `outerHTML`, `insertAdjacentHTML`,
-  `eval`, `Function`, `setTimeout`/`setInterval` with string args,
-  `document.write`/`writeln`, `setAttribute(on*)`, `script.src`,
-  `iframe.src`, anchor `href`).
+- Wraps dangerous sinks: `Element.innerHTML`, `Element.outerHTML`,
+  `Element.insertAdjacentHTML`, `document.write`, `document.writeln`,
+  `eval`, `Function`, `setTimeout(string)`, `setInterval(string)`,
+  `Element.setAttribute(on*)`, `HTMLScriptElement.src`,
+  `HTMLIFrameElement.src`, `HTMLIFrameElement.srcdoc`, `location.href`,
+  `new Worker(url)`, `importScripts`, `DOMParser.parseFromString`,
+  `Range.createContextualFragment` (18 sinks total).
 - Watches every wrapped sink for the project's canary string.
+- Attributes every hit back to a real source (`detectSource()` ranks
+  `location.hash`, `postMessage`, `window.name`, `document.referrer`,
+  `location.search`, `document.cookie`, `location.pathname`,
+  `localStorage`, `sessionStorage`; falls back to `unknown` when no
+  readable source matches the value).
 - Logs every `postMessage` event with origin, data, and handler stack.
 - Optionally injects the canary into `location.hash`, `location.search`,
-  or `window.name` so source-to-sink flows surface immediately.
+  `window.name`, or `document.referrer` so source-to-sink flows surface
+  immediately. `document.referrer` is rewritten at the MITM proxy on
+  the `Referer` request header (it is read-only from JavaScript).
 - POSTs findings and messages to Reqlore at
   `/dom-hunter/__bridge/report` with the per-project bridge token.
 
