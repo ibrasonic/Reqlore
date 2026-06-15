@@ -302,18 +302,34 @@ def test_packager_builds_xpi(tmp_path: Path):
     assert "README.md" not in names
 
 
-def test_devtools_panel_path_is_absolute_extension_url() -> None:
-    """`browser.devtools.panels.create` resolves relative paths against
-    the devtools page URL, so a literal 'devtools/panel.html' becomes
-    /devtools/devtools/panel.html and 404s. Must use runtime.getURL()."""
+def test_devtools_panel_path_is_root_absolute() -> None:
+    """`browser.devtools.panels.create(title, iconPath, pagePath)`:
+    Firefox resolves both paths RELATIVE TO THE DEVTOOLS PAGE
+    (/devtools/devtools.html), while Chromium/Safari resolve them
+    as extension-root absolute. The portable form -- MDN's own
+    canonical example -- is a leading-slash path. Anything else
+    breaks on at least one engine:
+
+      "devtools/panel.html"             -> 404 on Firefox
+      "panel.html"                      -> wrong root on Chromium
+      browser.runtime.getURL("...")     -> rejected by MV3 panels.create
+
+    See https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/devtools/panels/create
+    """
     from reqlore.dom_hunter.packager import find_extension_source
     src = find_extension_source()
     assert src is not None
     js = (src / "devtools" / "devtools.js").read_text(encoding="utf-8")
-    assert "browser.runtime.getURL(\"devtools/panel.html\")" in js
-    # And the literal-relative form must not be present.
-    assert "\"devtools/panel.html\"" not in js.replace(
-        "browser.runtime.getURL(\"devtools/panel.html\")", "")
+    # Must use the leading-slash absolute form for cross-browser support.
+    assert '"/devtools/panel.html"' in js
+    assert '"/icons/icon.svg"' in js
+    # The actual create() call must not use any of the broken forms.
+    # We isolate the call by stripping the leading block comment so the
+    # substring checks don't trip on documentation that mentions them.
+    code = js.split("*/", 1)[1] if "*/" in js else js
+    assert 'browser.runtime.getURL(' not in code
+    assert '"devtools/panel.html"' not in code   # bare relative -- 404 on Firefox
+    assert '"panel.html"' not in code            # sibling-relative -- breaks Chromium
 
 
 def test_browser_policy_embeds_dom_hunter(tmp_path: Path):
