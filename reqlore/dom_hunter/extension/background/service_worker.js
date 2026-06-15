@@ -179,9 +179,30 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   if (!msg || typeof msg !== "object") return;
 
   if (msg.type === "dom_hunter.requestConfig") {
-    const tabId = sender.tab && sender.tab.id;
-    const url = (sender.tab && sender.tab.url) || (sender.url || "");
+    // Caller may explicitly pass {tabId, url} when it knows the
+    // "inspected" target better than the message sender does. The
+    // DevTools panel, popup and options page all run as extension
+    // pages, so `sender.tab` is undefined and `sender.url` points at a
+    // moz-extension:// page that will never match any user-defined
+    // scope. Without these overrides every extension-page caller would
+    // be told the tracer is off, even when it's on. See
+    // tests/unit/test_dom_hunter.py::test_request_config_accepts_caller_tab_info.
+    const tabId = (msg.tabId != null)
+      ? msg.tabId
+      : (sender.tab && sender.tab.id);
+    const url = (typeof msg.url === "string" && msg.url)
+      ? msg.url
+      : ((sender.tab && sender.tab.url) || (sender.url || ""));
     return configForTab(tabId, url);
+  }
+
+  if (msg.type === "dom_hunter.getProjectConfig") {
+    // Returns the raw bridge config (enabled, canary, scope, ui_url,
+    // ...) WITHOUT applying per-tab scope filtering. Use this from
+    // extension pages (panel/popup/options) to display the project
+    // state itself, then call requestConfig with a tab override to
+    // decide whether a specific tab is in scope.
+    return fetchConfig();
   }
 
   if (msg.type === "dom_hunter.report") {

@@ -57,32 +57,57 @@ async function refreshInspectedUrl() {
 
 async function refreshStatus() {
   let settings = { baseUrl: "", token: "" };
-  let cfg = null;
+  let projectCfg = null;     // raw bridge config (no per-tab scope filter)
+  let tabCfg = null;         // configForTab(inspected) -- tells us in-scope
   try {
     settings = await browser.runtime.sendMessage({ type: "dom_hunter.settings.get" });
   } catch (_) {}
   try {
-    cfg = await browser.runtime.sendMessage({ type: "dom_hunter.requestConfig" });
+    projectCfg = await browser.runtime.sendMessage({ type: "dom_hunter.getProjectConfig" });
+  } catch (_) {}
+  try {
+    tabCfg = await browser.runtime.sendMessage({
+      type: "dom_hunter.requestConfig",
+      tabId: INSPECTED_TAB_ID,
+      url: inspectedUrl,
+    });
   } catch (_) {}
 
   const tracerEl = $("status-tracer");
   if (!settings || !settings.baseUrl || !settings.token) {
     tracerEl.textContent = "not configured -- open extension options first";
     tracerEl.className = "status status-warn";
-  } else if (!cfg) {
+  } else if (!projectCfg) {
     tracerEl.textContent = "cannot reach Reqlore at " + settings.baseUrl;
     tracerEl.className = "status status-err";
-  } else if (!cfg.enabled) {
+  } else if (!projectCfg.enabled) {
     tracerEl.textContent = "off (turn on in Reqlore: DOM Hunter -> Settings)";
     tracerEl.className = "status status-warn";
-  } else {
-    tracerEl.textContent = "on";
+  } else if (tabCfg && tabCfg.enabled) {
+    tracerEl.textContent = "on (this tab is in scope)";
     tracerEl.className = "status status-ok";
+  } else {
+    // Project tracer is on, but this tab is gated out -- either by the
+    // scope list or by the per-tab toggle below. Spell out which.
+    const offMap = await browser.runtime.sendMessage({
+      type: "dom_hunter.tabOff.get", tabId: INSPECTED_TAB_ID,
+    }).catch(() => ({ off: false }));
+    if (offMap && offMap.off) {
+      tracerEl.textContent = "on (project) -- disabled on this tab";
+    } else {
+      const scope = (projectCfg.scope || []).join(", ") || "(none)";
+      tracerEl.textContent = "on (project) -- this tab is OUT OF SCOPE"
+                            + (inspectedHost ? " for host '" + inspectedHost + "'" : "")
+                            + "; scope = " + scope;
+    }
+    tracerEl.className = "status status-warn";
   }
-  $("status-canary").textContent = (cfg && cfg.canary) || "(none yet)";
+  // Canary comes from the PROJECT config so the user can copy/paste it
+  // even before they navigate to an in-scope tab.
+  $("status-canary").textContent = (projectCfg && projectCfg.canary) || "(none yet)";
 
   const link = $("status-reqlore-link");
-  const uiUrl = (cfg && cfg.ui_url)
+  const uiUrl = (projectCfg && projectCfg.ui_url)
     || (settings && settings.baseUrl
         ? settings.baseUrl.replace(/\/+$/, "") + "/dom-hunter/"
         : "");

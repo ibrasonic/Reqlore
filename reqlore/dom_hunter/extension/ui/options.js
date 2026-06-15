@@ -4,7 +4,8 @@ const $ = (id) => document.getElementById(id);
 
 async function load() {
   const s = await browser.runtime.sendMessage({ type: "dom_hunter.settings.get" });
-  $("baseUrl").value = s.baseUrl || "http://127.0.0.1:8080";
+  // Default to the Reqlore UI port (8787), NOT the proxy port (8080).
+  $("baseUrl").value = s.baseUrl || "http://127.0.0.1:8787";
   $("token").value = s.token || "";
   if (s.managed) {
     $("state").className = "status status-ok";
@@ -67,7 +68,10 @@ $("optsForm").addEventListener("submit", async (ev) => {
 $("testBtn").addEventListener("click", async () => {
   $("state").className = "status status-warn";
   $("state").textContent = "Testing connection...";
-  const cfg = await browser.runtime.sendMessage({ type: "dom_hunter.requestConfig" });
+  // Project-level config -- the options page is an extension page, so a
+  // per-tab requestConfig would be scope-gated against moz-extension://
+  // and falsely report the tracer as off.
+  const cfg = await browser.runtime.sendMessage({ type: "dom_hunter.getProjectConfig" });
   if (!cfg) {
     $("state").className = "status status-err";
     $("state").textContent = "Could not reach Reqlore with these settings.";

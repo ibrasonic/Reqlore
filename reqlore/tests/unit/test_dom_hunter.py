@@ -370,6 +370,83 @@ def test_devtools_panel_path_is_root_absolute() -> None:
     assert '"panel.html"' not in code            # sibling-relative -- breaks Chromium
 
 
+def test_extension_extension_pages_dont_use_per_tab_scope_check() -> None:
+    """Regression for the bug where the DevTools panel always showed
+    'Tracer: off / Canary: (none yet)' even when DOM Hunter was enabled
+    in Reqlore.
+
+    Root cause: extension pages (panel / popup / options) sent the
+    `dom_hunter.requestConfig` message to the background service worker.
+    For content scripts, `sender.tab.url` carries the inspected URL and
+    the background runs the configured scope filter against it. For an
+    extension PAGE, `sender.tab` is undefined and `sender.url` is the
+    moz-extension:// URL of the page itself -- the extension UUID host
+    never matches any user-defined scope like 'localhost:3001', so the
+    background returns `{enabled: false}` and the panel falsely reports
+    the tracer as off.
+
+    The fix is twofold:
+
+      1. The background MUST expose a `dom_hunter.getProjectConfig`
+         message that returns the raw bridge config (no per-tab scope
+         filter). Extension pages use it for project-level UI.
+      2. `dom_hunter.requestConfig` MUST honor caller-supplied
+         {tabId, url} overrides so the DevTools panel can ask
+         'is the INSPECTED tab in scope?' rather than 'is the panel
+         page in scope?' (which it never is).
+    """
+    from reqlore.dom_hunter.packager import find_extension_source
+    src = find_extension_source()
+    assert src is not None
+
+    sw = (src / "background" / "service_worker.js").read_text(encoding="utf-8")
+    # 1) Background advertises the new message.
+    assert '"dom_hunter.getProjectConfig"' in sw, (
+        "background/service_worker.js must handle dom_hunter.getProjectConfig "
+        "so extension pages can read project state without per-tab scope "
+        "gating that would always fail on moz-extension:// URLs."
+    )
+    # 2) requestConfig honors caller-supplied tab info.
+    assert "msg.tabId" in sw and "msg.url" in sw, (
+        "background/service_worker.js requestConfig handler must accept "
+        "{tabId, url} overrides from the caller so the DevTools panel "
+        "can target the INSPECTED tab, not the panel page."
+    )
+
+    # 3) Panel asks for project state, not the panel page's state.
+    panel = (src / "devtools" / "panel.js").read_text(encoding="utf-8")
+    assert '"dom_hunter.getProjectConfig"' in panel, (
+        "devtools/panel.js must use dom_hunter.getProjectConfig for the "
+        "global Tracer/Canary status. Otherwise it scope-filters against "
+        "its own moz-extension:// URL and falsely reports 'off'."
+    )
+    # 4) When the panel does call requestConfig it must pass the
+    #    inspected tab's id and URL, not let the background guess.
+    assert "INSPECTED_TAB_ID" in panel
+    assert "tabId: INSPECTED_TAB_ID" in panel
+    assert "url: inspectedUrl" in panel
+
+    # 5) Options + popup must not rely on per-tab requestConfig for
+    #    project-level reads either (same reason -- extension pages).
+    options_js = (src / "ui" / "options.js").read_text(encoding="utf-8")
+    popup_js = (src / "ui" / "popup.js").read_text(encoding="utf-8")
+    assert '"dom_hunter.getProjectConfig"' in options_js
+    assert '"dom_hunter.getProjectConfig"' in popup_js
+
+
+def test_extension_options_default_base_url_is_ui_port() -> None:
+    """The options page falls back to a default base URL when the user
+    hasn't saved anything. That default MUST be the Reqlore UI port
+    (8787), not the proxy port (8080). The bridge lives on the UI.
+    """
+    from reqlore.dom_hunter.packager import find_extension_source
+    src = find_extension_source()
+    assert src is not None
+    options_js = (src / "ui" / "options.js").read_text(encoding="utf-8")
+    assert '"http://127.0.0.1:8787"' in options_js
+    assert '"http://127.0.0.1:8080"' not in options_js
+
+
 def test_browser_policy_embeds_dom_hunter(tmp_path: Path):
     from reqlore.browser import _policies_dict
     fake_ca = tmp_path / "ca.pem"

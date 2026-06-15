@@ -44,7 +44,10 @@ async function init() {
     catch (_) { /* sidebar.open requires user gesture; the click counts */ }
   });
   document.getElementById("openFindings").addEventListener("click", async () => {
-    const cfg = await browser.runtime.sendMessage({ type: "dom_hunter.requestConfig" });
+    // Project-level config, not the per-tab one -- the popup pages run
+    // as an extension page so a per-tab `requestConfig` here would be
+    // scope-gated against the moz-extension:// URL and lose `ui_url`.
+    const cfg = await browser.runtime.sendMessage({ type: "dom_hunter.getProjectConfig" });
     const base = (settings.baseUrl || "").replace(/\/+$/, "");
     const url = (cfg && cfg.ui_url) || (base + "/dom-hunter/");
     await browser.tabs.create({ url });
