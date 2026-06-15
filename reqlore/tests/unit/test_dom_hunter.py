@@ -835,3 +835,206 @@ def test_bridge_endpoints_bypass_csrf_with_missing_token(
     )
 
 
+
+
+# ---------------------------------------------------------------------------
+# Proxy-side Referer canary injection (document.referrer auto-inject)
+# ---------------------------------------------------------------------------
+
+
+def test_inject_referer_canary_appends_to_existing_query() -> None:
+    headers = [("Host", "example.com"), ("Referer", "https://a.test/x?q=1")]
+    out = S.inject_referer_canary(headers, "rl_abc")
+    ref = dict(out)["Referer"]
+    assert ref == "https://a.test/x?q=1&rqdomh=rl_abc"
+    # Original list untouched (function returns a copy).
+    assert dict(headers)["Referer"] == "https://a.test/x?q=1"
+
+
+def test_inject_referer_canary_adds_question_mark_when_no_query() -> None:
+    headers = [("Referer", "https://a.test/path")]
+    out = S.inject_referer_canary(headers, "rl_abc")
+    assert dict(out)["Referer"] == "https://a.test/path?rqdomh=rl_abc"
+
+
+def test_inject_referer_canary_preserves_fragment() -> None:
+    headers = [("Referer", "https://a.test/x?q=1#section")]
+    out = S.inject_referer_canary(headers, "rl_abc")
+    assert dict(out)["Referer"] == "https://a.test/x?q=1&rqdomh=rl_abc#section"
+
+
+def test_inject_referer_canary_is_idempotent() -> None:
+    headers = [("Referer", "https://a.test/x?rqdomh=rl_abc")]
+    out = S.inject_referer_canary(headers, "rl_abc")
+    # Already present -- must not double-append.
+    assert dict(out)["Referer"] == "https://a.test/x?rqdomh=rl_abc"
+
+
+def test_inject_referer_canary_skips_when_no_referer_header() -> None:
+    """Deliberately do NOT synthesise a Referer header when the browser
+    omitted one. Adding one would leak origin info the user's
+    Referrer-Policy explicitly suppressed."""
+    headers = [("Host", "example.com")]
+    out = S.inject_referer_canary(headers, "rl_abc")
+    assert out == headers
+    assert "Referer" not in dict(out)
+
+
+def test_inject_referer_canary_skips_when_canary_empty() -> None:
+    headers = [("Referer", "https://a.test/x")]
+    assert S.inject_referer_canary(headers, "") == headers
+
+
+def test_inject_referer_canary_only_first_referer_rewritten() -> None:
+    """RFC 7230 forbids duplicate Referer, but proxies see broken
+    clients. Be deterministic: rewrite the first, leave the rest."""
+    headers = [
+        ("Referer", "https://a.test/x"),
+        ("Referer", "https://b.test/y"),
+    ]
+    out = S.inject_referer_canary(headers, "rl_abc")
+    refs = [v for k, v in out if k.lower() == "referer"]
+    assert refs == ["https://a.test/x?rqdomh=rl_abc", "https://b.test/y"]
+
+
+def test_inject_referer_canary_case_insensitive_header_name() -> None:
+    headers = [("referer", "https://a.test/x")]
+    out = S.inject_referer_canary(headers, "rl_abc")
+    # Preserve the original casing of the header name; only the value
+    # changes.
+    assert out == [("referer", "https://a.test/x?rqdomh=rl_abc")]
+
+
+def test_should_inject_referer_requires_enabled_and_target_and_scope(
+        tmp_path: Path) -> None:
+    proj_path = tmp_path / "x.rlr"
+    Project(proj_path).close()
+    proj = Project(proj_path)
+
+    # Default: nothing enabled -> False.
+    assert S.should_inject_referer(proj, "example.com") is False
+
+    # Enabled but no auto-inject target -> still False.
+    S.set_enabled(proj, True)
+    assert S.should_inject_referer(proj, "example.com") is False
+
+    # Wrong target -> False.
+    S.set_auto_inject(proj, ["location.hash"])
+    assert S.should_inject_referer(proj, "example.com") is False
+
+    # Right target, empty scope (means "all hosts") -> True.
+    S.set_auto_inject(proj, ["document.referrer"])
+    assert S.should_inject_referer(proj, "example.com") is True
+
+    # Right target, scope mismatch -> False.
+    S.set_scope(proj, ["only.test"])
+    assert S.should_inject_referer(proj, "example.com") is False
+
+    # Right target, scope match -> True.
+    assert S.should_inject_referer(proj, "only.test") is True
+
+    # Disabled overrides everything.
+    S.set_enabled(proj, False)
+    assert S.should_inject_referer(proj, "only.test") is False
+    proj.close()
+
+
+def test_proxy_request_hook_injects_referer_canary(tmp_path: Path) -> None:
+    """End-to-end-ish: build a fake mitmproxy flow, run the addon's
+    request hook against it, and assert the Referer header now carries
+    the canary. Verifies the wiring between dom_hunter and proxy.mitm."""
+    import asyncio
+    from reqlore.proxy.mitm import _HistoryAddon
+
+    proj_path = tmp_path / "y.rlr"
+    Project(proj_path).close()
+    proj = Project(proj_path)
+    S.set_enabled(proj, True)
+    S.set_auto_inject(proj, ["document.referrer"])
+    canary = S.get_or_make_canary(proj)
+
+    class _Headers(dict):
+        def items(self):
+            return list(super().items())
+        def clear(self):
+            super().clear()
+    class _Req:
+        def __init__(self):
+            self.pretty_host = "example.com"
+            self.pretty_url = "https://example.com/a"
+            self.path = "/a"
+            self.method = "GET"
+            self.http_version = "HTTP/1.1"
+            self.headers = _Headers({
+                "Host": "example.com",
+                "Referer": "https://example.com/prev",
+            })
+            self.raw_content = b""
+        def set_content(self, b):
+            self.raw_content = b
+    class _Flow:
+        def __init__(self):
+            self.request = _Req()
+
+    addon = _HistoryAddon(proj, rules=[], sync_hold=False, ui_port=8787)
+    flow = _Flow()
+    asyncio.run(addon.request(flow))
+    assert flow.request.headers["Referer"] == \
+        f"https://example.com/prev?rqdomh={canary}"
+    proj.close()
+
+
+def test_proxy_request_hook_leaves_referer_alone_when_disabled(
+        tmp_path: Path) -> None:
+    import asyncio
+    from reqlore.proxy.mitm import _HistoryAddon
+
+    proj_path = tmp_path / "z.rlr"
+    Project(proj_path).close()
+    proj = Project(proj_path)
+    # Enabled but auto-inject does NOT include document.referrer.
+    S.set_enabled(proj, True)
+    S.set_auto_inject(proj, ["location.hash"])
+
+    class _Headers(dict):
+        def items(self):
+            return list(super().items())
+        def clear(self):
+            super().clear()
+    class _Req:
+        pretty_host = "example.com"
+        pretty_url = "https://example.com/a"
+        path = "/a"
+        method = "GET"
+        http_version = "HTTP/1.1"
+        def __init__(self):
+            self.headers = _Headers({"Referer": "https://example.com/prev"})
+            self.raw_content = b""
+        def set_content(self, b):
+            self.raw_content = b
+    class _Flow:
+        def __init__(self):
+            self.request = _Req()
+
+    addon = _HistoryAddon(proj, rules=[], sync_hold=False, ui_port=8787)
+    flow = _Flow()
+    asyncio.run(addon.request(flow))
+    # Untouched.
+    assert flow.request.headers["Referer"] == "https://example.com/prev"
+    proj.close()
+
+
+def test_agent_js_no_longer_claims_referer_is_unsupported() -> None:
+    """The agent.js comment used to say document.referrer is read-only
+    and could not be auto-injected; that's now handled by the proxy.
+    Make sure the comment reflects the new reality so future readers
+    don't think the checkbox is dead."""
+    from reqlore.dom_hunter.packager import find_extension_source
+    src = find_extension_source()
+    assert src is not None
+    agent = (src / "content" / "agent.js").read_text(encoding="utf-8")
+    assert "inject_referer_canary" in agent, (
+        "agent.js comment must point readers at the proxy-side helper "
+        "now that document.referrer auto-inject actually works."
+    )
+

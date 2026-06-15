@@ -276,7 +276,11 @@
         window.name = (window.name || "") + " " + CANARY;
       } } catch (_) {}
     }
-    // document.referrer is read-only -- cannot auto-inject from agent.
+    // document.referrer is read-only from a content script. When the
+    // user ticks the "document.referrer" auto-inject box, the Reqlore
+    // proxy's request hook splices the canary into the outgoing Referer
+    // header for in-scope requests instead. See
+    // reqlore.dom_hunter.inject_referer_canary.
   } catch (_) {}
 
   // ---------------- mark ready ----------------

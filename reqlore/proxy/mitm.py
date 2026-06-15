@@ -130,6 +130,28 @@ class _HistoryAddon:
             req = flow.request
             host = req.pretty_host or ""
 
+            # DOM Hunter: if `document.referrer` is in the auto-inject
+            # list, splice the canary into the Referer header of every
+            # in-scope request. Runs BEFORE Match & Replace so the user
+            # can still override via an M&R rule if they want. Only
+            # rewrites an EXISTING Referer; never synthesises one (a
+            # missing Referer is usually intentional -- Referrer-Policy:
+            # no-referrer, cross-origin downgrade, etc.). See
+            # reqlore.dom_hunter.inject_referer_canary.
+            try:
+                from .. import dom_hunter as _dh
+                if _dh.should_inject_referer(self.project, host):
+                    cur = list(req.headers.items())
+                    new = _dh.inject_referer_canary(
+                        cur, _dh.get_or_make_canary(self.project),
+                    )
+                    if new != cur:
+                        req.headers.clear()
+                        for k, v in new:
+                            req.headers[k] = v
+            except Exception:
+                log.exception("DOM Hunter referer injection failed")
+
             # Match & Replace on the way out
             mr = _load_mr(self.project)
             if mr:

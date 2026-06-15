@@ -264,6 +264,88 @@ def host_in_scope(host: str, scope: list[str]) -> bool:
     return False
 
 
+# Query-string parameter name used by all four auto-inject paths so the
+# server-side test logic only has to look for one tag regardless of which
+# source the canary entered through.
+REFERER_CANARY_PARAM = "rqdomh"
+
+
+def inject_referer_canary(
+    headers: list[tuple[str, str]],
+    canary: str,
+) -> list[tuple[str, str]]:
+    """Return a copy of ``headers`` with the canary appended to Referer.
+
+    Behaviour:
+      * No ``Referer`` header (case-insensitive): returns ``headers`` unchanged.
+        We deliberately do NOT synthesise a Referer when the browser omitted
+        one (e.g. ``Referrer-Policy: no-referrer``, cross-origin downgrades),
+        because doing so would leak origin information the user's policy
+        explicitly suppressed.
+      * Referer is present but empty: unchanged.
+      * Referer already contains the canary value: unchanged (idempotent).
+      * Referer is a URL with no query: append ``?rqdomh=<canary>``.
+      * Referer is a URL with a query: append ``&rqdomh=<canary>``.
+      * If the URL already has a fragment we splice the param into the query,
+        not after the ``#`` (the server never sees fragments anyway, but a
+        well-formed Referer keeps the fragment trailing).
+
+    Only the FIRST Referer header is rewritten if multiple are somehow
+    present (RFC 7230 forbids that, but proxies see broken clients).
+    """
+    if not canary:
+        return headers
+    out: list[tuple[str, str]] = []
+    rewritten = False
+    for k, v in headers:
+        if not rewritten and k.lower() == "referer":
+            new_v = _append_canary_to_url(v, canary)
+            out.append((k, new_v))
+            rewritten = True
+        else:
+            out.append((k, v))
+    return out
+
+
+def _append_canary_to_url(url: str, canary: str) -> str:
+    """Splice ``rqdomh=<canary>`` into the query of ``url``. Pure string op.
+
+    Preserves the fragment when present so the resulting URL stays
+    syntactically valid. Returns the original string untouched when the
+    canary already appears anywhere in the URL.
+    """
+    if not url:
+        return url
+    if canary in url:
+        return url
+    # Split off fragment first so '#' doesn't get treated as part of the query.
+    frag = ""
+    hash_at = url.find("#")
+    if hash_at >= 0:
+        frag = url[hash_at:]
+        url = url[:hash_at]
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{REFERER_CANARY_PARAM}={canary}{frag}"
+
+
+def should_inject_referer(
+    project,
+    host: str,
+) -> bool:
+    """Cheap, no-fetch check used by the proxy hook on every request.
+
+    Returns True iff DOM Hunter is enabled, ``document.referrer`` is one of
+    the user's auto-inject choices, and ``host`` is in scope. Keep it tight
+    -- this runs in the proxy's hot path.
+    """
+    if not is_enabled(project):
+        return False
+    targets = get_auto_inject(project)
+    if "document.referrer" not in targets:
+        return False
+    return host_in_scope(host, get_scope(project))
+
+
 def dedupe_key(*, sink: str, source: str, page_url: str,
                stack: str, canary_seen: bool) -> str:
     """Produce a stable dedupe key. Stack top frame collapses duplicates."""
