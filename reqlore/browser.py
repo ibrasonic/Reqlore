@@ -564,6 +564,58 @@ def ensure_profile(profile_dir: Path | None = None) -> Path:
     return p
 
 
+DOM_HUNTER_EXT_ID = "reqlore-dom-hunter@reqlore.local"
+
+# Marker block we append to user.js so the upsert is idempotent.
+_DOM_HUNTER_PREFS_MARKER = "// >>> reqlore: DOM Hunter sideload prefs"
+_DOM_HUNTER_PREFS_END = "// <<< reqlore: DOM Hunter sideload prefs"
+_DOM_HUNTER_PREFS_BLOCK = (
+    _DOM_HUNTER_PREFS_MARKER + "\n"
+    # Allow loading unsigned XPIs from the profile's extensions/ folder.
+    # Honoured by Firefox Developer Edition, Nightly, ESR and Unbranded
+    # builds only; Release / Beta silently reject unsigned add-ons.
+    'user_pref("xpinstall.signatures.required", false);\n'
+    # Sideloaded add-ons would normally appear DISABLED and prompt the
+    # user; 0 = auto-enable everything we drop into the profile.
+    'user_pref("extensions.autoDisableScopes", 0);\n'
+    # 15 = SCOPE_PROFILE|SCOPE_USER|SCOPE_APPLICATION|SCOPE_SYSTEM, so
+    # the profile-level XPI is in the enabled set.
+    'user_pref("extensions.enabledScopes", 15);\n'
+    + _DOM_HUNTER_PREFS_END + "\n"
+)
+
+
+def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
+    """Copy the DOM Hunter XPI into the profile and enable unsigned loading.
+
+    Profile-sideload is the fallback path for environments where the
+    ``ExtensionSettings`` enterprise policy is overridden by a corporate
+    HKLM registry entry (which silently replaces our distribution/
+    policies.json entry wholesale, leaving no force-installed add-on).
+
+    Returns the final on-disk XPI path inside the profile.
+
+    Caveat: signature enforcement can only be disabled on Firefox
+    Developer Edition, Nightly, ESR or Unbranded builds. On Release /
+    Beta the unsigned XPI will be silently dropped at launch.
+    """
+    ext_dir = profile_dir / "extensions"
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    dest = ext_dir / f"{DOM_HUNTER_EXT_ID}.xpi"
+    # Atomic-ish replace so a half-written XPI never lingers.
+    tmp = dest.with_suffix(".xpi.tmp")
+    shutil.copy2(xpi_path, tmp)
+    tmp.replace(dest)
+
+    user_js = profile_dir / "user.js"
+    existing = user_js.read_text(encoding="utf-8") if user_js.exists() else ""
+    if _DOM_HUNTER_PREFS_MARKER not in existing:
+        user_js.write_text(existing + "\n" + _DOM_HUNTER_PREFS_BLOCK,
+                           encoding="utf-8")
+    log.info("DOM Hunter XPI sideloaded -> %s", dest)
+    return dest
+
+
 # ---------------------------------------------------------------------------
 # Launch
 # ---------------------------------------------------------------------------
@@ -980,4 +1032,21 @@ def run_browser(*, ca_path: Path,
         dom_hunter_token=token,
     )
     profile = ensure_profile()
+    if xpi_path is not None:
+        # Belt-and-suspenders: also sideload via the profile in case the
+        # ExtensionSettings policy was overridden by a corporate registry
+        # entry (HKLM\\SOFTWARE\\Policies\\Mozilla\\Firefox\\ExtensionSettings
+        # replaces our distribution/policies.json entry wholesale).
+        try:
+            sideload_dom_hunter(profile_dir=profile, xpi_path=xpi_path)
+            log.info(
+                "DOM Hunter sideloaded into profile. Note: Release/Beta\n"
+                "  Firefox enforces extension signing and will reject the\n"
+                "  unsigned XPI. For the sideload to take effect, use\n"
+                "  Firefox Developer Edition, Nightly, ESR, or an Unbranded\n"
+                "  build. The ExtensionSettings policy path still works on\n"
+                "  Release when no competing HKLM policy is present."
+            )
+        except OSError as exc:
+            log.warning("DOM Hunter sideload skipped: %s", exc)
     return launch(exe=exe, profile_dir=profile, url=ui_url, wait=wait)

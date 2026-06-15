@@ -499,6 +499,39 @@ def test_run_browser_with_project_builds_xpi_and_installs_policies(
     token = install_calls["dom_hunter_token"]
     assert isinstance(token, str) and len(token) >= 32
 
+    # Belt-and-suspenders sideload: XPI must also be in the profile, and
+    # user.js must enable unsigned-XPI loading. Without this, a corporate
+    # HKLM ExtensionSettings policy (which replaces our distribution
+    # policies.json entry wholesale) would leave the user with no add-on
+    # at all.
+    sideloaded = tmp_path / "profile" / "extensions" / \
+        f"{fxmod.DOM_HUNTER_EXT_ID}.xpi"
+    assert sideloaded.exists(), \
+        f"DOM Hunter not sideloaded into profile: {sideloaded}"
+    user_js = (tmp_path / "profile" / "user.js").read_text(encoding="utf-8")
+    assert 'xpinstall.signatures.required' in user_js
+    assert 'extensions.autoDisableScopes' in user_js
+
+
+def test_sideload_dom_hunter_is_idempotent(tmp_path: Path) -> None:
+    """Re-running `reqlore browser --project` must not duplicate the
+    user.js block or fail on an existing XPI. Failure mode: garbage user.js
+    accumulates and eventually breaks parsing."""
+    from reqlore import browser as fxmod
+    profile = tmp_path / "p"
+    profile.mkdir()
+    xpi = tmp_path / "src.xpi"
+    xpi.write_bytes(b"PK\x03\x04")
+    (profile / "user.js").write_text("// existing\n", encoding="utf-8")
+
+    dest1 = fxmod.sideload_dom_hunter(profile_dir=profile, xpi_path=xpi)
+    dest2 = fxmod.sideload_dom_hunter(profile_dir=profile, xpi_path=xpi)
+    assert dest1 == dest2 == profile / "extensions" / \
+        f"{fxmod.DOM_HUNTER_EXT_ID}.xpi"
+    user_js = (profile / "user.js").read_text(encoding="utf-8")
+    # Marker appears exactly once even after two runs.
+    assert user_js.count("// >>> reqlore: DOM Hunter sideload prefs") == 1
+
 
 def test_run_browser_without_project_does_not_install_extension(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
