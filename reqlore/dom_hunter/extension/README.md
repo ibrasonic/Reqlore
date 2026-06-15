@@ -47,13 +47,18 @@ Launch the Reqlore-managed browser with a project:
 reqlore browser --project path/to/your.rlr
 ```
 
-This downloads the Reqlore-managed Firefox build (first run only),
-writes an enterprise policy that:
+This downloads the Reqlore-managed **Firefox Developer Edition** build
+(first run only; release-channel Firefox silently rejects unsigned
+add-ons, so DOM Hunter ships against Dev Edition for the auto-install
+path), then writes an enterprise policy that:
 
 - Trusts the Reqlore CA, points the proxy at Reqlore.
 - Force-installs DOM Hunter via `ExtensionSettings`
-  (`installation_mode: "force_installed"` is exempt from Mozilla's
-  signing requirement).
+  (`installation_mode: "force_installed"` is normally exempt from
+  Mozilla's signing requirement; some corporate `HKLM` policies
+  override our `ExtensionSettings` entry, in which case Reqlore's
+  profile-level sideload + `xpinstall.signatures.required=false`
+  takes over on Dev Edition).
 - Pre-fills the extension's bridge URL + bearer token via
   `3rdparty.Extensions` (read by the extension as
   `browser.storage.managed`).

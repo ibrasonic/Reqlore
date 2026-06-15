@@ -25,11 +25,19 @@ about:debugging dance, no copy-pasting tokens.
 
 ## Quick start — zero-config tracing in one command
 
-1. Create or open a project and start the UI:
-   `reqlore serve --project my.rlr`
+1. Create or open a project and start the UI + proxy:
+   `reqlore both --project my.rlr`
 2. In a second terminal, launch the managed browser **with the same
    project** so the extension auto-installs and is pre-configured:
    `reqlore browser --project my.rlr --url http://127.0.0.1:8787/`
+
+   On the first run with `--project`, Reqlore downloads **Firefox
+   Developer Edition** into `<cache>/firefox/devedition/<version>/`
+   (≈ 80 MiB) instead of Release. This is intentional: the sideloaded
+   DOM Hunter XPI is unsigned, and Release/Beta silently drop unsigned
+   add-ons regardless of `xpinstall.signatures.required`. Dev Edition,
+   Nightly, ESR, and Unbranded honour the pref. Override with
+   `--channel release` if you have a signed build of the XPI.
 3. In Reqlore go to *DOM Hunter → Settings*, set the **Scope** (one
    host per line, `*.example.com` allowed), tick any **auto-inject
    targets** you want (URL fragment, query, `window.name`,
@@ -252,7 +260,7 @@ automatically.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | No *DOM Hunter* DevTools tab | You launched Firefox **without** `--project`, so the policy did not include the XPI. | `reqlore browser --project <foo.rlr>`. Check `about:policies` for `ExtensionSettings → reqlore-dom-hunter@reqlore.local`. |
-| `about:policies` shows `ExtensionSettings` with **other** extensions but **not** `reqlore-dom-hunter@…` (only `3rdparty` for our id is present) | A higher-precedence enterprise policy (typically `HKLM\SOFTWARE\Policies\Mozilla\Firefox\ExtensionSettings`, set by corporate IT or anti-malware software) replaced our `distribution/policies.json` entry wholesale. | Reqlore now also **sideloads** the XPI into `<profile>/extensions/reqlore-dom-hunter@reqlore.local.xpi` with `xpinstall.signatures.required=false`. That fallback only works on **Firefox Developer Edition, Nightly, ESR, or Unbranded builds** — Release/Beta enforce signing. Install Dev Edition from `https://www.mozilla.org/firefox/developer/`, point Reqlore at it (`reqlore browser --use-system` once it's on PATH), and the sideloaded XPI will load. |
+| `about:policies` shows `ExtensionSettings` with **other** extensions but **not** `reqlore-dom-hunter@…` (only `3rdparty` for our id is present) | A higher-precedence enterprise policy (typically `HKLM\SOFTWARE\Policies\Mozilla\Firefox\ExtensionSettings`, set by corporate IT or anti-malware software) replaced our `distribution/policies.json` entry wholesale. | Reqlore also **sideloads** the XPI into `<profile>/extensions/reqlore-dom-hunter@reqlore.local.xpi` with `xpinstall.signatures.required=false`. The sideload only works on **Firefox Developer Edition, Nightly, ESR, or Unbranded** — Release/Beta enforce signing. `reqlore browser --project` now defaults to `--channel devedition` and auto-downloads Dev Edition for you, so this should Just Work. If you forced `--channel release` or pointed at a Release build via `--use-system`, switch back to Dev Edition. |
 | Findings on a page but nothing in Reqlore | Bridge token mismatch — usually because you rotated it but didn't relaunch Firefox. | Rotate again, then `reqlore browser --project <foo.rlr>` to re-emit the policy. |
 | Options page is editable when it should be locked | `storage.managed` was not delivered — the `3rdparty → Extensions` policy block is missing. | Open `about:policies` and confirm the block; if absent, relaunch Reqlore with `--project`. |
 | Page enforces `Trusted Types` and the agent throws | Expected. DOM Hunter still records the *attempt* in `dom_hunter_findings`; the assignment just doesn't execute. | Use a Trusted Types-aware payload (sink-specific) and re-test. |

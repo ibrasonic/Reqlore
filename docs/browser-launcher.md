@@ -34,11 +34,17 @@ Browse the target as you normally would; every request lands in
 ```text
 reqlore browser [OPTIONS]
 
+  --project PATH            Project .rlr file. When given, DOM Hunter is force-installed
+                            into the profile (see modules/dom-hunter.md).
   --proxy-port INT          Proxy port to connect Firefox to (default: from settings).
   --url STR                 Initial URL to open (default: http://127.0.0.1:8787/).
   --firefox-version STR     Pin a Firefox version (e.g. "127.0"). Default: latest from Mozilla.
   --firefox-zip PATH        Use a pre-downloaded archive (.zip / .tar.xz / .exe). Skips download.
   --use-system              Prefer host Firefox install over the managed cache.
+  --channel {release,devedition}
+                            Firefox release channel to download. Defaults to 'devedition'
+                            when --project is given (the DOM Hunter sideload uses an
+                            unsigned XPI, which Release/Beta silently reject), else 'release'.
   --wait                    Block until Firefox exits (default: spawn-and-return).
 ```
 
@@ -76,19 +82,23 @@ host. The next `reqlore browser` reuses the cache.
 | Windows         | `%APPDATA%\reqlore\firefox\` (`~\AppData\Roaming\reqlore\firefox`) |
 | macOS / Linux   | `$XDG_DATA_HOME/reqlore/firefox/` (`~/.local/share/reqlore/firefox`) |
 
-Per-version tree:
+Per-version tree (Release stays at the root for back-compat; non-Release
+channels nest under a channel directory):
 
 ```
 ~/.local/share/reqlore/firefox/
-├── 127.0/firefox/firefox       (Linux executable)
+├── 127.0/firefox/firefox            (Release — Linux executable)
 ├── 128.0/firefox/firefox
-└── firefox-profile/            (shared across versions)
+├── devedition/
+│   └── 143.0b9/firefox/firefox      (Dev Edition — used when --project is given)
+└── firefox-profile/                 (shared across versions and channels)
     ├── user.js
     └── …
 ```
 
-Helpers: `cache_root()`, `cached_install()`, `profile_root()` in
-`reqlore/browser.py`.
+Helpers: `cache_root()`, `cached_install(version, *, channel)`,
+`profile_root()` in `reqlore/browser.py`. The channel table is
+`reqlore.browser.CHANNELS`.
 
 ### Profile
 
