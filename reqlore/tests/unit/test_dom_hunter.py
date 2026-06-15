@@ -787,6 +787,80 @@ def test_sideload_dom_hunter_is_idempotent(tmp_path: Path) -> None:
     assert user_js.count("// >>> reqlore: DOM Hunter sideload prefs") == 1
 
 
+def test_sideload_dom_hunter_skips_replace_when_already_up_to_date(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """When the on-disk XPI is byte-identical to the source, sideload
+    must not touch the file -- so a managed Firefox holding the XPI
+    open (Windows: WinError 5) does not break re-launch.
+
+    Regression: `reqlore browser --project foo.rlr` then re-running it
+    while the first browser was still open used to raise
+    PermissionError on `tmp.replace(dest)` and log a cryptic
+    'sideload skipped' line even though the XPI on disk was correct."""
+    from reqlore import browser as fxmod
+    profile = tmp_path / "p"
+    profile.mkdir()
+    xpi = tmp_path / "src.xpi"
+    xpi.write_bytes(b"PK\x03\x04hello")
+    # Prime the profile with the right XPI.
+    fxmod.sideload_dom_hunter(profile_dir=profile, xpi_path=xpi)
+
+    # Now simulate Firefox holding the file open: any attempt to copy
+    # or replace would raise PermissionError. The function must NOT
+    # call into shutil/Path.replace at all on the second invocation.
+    def _explode(*_a, **_kw):
+        raise AssertionError(
+            "sideload must not copy/replace when XPI is already up to date"
+        )
+
+    monkeypatch.setattr(fxmod.shutil, "copy2", _explode)
+    monkeypatch.setattr(fxmod.Path, "replace", _explode)
+
+    dest = fxmod.sideload_dom_hunter(profile_dir=profile, xpi_path=xpi)
+    assert dest.exists() and dest.read_bytes() == b"PK\x03\x04hello"
+
+
+def test_sideload_dom_hunter_locked_xpi_raises_actionable_error(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """When the on-disk XPI is *different* from the source AND the
+    replace fails with PermissionError (typical Windows 'file in use'),
+    sideload must surface an error message that names the cause and
+    the fix, and must not leave a stale .xpi.tmp behind."""
+    from reqlore import browser as fxmod
+    profile = tmp_path / "p"
+    profile.mkdir()
+    xpi = tmp_path / "src.xpi"
+    xpi.write_bytes(b"PK\x03\x04NEW-CONTENT")
+    # Existing dest XPI with DIFFERENT content -- forces the copy path.
+    ext_dir = profile / "extensions"
+    ext_dir.mkdir()
+    dest = ext_dir / f"{fxmod.DOM_HUNTER_EXT_ID}.xpi"
+    dest.write_bytes(b"PK\x03\x04OLD")
+
+    # Simulate Firefox holding the dest file open.
+    real_replace = fxmod.Path.replace
+
+    def _locked_replace(self, target):
+        if str(target).endswith(f"{fxmod.DOM_HUNTER_EXT_ID}.xpi"):
+            raise PermissionError(
+                13, "Access is denied",
+                str(self), None, str(target),
+            )
+        return real_replace(self, target)
+
+    monkeypatch.setattr(fxmod.Path, "replace", _locked_replace)
+
+    with pytest.raises(PermissionError) as exc_info:
+        fxmod.sideload_dom_hunter(profile_dir=profile, xpi_path=xpi)
+
+    # The message must name the real cause + the fix.
+    msg = str(exc_info.value)
+    assert "file is in use" in msg
+    assert "reqlore browser" in msg
+    # And no stale tmp leftover.
+    assert not (ext_dir / f"{fxmod.DOM_HUNTER_EXT_ID}.xpi.tmp").exists()
+
+
 def test_run_browser_without_project_does_not_install_extension(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """No --project -> no XPI -> install_policies must receive None

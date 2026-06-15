@@ -665,18 +665,77 @@ def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
     ext_dir = profile_dir / "extensions"
     ext_dir.mkdir(parents=True, exist_ok=True)
     dest = ext_dir / f"{DOM_HUNTER_EXT_ID}.xpi"
-    # Atomic-ish replace so a half-written XPI never lingers.
     tmp = dest.with_suffix(".xpi.tmp")
-    shutil.copy2(xpi_path, tmp)
-    tmp.replace(dest)
 
+    # Fast path: if the XPI already on disk matches the source byte for
+    # byte, nothing to do. This is the common case when the user re-runs
+    # `reqlore browser --project ...` while a managed Firefox is still
+    # open with the same profile -- on Windows the running browser holds
+    # an exclusive lock on the XPI and `tmp.replace(dest)` would raise
+    # WinError 5 / PermissionError, but there is no actual work to do.
+    if dest.exists():
+        try:
+            if _files_equal(xpi_path, dest):
+                _ensure_dom_hunter_user_js(profile_dir)
+                log.debug("DOM Hunter XPI already up to date -> %s", dest)
+                return dest
+        except OSError:
+            # If we cannot read either file we fall through to the copy
+            # attempt, which will produce a clearer error.
+            pass
+
+    # Clean up any stale .xpi.tmp left by a previous crashed run.
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+    try:
+        shutil.copy2(xpi_path, tmp)
+        # Atomic-ish replace so a half-written XPI never lingers.
+        tmp.replace(dest)
+    except PermissionError as exc:
+        # Most likely: a managed Firefox is already running against this
+        # same profile and is holding the XPI open. Clean up our scratch
+        # file and re-raise with a message the user can act on.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise PermissionError(
+            f"cannot replace DOM Hunter XPI at {dest}: file is in use "
+            f"(close any running 'reqlore browser' for this profile, "
+            f"then re-run). Underlying error: {exc}"
+        ) from exc
+
+    _ensure_dom_hunter_user_js(profile_dir)
+    log.info("DOM Hunter XPI sideloaded -> %s", dest)
+    return dest
+
+
+def _files_equal(a: Path, b: Path, *, chunk: int = 1 << 16) -> bool:
+    """True iff *a* and *b* have identical content. Cheap-path on size."""
+    if a.stat().st_size != b.stat().st_size:
+        return False
+    with a.open("rb") as fa, b.open("rb") as fb:
+        while True:
+            ba = fa.read(chunk)
+            bb = fb.read(chunk)
+            if ba != bb:
+                return False
+            if not ba:
+                return True
+
+
+def _ensure_dom_hunter_user_js(profile_dir: Path) -> None:
+    """Idempotently append the DOM Hunter prefs block to user.js."""
     user_js = profile_dir / "user.js"
     existing = user_js.read_text(encoding="utf-8") if user_js.exists() else ""
     if _DOM_HUNTER_PREFS_MARKER not in existing:
         user_js.write_text(existing + "\n" + _DOM_HUNTER_PREFS_BLOCK,
                            encoding="utf-8")
-    log.info("DOM Hunter XPI sideloaded -> %s", dest)
-    return dest
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1173,16 @@ def run_browser(*, ca_path: Path,
                 "  Firefox Developer Edition, Nightly, ESR, or an Unbranded\n"
                 "  build. The ExtensionSettings policy path still works on\n"
                 "  Release when no competing HKLM policy is present."
+            )
+        except PermissionError as exc:
+            # XPI is locked by an already-running managed Firefox; the
+            # in-use copy is almost certainly the one we wanted anyway,
+            # so this is recoverable -- just tell the user clearly.
+            log.warning(
+                "DOM Hunter sideload skipped: %s "
+                "(an existing 'reqlore browser' is running with the same "
+                "profile -- close it first if you need to ship a new XPI)",
+                exc,
             )
         except OSError as exc:
             log.warning("DOM Hunter sideload skipped: %s", exc)
