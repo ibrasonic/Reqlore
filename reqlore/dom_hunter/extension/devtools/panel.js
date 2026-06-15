@@ -36,6 +36,41 @@ function sameHost(url) {
   catch (_) { return false; }
 }
 
+/* Turn a `dom_hunter.diagnose` payload into a one-line, user-facing
+ * explanation. The previous panel just said "cannot reach Reqlore at X",
+ * which is misleading when Reqlore IS up but the token doesn't match
+ * (mismatched --project between `reqlore web` and `reqlore browser`, or
+ * a token rotation since the browser was launched). */
+function describeBridgeFailure(baseUrl, diag) {
+  const where = baseUrl || "(no base URL set)";
+  if (!diag) return "cannot reach Reqlore at " + where;
+  if (diag.kind === "no-base-url") {
+    return "no base URL configured -- open the extension options";
+  }
+  if (diag.kind === "no-token") {
+    return "no bridge token configured -- relaunch via `reqlore browser --project ...` "
+         + "or paste the token from Reqlore -> DOM Hunter -> Settings into the extension options";
+  }
+  if (diag.kind === "http" && diag.status === 401) {
+    return "token mismatch at " + where + " (HTTP 401) -- the extension's bridge token does "
+         + "not match the project currently served. Make sure `reqlore web` and "
+         + "`reqlore browser` use the SAME --project, then relaunch the browser. If you "
+         + "rotated the token in Reqlore -> DOM Hunter -> Settings, you must relaunch too.";
+  }
+  if (diag.kind === "http" && diag.status === 404) {
+    return "endpoint missing at " + where + " (HTTP 404) -- is this the Reqlore UI port? "
+         + "It should be the UI port (default 8787), not the proxy port (8080).";
+  }
+  if (diag.kind === "http") {
+    return "Reqlore returned HTTP " + diag.status + " at " + where;
+  }
+  if (diag.kind === "network") {
+    return "cannot reach Reqlore at " + where + " (network: "
+         + (diag.message || "fetch failed") + ") -- is `reqlore web` running on this port?";
+  }
+  return "cannot reach Reqlore at " + where;
+}
+
 // -------------------- inspected URL --------------------
 
 async function refreshInspectedUrl() {
@@ -78,7 +113,13 @@ async function refreshStatus() {
     tracerEl.textContent = "not configured -- open extension options first";
     tracerEl.className = "status status-warn";
   } else if (!projectCfg) {
-    tracerEl.textContent = "cannot reach Reqlore at " + settings.baseUrl;
+    // Bridge call returned null. Ask the background for a fresh
+    // uncached probe so we can show the actual reason (HTTP status,
+    // network error, ...) instead of a generic "cannot reach".
+    let diag = null;
+    try { diag = await browser.runtime.sendMessage({ type: "dom_hunter.diagnose" }); }
+    catch (_) {}
+    tracerEl.textContent = describeBridgeFailure(settings.baseUrl, diag);
     tracerEl.className = "status status-err";
   } else if (!projectCfg.enabled) {
     tracerEl.textContent = "off (turn on in Reqlore: DOM Hunter -> Settings)";

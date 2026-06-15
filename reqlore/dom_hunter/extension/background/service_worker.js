@@ -88,6 +88,39 @@ async function fetchConfig() {
   }
 }
 
+/* Uncached one-shot probe used by panel/options for diagnostics. Returns:
+ *   {ok:true, baseUrl, token:bool}                              -- bridge reachable, 200
+ *   {ok:false, kind:"no-base-url", baseUrl, token:bool}        -- baseUrl missing
+ *   {ok:false, kind:"no-token",    baseUrl, token:bool}        -- token missing
+ *   {ok:false, kind:"http",   status, baseUrl, token:bool}     -- got non-2xx (e.g. 401)
+ *   {ok:false, kind:"network", message, baseUrl, token:bool}   -- fetch threw
+ * The panel uses this to tell the user WHY the bridge call failed (token
+ * mismatch vs. Reqlore not running vs. unconfigured) instead of just
+ * "cannot reach Reqlore".
+ */
+async function diagnoseBridge() {
+  const { baseUrl, token } = await getSettings();
+  const hasToken = !!token;
+  if (!baseUrl) return { ok: false, kind: "no-base-url", baseUrl: "", token: hasToken };
+  if (!hasToken) return { ok: false, kind: "no-token", baseUrl, token: false };
+  try {
+    const r = await fetch(baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/config", {
+      method: "GET",
+      headers: { "X-DOMHunter-Token": token, "Accept": "application/json" },
+      cache: "no-store",
+      credentials: "omit",
+    });
+    if (r.ok) return { ok: true, baseUrl, token: true };
+    return { ok: false, kind: "http", status: r.status, baseUrl, token: true };
+  } catch (e) {
+    return {
+      ok: false, kind: "network",
+      message: (e && e.message) ? String(e.message) : String(e),
+      baseUrl, token: true,
+    };
+  }
+}
+
 async function sendReport(payload, tabId) {
   const { baseUrl, token } = await getSettings();
   if (!baseUrl || !token) return false;
@@ -203,6 +236,13 @@ browser.runtime.onMessage.addListener((msg, sender) => {
     // state itself, then call requestConfig with a tab override to
     // decide whether a specific tab is in scope.
     return fetchConfig();
+  }
+
+  if (msg.type === "dom_hunter.diagnose") {
+    // Uncached probe -- panel/options use this to surface the actual
+    // reason a getProjectConfig call returned null (HTTP status, network
+    // error, missing token, ...).
+    return diagnoseBridge();
   }
 
   if (msg.type === "dom_hunter.report") {

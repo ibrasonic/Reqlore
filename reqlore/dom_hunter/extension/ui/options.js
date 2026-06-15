@@ -73,8 +73,31 @@ $("testBtn").addEventListener("click", async () => {
   // and falsely report the tracer as off.
   const cfg = await browser.runtime.sendMessage({ type: "dom_hunter.getProjectConfig" });
   if (!cfg) {
+    // Ask the background for a fresh uncached probe so we can show the
+    // actual reason (401 token mismatch, network, wrong port, ...).
+    let diag = null;
+    try { diag = await browser.runtime.sendMessage({ type: "dom_hunter.diagnose" }); }
+    catch (_) {}
     $("state").className = "status status-err";
-    $("state").textContent = "Could not reach Reqlore with these settings.";
+    const baseUrl = $("baseUrl").value.trim() || "(no base URL)";
+    if (!diag) {
+      $("state").textContent = "Could not reach Reqlore at " + baseUrl + ".";
+    } else if (diag.kind === "http" && diag.status === 401) {
+      $("state").textContent = "Reqlore at " + baseUrl + " rejected the token (HTTP 401). "
+        + "The extension's bridge token does not match the project currently served. "
+        + "Re-launch via `reqlore browser --project ...` with the SAME project as `reqlore web`, "
+        + "or paste the current token from Reqlore -> DOM Hunter -> Settings into the field above.";
+    } else if (diag.kind === "http" && diag.status === 404) {
+      $("state").textContent = "Reqlore returned HTTP 404 at " + baseUrl + ". "
+        + "Make sure this is the UI port (default 8787), not the proxy port (8080).";
+    } else if (diag.kind === "http") {
+      $("state").textContent = "Reqlore returned HTTP " + diag.status + " at " + baseUrl + ".";
+    } else if (diag.kind === "network") {
+      $("state").textContent = "Could not reach Reqlore at " + baseUrl + " (network: "
+        + (diag.message || "fetch failed") + "). Is `reqlore web` running on this port?";
+    } else {
+      $("state").textContent = "Could not reach Reqlore at " + baseUrl + ".";
+    }
     return;
   }
   $("state").className = "status status-ok";

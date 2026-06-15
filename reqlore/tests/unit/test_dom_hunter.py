@@ -447,6 +447,42 @@ def test_extension_options_default_base_url_is_ui_port() -> None:
     assert '"http://127.0.0.1:8080"' not in options_js
 
 
+def test_extension_diagnose_surfaces_real_failure_reason() -> None:
+    """When the bridge call returns null the panel must NOT just say
+    'cannot reach Reqlore' -- the most common cause is a token mismatch
+    (different --project between `reqlore web` and `reqlore browser`,
+    or a token rotation since launch), which manifests as an HTTP 401
+    and is invisible to the user otherwise. Surface the actual reason
+    via a fresh uncached probe (`dom_hunter.diagnose`).
+    """
+    from reqlore.dom_hunter.packager import find_extension_source
+    src = find_extension_source()
+    assert src is not None
+    sw = (src / "background" / "service_worker.js").read_text(encoding="utf-8")
+    # The background must expose a diagnose handler that does an
+    # uncached probe and reports the failure kind.
+    assert '"dom_hunter.diagnose"' in sw
+    assert "diagnoseBridge" in sw
+    assert '"no-token"' in sw
+    assert '"http"' in sw
+    assert '"network"' in sw
+
+    # The DevTools panel must call diagnose and surface 401/404
+    # specifically (the two most common, most actionable errors).
+    panel = (src / "devtools" / "panel.js").read_text(encoding="utf-8")
+    assert '"dom_hunter.diagnose"' in panel
+    assert "describeBridgeFailure" in panel
+    assert "HTTP 401" in panel
+    assert "HTTP 404" in panel
+    assert "token mismatch" in panel
+
+    # The options page's "Test connection" button must also do this --
+    # users debug their config there, not in the DevTools panel.
+    opts = (src / "ui" / "options.js").read_text(encoding="utf-8")
+    assert '"dom_hunter.diagnose"' in opts
+    assert "HTTP 401" in opts
+
+
 def test_browser_policy_embeds_dom_hunter(tmp_path: Path):
     from reqlore.browser import _policies_dict
     fake_ca = tmp_path / "ca.pem"
