@@ -52,7 +52,7 @@
     <tbody>
       {% for m in messages %}
       <tr>
-        <td><time datetime="{{ m.ts }}">{{ m.ts }}</time></td>
+        <td><time datetime="{{ m.ts|unixtime_iso }}">{{ m.ts|unixtime_human }}</time></td>
         <td><code>{{ m.page_url }}</code></td>
         <td><code>{{ m.origin }}</code></td>
         <td><pre class="block"><code>{{ m.data }}</code></pre></td>

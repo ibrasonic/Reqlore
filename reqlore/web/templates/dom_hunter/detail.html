@@ -19,7 +19,7 @@
     <dt>Canary seen in value?</dt>
     <dd>{{ 'yes' if f.canary_seen else 'no' }}</dd>
     <dt>First reported</dt>
-    <dd><time datetime="{{ f.ts }}">{{ f.ts }}</time></dd>
+    <dd><time datetime="{{ f.ts|unixtime_iso }}">{{ f.ts|unixtime_human }}</time></dd>
   </dl>
 </section>
 

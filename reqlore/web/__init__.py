@@ -121,6 +121,40 @@ def create_app(project_path: Path, settings: Settings, *,
         except Exception:  # noqa: BLE001 - never break a template render
             return s or ""
 
+    @app.template_filter("unixtime_iso")
+    def _unixtime_iso(ts):
+        # Render a unix-seconds value as ISO 8601 UTC for the HTML
+        # <time datetime="..."> machine-readable attribute. Returns the
+        # input unchanged if it isn't a number we can interpret.
+        from datetime import datetime, timezone
+        try:
+            n = int(ts)
+        except (TypeError, ValueError):
+            return ts or ""
+        try:
+            return datetime.fromtimestamp(n, tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        except (OverflowError, OSError, ValueError):
+            return str(ts)
+
+    @app.template_filter("unixtime_human")
+    def _unixtime_human(ts):
+        # Render a unix-seconds value as a short, readable UTC string
+        # for the visible text inside <time>. Falls back to the raw
+        # input on bad data so we never blank out a row.
+        from datetime import datetime, timezone
+        try:
+            n = int(ts)
+        except (TypeError, ValueError):
+            return ts or ""
+        try:
+            return datetime.fromtimestamp(n, tz=timezone.utc).strftime(
+                "%Y-%m-%d %H:%M:%S UTC"
+            )
+        except (OverflowError, OSError, ValueError):
+            return str(ts)
+
     @app.before_request
     def _attach_project():
         g.project = project

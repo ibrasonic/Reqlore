@@ -1271,3 +1271,108 @@ def test_dom_hunter_source_index_contains_all_attributable_sources() -> None:
         f"SOURCE_INDEX missing ids that detectSource() can emit: {missing!r}"
     )
 
+
+# Findings table UX (commit before this one shipped raw unix ts and a
+# verbose "View finding N" link that overflowed the Action column).
+
+
+def _seed_finding_for_ui(app, c, ts: int = 1781551861) -> int:
+    proj = app.extensions["reqlore_project"]
+    token = S.get_or_make_token(proj)
+    r = c.post("/dom-hunter/__bridge/report", json={
+        "kind": "finding",
+        "sink": "Element.innerHTML",
+        "source": "location.hash",
+        "severity": "high",
+        "canary_seen": True,
+        "page_url": "http://localhost:3001/login",
+        "frame_url": "http://localhost:3001/login",
+        "value": "rqdomh=x",
+        "stack": "applyHashMessage@app.js:21:5",
+    }, headers={"X-DOMHunter-Token": token})
+    assert r.status_code == 200
+    fid = r.get_json()["id"]
+    # Backfill the ts so we exercise the formatter on a known value.
+    with proj._cursor() as cur:  # noqa: SLF001 - test helper
+        cur.execute(
+            "UPDATE dom_hunter_findings SET ts=? WHERE id=?", (ts, fid),
+        )
+    proj._conn.commit()  # noqa: SLF001 - test helper
+    return fid
+
+
+def test_findings_table_formats_unix_timestamp_for_humans(app_and_client):
+    """A pentester reading the findings table should see a real
+    timestamp (e.g. '2026-06-15 21:51:01 UTC'), not the raw integer.
+    The <time> element must still carry an ISO 8601 datetime= attr for
+    screen readers and machine consumers."""
+    app, c = app_and_client
+    _seed_finding_for_ui(app, c, ts=1781551861)
+    page = c.get("/dom-hunter/")
+    assert page.status_code == 200
+    body = page.data.decode("utf-8")
+    # Human-readable text inside the <time>.
+    assert "2026-06-15 19:31:01 UTC" in body, (
+        "findings table must format unix ts as a readable UTC string, "
+        "not show the raw integer."
+    )
+    # ISO 8601 in the datetime attribute.
+    assert 'datetime="2026-06-15T19:31:01Z"' in body, (
+        "<time datetime=...> must be ISO 8601 for screen readers and "
+        "machine consumers."
+    )
+    # The raw integer must NOT appear as bare visible text in the row.
+    assert ">1781551861<" not in body, (
+        "raw unix integer should never appear as visible cell text."
+    )
+
+
+def test_findings_table_action_link_is_short_with_descriptive_aria(app_and_client):
+    """The Action column should display a short label ('View'); the
+    full descriptive context belongs in aria-label so the column stays
+    readable on narrow viewports without losing accessibility."""
+    app, c = app_and_client
+    fid = _seed_finding_for_ui(app, c)
+    page = c.get("/dom-hunter/")
+    body = page.data.decode("utf-8")
+    # Visible text is the short label.
+    assert ">\n             View</a>" in body or ">View</a>" in body, (
+        "Action column link text must be the short 'View' label."
+    )
+    # And no longer the verbose visible text.
+    assert f"View finding {fid}</a>" not in body, (
+        "Verbose 'View finding N' text must move out of the visible "
+        "column and into aria-label only."
+    )
+    # aria-label preserves the descriptive context for screen readers.
+    assert f'aria-label="View finding {fid}:' in body
+
+
+def test_unixtime_filters_are_safe_on_bad_input(app_and_client):
+    """The template filters must never blow up a template render --
+    fall back to a string form on garbage input."""
+    app, _ = app_and_client
+    iso = app.jinja_env.filters["unixtime_iso"]
+    human = app.jinja_env.filters["unixtime_human"]
+    # Happy path.
+    assert iso(1781551861) == "2026-06-15T19:31:01Z"
+    assert human(1781551861) == "2026-06-15 19:31:01 UTC"
+    # Garbage in, garbage-but-safe out.
+    assert iso(None) == ""
+    assert human(None) == ""
+    assert iso("not-a-number") == "not-a-number"
+    assert human("not-a-number") == "not-a-number"
+
+
+def test_detail_page_formats_unix_timestamp(app_and_client):
+    """Same fix applies to the 'First reported' field on the detail
+    page; otherwise users see a raw integer there too."""
+    app, c = app_and_client
+    fid = _seed_finding_for_ui(app, c, ts=1781548517)
+    page = c.get(f"/dom-hunter/finding/{fid}")
+    assert page.status_code == 200
+    body = page.data.decode("utf-8")
+    assert "2026-06-15 18:35:17 UTC" in body
+    assert ">1781548517<" not in body
+
+
