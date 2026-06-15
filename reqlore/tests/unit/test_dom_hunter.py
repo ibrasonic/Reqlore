@@ -1061,9 +1061,9 @@ def test_agent_js_defines_detect_source() -> None:
         "agent.js must define detectSource(value) to attribute sink "
         "hits to a DOM source instead of always emitting 'unknown'."
     )
-    assert "function _rqdomhSourceMatches(" in agent, (
-        "detectSource relies on _rqdomhSourceMatches() to compare a "
-        "source's content against the sink value."
+    assert "function _rqdomhSourceScore(" in agent, (
+        "detectSource relies on _rqdomhSourceScore() to rank "
+        "candidate sources by overlap with the sink value."
     )
 
 
@@ -1125,19 +1125,135 @@ def test_agent_js_detect_source_emits_only_known_source_ids() -> None:
 
 def test_agent_js_tracks_postmessage_canary_for_attribution() -> None:
     """A sink that fires inside a postMessage handler chain should be
-    attributable to 'postMessage'. The agent stashes the most recent
-    canary-bearing message in a module-scope variable so detectSource()
-    can find it."""
+    attributable to 'postMessage'. The agent keeps a small ring buffer
+    of recent canary-bearing payloads (not a single slot, so concurrent
+    handlers don't race) for detectSource() to scan."""
     agent = _read_agent_js()
-    assert "lastMessageWithCanary" in agent, (
-        "agent.js must track the most recent canary-bearing "
-        "postMessage data to attribute sink hits through it."
+    assert "messageCanaryBuffer" in agent, (
+        "agent.js must keep a ring buffer of canary-bearing "
+        "postMessage data so detectSource() can attribute sinks "
+        "fired inside a message handler chain."
     )
-    # The variable must be both written (in the postMessage logger) and
-    # read (in detectSource).
-    assert agent.count("lastMessageWithCanary") >= 2, (
-        "lastMessageWithCanary should be both written by the "
-        "postMessage logger and read by detectSource()."
+    assert "_rqdomhPushMessageCanary" in agent, (
+        "the buffer must be populated through the push helper from "
+        "the wrapped message listener."
+    )
+
+
+def test_agent_js_wraps_removeeventlistener_for_message() -> None:
+    """Wrapping addEventListener(\"message\", fn) means the listener
+    actually registered is a wrapper, not fn. removeEventListener(
+    \"message\", fn) then silently fails unless we also wrap it to
+    look up the wrapper through the WeakMap. Without this fix, long-
+    lived SPAs accumulate stale message handlers."""
+    agent = _read_agent_js()
+    assert "messageListenerWrapMap" in agent, (
+        "agent.js must maintain a WeakMap of original message "
+        "listeners to their wrappers so removeEventListener can find "
+        "the right registration to remove."
+    )
+    assert "removeEventListener" in agent, (
+        "agent.js must wrap removeEventListener to look up the "
+        "wrapper via messageListenerWrapMap."
+    )
+    assert "_rqdomh_remove" in agent, (
+        "the removeEventListener wrapper must be named _rqdomh_remove "
+        "so its frames are trimmed from reported stacks like the rest."
+    )
+
+
+def test_agent_js_snapshots_initial_source_values() -> None:
+    """Pages frequently read e.g. location.hash then call
+    history.replaceState(...) to clean the URL. By the time a later
+    sink fires, the live source no longer contains the canary --
+    attribution would fall through to 'unknown'. The agent must
+    snapshot initial values at document_start and consult them as a
+    fallback in detectSource()."""
+    agent = _read_agent_js()
+    assert "const initial = {" in agent or "const initial = { " in agent, (
+        "agent.js must snapshot initial.hash / search / pathname / "
+        "referrer / name at load time."
+    )
+    for field in ("initial.hash", "initial.search", "initial.pathname",
+                  "initial.referrer", "initial.name"):
+        assert field in agent, f"missing snapshot field: {field}"
+
+
+def test_agent_js_uses_overlap_scoring_for_source_attribution() -> None:
+    """When the canary is present in multiple sources (e.g. user has
+    auto-inject ticked for both hash and search) we should pick the
+    source whose content has the LARGEST verified overlap with the
+    sink value, not just first by precedence. This is the difference
+    between 'good guess' and 'reliable attribution'."""
+    agent = _read_agent_js()
+    assert "_rqdomhSourceScore" in agent, (
+        "agent.js must define a source-score helper used by "
+        "detectSource() to pick the best candidate."
+    )
+    assert "bestScore" in agent and "bestId" in agent, (
+        "detectSource() must run a max-score selection over candidates."
+    )
+
+
+def test_agent_js_report_recaptures_page_url() -> None:
+    """SPA route changes between hook fire and report would otherwise
+    leave the stored finding pointing at a stale URL. report() must
+    recapture location.href right before posting."""
+    agent = _read_agent_js()
+    # Look inside the report() function body.
+    import re
+    body = re.search(r"function report\([^)]*\)\s*\{(.+?)\n  \}\n",
+                     agent, re.DOTALL)
+    assert body, "could not locate report() body in agent.js"
+    text = body.group(1)
+    assert "location.href" in text, (
+        "report() must recapture location.href so SPA route changes "
+        "between sink fire and report show the right page_url."
+    )
+
+
+def test_agent_js_truncates_stack_for_relay() -> None:
+    """The relay postMessage must stay well under the structured-clone\n    limit on huge minified pages. Stack must be capped before send."""
+    agent = _read_agent_js()
+    assert "trimmed.slice(0, 8000)" in agent or "slice(0, 8000)" in agent, (
+        "report() must cap the stack length before relaying."
+    )
+
+
+def test_agent_js_hooks_new_high_impact_sinks() -> None:
+    """Professional-grade DOM-XSS coverage requires more than just\n    innerHTML. These sinks are commonly exploited but were missing."""
+    agent = _read_agent_js()
+    for sink_id, hook_marker in [
+        ("HTMLIFrameElement.srcdoc", "\"srcdoc\""),
+        ("DOMParser.parseFromString", "\"parseFromString\""),
+        ("Range.createContextualFragment", "\"createContextualFragment\""),
+        ("Worker", "ProxiedWorker"),
+    ]:
+        assert sink_id in agent, (
+            f"agent.js must report sink id {sink_id!r}"
+        )
+        assert hook_marker in agent, (
+            f"agent.js must install a hook for {sink_id!r} "
+            f"(looking for marker {hook_marker!r})"
+        )
+
+
+def test_dom_hunter_sink_index_contains_new_sinks() -> None:
+    """Every literal sink id agent.js can emit MUST exist in\n    SINK_INDEX or the bridge will refuse the finding."""
+    from reqlore.dom_hunter import SINK_INDEX
+    required = {
+        "Element.innerHTML", "Element.outerHTML",
+        "Element.insertAdjacentHTML", "Element.setAttribute(on*)",
+        "document.write", "document.writeln",
+        "HTMLScriptElement.src", "HTMLIFrameElement.src",
+        "HTMLIFrameElement.srcdoc",
+        "DOMParser.parseFromString", "Range.createContextualFragment",
+        "Worker",
+        "eval", "Function", "setTimeout(string)", "setInterval(string)",
+    }
+    missing = required - set(SINK_INDEX)
+    assert not missing, (
+        f"SINK_INDEX missing ids that agent.js can emit: {missing!r}"
     )
 
 

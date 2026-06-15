@@ -114,6 +114,18 @@ SINKS: list[dict] = [
     {"id": "importScripts", "label": "importScripts()",
      "severity": "high",
      "plain": "Inside a worker, the page loaded another script from a URL."},
+    {"id": "HTMLIFrameElement.srcdoc", "label": "iframe.srcdoc assignment",
+     "severity": "high",
+     "plain": "The page set an iframe's full HTML document from a string. "
+              "Scripts in the string run inside the iframe."},
+    {"id": "DOMParser.parseFromString", "label": "DOMParser.parseFromString()",
+     "severity": "medium",
+     "plain": "The page parsed a string into a DOM. Risky if the parsed "
+              "nodes are later inserted into the live document."},
+    {"id": "Range.createContextualFragment", "label": "Range.createContextualFragment()",
+     "severity": "high",
+     "plain": "The page built a DocumentFragment from a string; the fragment "
+              "is parsed as HTML and scripts may run when inserted."},
 ]
 
 SINK_INDEX = {s["id"]: s for s in SINKS}

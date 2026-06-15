@@ -28,10 +28,40 @@
   let pageUrl = "";
   try { pageUrl = location.href; } catch (_) { /* sandboxed frame */ }
 
-  // Most recent postMessage payload (string form) whose data contained
-  // the canary. Used by detectSource() to attribute sink hits that came
-  // through a web-message handler.
-  let lastMessageWithCanary = "";
+  // Snapshot of source values at agent-load time. Pages frequently
+  // read e.g. location.hash, parse it, then call history.replaceState
+  // to clean the URL -- by the time a later sink fires, the live
+  // location.hash no longer contains the canary and attribution would
+  // fail. detectSource() consults both the live and initial values.
+  const initial = { hash: "", search: "", pathname: "",
+                    referrer: "", name: "" };
+  try { initial.hash = location.hash || ""; } catch (_) {}
+  try { initial.search = location.search || ""; } catch (_) {}
+  try { initial.pathname = location.pathname || ""; } catch (_) {}
+  try { initial.referrer = document.referrer || ""; } catch (_) {}
+  try { initial.name = window.name || ""; } catch (_) {}
+
+  // Ring buffer of recent postMessage payloads that contained the
+  // canary. Multiple handlers can fire between two sinks, so a single
+  // "last" slot races -- the buffer keeps the most recent N for
+  // detectSource() to scan.
+  const MSG_BUFFER_SIZE = 8;
+  const messageCanaryBuffer = [];
+  function _rqdomhPushMessageCanary(s) {
+    if (!s) return;
+    if (messageCanaryBuffer.indexOf(s) !== -1) return;
+    messageCanaryBuffer.push(s);
+    if (messageCanaryBuffer.length > MSG_BUFFER_SIZE) {
+      messageCanaryBuffer.shift();
+    }
+  }
+
+  // WeakMap of original message-listener -> our wrapping function, so
+  // a later removeEventListener("message", originalFn) finds the
+  // wrapper we actually registered and removes it. Without this the
+  // page's listener-removal silently fails and message handlers leak,
+  // which is a real reliability problem on long-lived SPAs.
+  const messageListenerWrapMap = new WeakMap();
 
   // ---------------- helpers ----------------
 
@@ -56,33 +86,38 @@
 
   // ---------------- source attribution ----------------
   //
-  // When a sink fires we know the value contains CANARY, but not where
-  // the page got it from. Check every DOM source the agent can read and
-  // pick the highest-precedence one whose content overlaps the sink
-  // value. Precedence below is ordered by typical DOM-XSS attribution
-  // accuracy: pure-DOM vectors (hash, postMessage, window.name) before
-  // cross-cutting ones (referrer, search, cookie, storage), so that
-  // when the user auto-injects into multiple sources at once we still
-  // attribute the finding to the most likely real-world attacker path.
+  // When a sink fires we know value contains CANARY, but not which DOM
+  // source the page read it from. detectSource() consults every source
+  // the agent can observe and returns the BEST match: the candidate
+  // whose content has the largest verified overlap with value. Ties
+  // are broken by precedence (pure-DOM vectors before cross-cutting
+  // ones), which matches typical real-world DOM-XSS attribution when
+  // the user auto-injects into multiple sources at once.
+  //
   // All IDs returned MUST exist in reqlore.dom_hunter.SOURCE_INDEX or
-  // the bridge will coerce them back to "unknown".
+  // the bridge coerces them to "unknown" on insert.
 
-  function _rqdomhSourceMatches(srcVal, needle) {
-    if (!srcVal || srcVal.indexOf(CANARY) === -1) return false;
-    if (!needle) return false;
-    if (srcVal.indexOf(needle) !== -1) return true;
-    if (needle.indexOf(srcVal) !== -1) return true;
-    // Pages typically strip the leading '#' or '?' before using the
-    // source content (location.hash.slice(1), location.search.slice(1)).
-    if (srcVal.charCodeAt(0) === 35 /* # */
-        || srcVal.charCodeAt(0) === 63 /* ? */) {
-      const stripped = srcVal.slice(1);
-      if (stripped && (needle.indexOf(stripped) !== -1
-                        || stripped.indexOf(needle) !== -1)) {
-        return true;
+  // Overlap score using the bidirectional-substring heuristic. We
+  // deliberately don't compute true LCS (O(n*m) on 8K strings on every
+  // sink hit is too slow). Handles:
+  //   - source ⊂ value (page used the whole source)    -> len(source)
+  //   - value ⊂ source (page sliced part of source)    -> len(value)
+  //   - leading '#' or '?' stripped before use          -> as above on tail
+  // Returns 0 if no overlap; caller falls through to other candidates.
+  function _rqdomhSourceScore(srcVal, needle) {
+    if (!srcVal || !needle) return 0;
+    if (srcVal.indexOf(CANARY) === -1) return 0;
+    if (srcVal.indexOf(needle) !== -1) return needle.length;
+    if (needle.indexOf(srcVal) !== -1) return srcVal.length;
+    const c0 = srcVal.charCodeAt(0);
+    if (c0 === 35 /* # */ || c0 === 63 /* ? */) {
+      const tail = srcVal.slice(1);
+      if (tail) {
+        if (needle.indexOf(tail) !== -1) return tail.length;
+        if (tail.indexOf(needle) !== -1) return needle.length;
       }
     }
-    return false;
+    return 0;
   }
 
   function detectSource(value) {
@@ -97,31 +132,64 @@
     try { n = window.name || ""; } catch (_) {}
     try { c = document.cookie || ""; } catch (_) {}
 
-    if (_rqdomhSourceMatches(h, s)) return "location.hash";
-    if (lastMessageWithCanary
-        && _rqdomhSourceMatches(lastMessageWithCanary, s)) return "postMessage";
-    if (_rqdomhSourceMatches(n, s)) return "window.name";
-    if (_rqdomhSourceMatches(ref, s)) return "document.referrer";
-    if (_rqdomhSourceMatches(q, s)) return "location.search";
-    if (_rqdomhSourceMatches(c, s)) return "document.cookie";
-    if (_rqdomhSourceMatches(p, s)) return "location.pathname";
+    // Precedence-ordered candidate list. Each row: [id, content]. Live
+    // values come first within each source; the snapshot is a fallback
+    // when the page mutated the live value after reading.
+    const candidates = [
+      ["location.hash", h],
+      ["location.hash", initial.hash]
+    ];
+    // Recent canary-bearing postMessages, newest first.
+    for (let i = messageCanaryBuffer.length - 1; i >= 0; i--) {
+      candidates.push(["postMessage", messageCanaryBuffer[i]]);
+    }
+    candidates.push(
+      ["window.name", n],
+      ["window.name", initial.name],
+      ["document.referrer", ref],
+      ["document.referrer", initial.referrer],
+      ["location.search", q],
+      ["location.search", initial.search],
+      ["document.cookie", c],
+      ["location.pathname", p],
+      ["location.pathname", initial.pathname]
+    );
 
-    // Storage scan is bounded and only fires when nothing else matched.
+    let bestId = "";
+    let bestScore = 0;
+    let bestRank = candidates.length + 1;
+    for (let rank = 0; rank < candidates.length; rank++) {
+      const id = candidates[rank][0];
+      const content = candidates[rank][1];
+      const score = _rqdomhSourceScore(content, s);
+      if (score > bestScore
+          || (score === bestScore && score > 0 && rank < bestRank)) {
+        bestScore = score;
+        bestId = id;
+        bestRank = rank;
+      }
+    }
+    if (bestScore > 0) return bestId;
+
+    // Bounded storage scan: only runs when nothing else matched.
+    const STORAGE_SCAN_LIMIT = 200;
     try {
       const ls = window.localStorage;
       if (ls) {
-        for (let i = 0; i < ls.length; i++) {
+        const n2 = Math.min(ls.length, STORAGE_SCAN_LIMIT);
+        for (let i = 0; i < n2; i++) {
           const v = ls.getItem(ls.key(i)) || "";
-          if (_rqdomhSourceMatches(v, s)) return "localStorage";
+          if (_rqdomhSourceScore(v, s) > 0) return "localStorage";
         }
       }
     } catch (_) {}
     try {
       const ss = window.sessionStorage;
       if (ss) {
-        for (let i = 0; i < ss.length; i++) {
+        const n2 = Math.min(ss.length, STORAGE_SCAN_LIMIT);
+        for (let i = 0; i < n2; i++) {
           const v = ss.getItem(ss.key(i)) || "";
-          if (_rqdomhSourceMatches(v, s)) return "sessionStorage";
+          if (_rqdomhSourceScore(v, s) > 0) return "sessionStorage";
         }
       }
     } catch (_) {}
@@ -139,8 +207,18 @@
     let i = 0;
     while (i < lines.length && /(_rqdomh|agent\.js)/.test(lines[i])) i++;
     if (i > 0) trimmed = lines.slice(i).join("\n");
+    // Bridge stores stacks up to 8192 chars; cap here so the relay
+    // postMessage stays well under the structured-clone limit.
+    if (trimmed.length > 8000) {
+      trimmed = trimmed.slice(0, 8000) + "\n... [truncated]";
+    }
 
-    const dkey = [kind, sink, source, pageUrl,
+    // SPA route changes between hook fire and report would otherwise
+    // leave the stored finding pointing at a stale URL; recapture now.
+    let nowUrl = pageUrl;
+    try { nowUrl = location.href || pageUrl; } catch (_) {}
+
+    const dkey = [kind, sink, source, nowUrl,
                   (trimmed.split("\n").find(s => s.trim()) || ""),
                   containsCanary ? "c" : "n"].join("|");
     if (seen.has(dkey)) return;
@@ -150,8 +228,8 @@
       kind: kind,
       sink: sink,
       source: source,
-      page_url: pageUrl,
-      frame_url: pageUrl,
+      page_url: nowUrl,
+      frame_url: nowUrl,
       value: v.length > 4096 ? v.slice(0, 4096) + "... [truncated]" : v,
       stack: trimmed,
       canary_seen: containsCanary,
@@ -225,6 +303,10 @@
   }
   if (window.HTMLIFrameElement) {
     wrapSetter(HTMLIFrameElement.prototype, "src", "HTMLIFrameElement.src");
+    // srcdoc renders a full HTML document inside the iframe; scripts in
+    // the string execute. Commonly missed in DOM-XSS reviews.
+    wrapSetter(HTMLIFrameElement.prototype, "srcdoc",
+               "HTMLIFrameElement.srcdoc");
   }
 
   wrapMethod(Element.prototype, "insertAdjacentHTML",
@@ -233,6 +315,39 @@
              "Element.setAttribute(on*)", 1);
   wrapMethod(document, "write",   "document.write",   0);
   wrapMethod(document, "writeln", "document.writeln", 0);
+
+  // DOMParser.parseFromString: a string parsed as HTML is risky once
+  // the resulting nodes are inserted live; flag the raw call so the
+  // operator can audit how the parsed tree is used downstream.
+  if (window.DOMParser && DOMParser.prototype) {
+    wrapMethod(DOMParser.prototype, "parseFromString",
+               "DOMParser.parseFromString", 0);
+  }
+  // Range.createContextualFragment: the string is parsed as HTML and
+  // scripts may execute when the resulting fragment is inserted.
+  if (window.Range && Range.prototype) {
+    wrapMethod(Range.prototype, "createContextualFragment",
+               "Range.createContextualFragment", 0);
+  }
+
+  // new Worker(url): the URL string can be javascript: or blob: that
+  // ends up running attacker code in a Worker context.
+  try {
+    const OrigWorker = window.Worker;
+    if (typeof OrigWorker === "function") {
+      function ProxiedWorker(url, opts) {
+        try {
+          const s = safeStr(url);
+          if (s.indexOf(CANARY) !== -1) {
+            report("finding", "Worker", detectSource(s), s, null);
+          }
+        } catch (_) {}
+        return new OrigWorker(url, opts);
+      }
+      ProxiedWorker.prototype = OrigWorker.prototype;
+      window.Worker = ProxiedWorker;
+    }
+  } catch (_) {}
 
   // window.eval can be hard to replace on some pages; try anyway.
   try {
@@ -300,39 +415,62 @@
   } catch (_) {}
 
   // ---------------- postMessage logger ----------------
+  //
+  // Wraps every "message" listener so the agent can log incoming
+  // payloads and stash canary-bearing data for detectSource(). We also
+  // wrap removeEventListener so the page's later removal call finds
+  // the wrapper we registered, instead of silently failing -- without
+  // this, long-lived SPAs accumulate stale message handlers.
 
   try {
     const origAdd = EventTarget.prototype.addEventListener;
+    const origRemove = EventTarget.prototype.removeEventListener;
+
     EventTarget.prototype.addEventListener = function _rqdomh_add(type, fn, opts) {
       if (type === "message" && typeof fn === "function") {
-        const wrapped = function (ev) {
-          try {
-            let data = ev && ev.data;
-            let dataStr;
+        let wrapped = messageListenerWrapMap.get(fn);
+        if (!wrapped) {
+          wrapped = function (ev) {
             try {
-              dataStr = typeof data === "string" ? data : JSON.stringify(data);
-            } catch (_) { dataStr = String(data); }
-            const hasCanary = (dataStr || "").indexOf(CANARY) !== -1;
-            if (hasCanary) {
-              // Stash for detectSource(); a sink that fires inside the
-              // handler chain triggered by this message can attribute
-              // back to "postMessage".
-              lastMessageWithCanary = dataStr || "";
-            }
-            postRelay({
-              kind: "message",
-              page_url: pageUrl,
-              origin: String((ev && ev.origin) || ""),
-              data: dataStr || "",
-              has_canary: hasCanary,
-              handler_stack: captureStack(),
-            });
-          } catch (_) {}
-          return fn.apply(this, arguments);
-        };
+              let data = ev && ev.data;
+              let dataStr;
+              try {
+                dataStr = typeof data === "string"
+                  ? data : JSON.stringify(data);
+              } catch (_) { dataStr = String(data); }
+              const hasCanary = (dataStr || "").indexOf(CANARY) !== -1;
+              if (hasCanary) _rqdomhPushMessageCanary(dataStr || "");
+              postRelay({
+                kind: "message",
+                page_url: pageUrl,
+                origin: String((ev && ev.origin) || ""),
+                data: dataStr || "",
+                has_canary: hasCanary,
+                handler_stack: captureStack(),
+              });
+            } catch (_) {}
+            return fn.apply(this, arguments);
+          };
+          messageListenerWrapMap.set(fn, wrapped);
+        }
         return origAdd.call(this, type, wrapped, opts);
       }
       return origAdd.apply(this, arguments);
+    };
+
+    EventTarget.prototype.removeEventListener = function _rqdomh_remove(type, fn, opts) {
+      if (type === "message" && typeof fn === "function") {
+        const wrapped = messageListenerWrapMap.get(fn);
+        if (wrapped) {
+          // Remove BOTH the wrapper and (defensively) the raw fn in
+          // case the page ever registered it directly before our hook
+          // was installed (race window at document_start).
+          try { origRemove.call(this, type, wrapped, opts); } catch (_) {}
+          try { origRemove.call(this, type, fn, opts); } catch (_) {}
+          return;
+        }
+      }
+      return origRemove.apply(this, arguments);
     };
   } catch (_) {}
 
