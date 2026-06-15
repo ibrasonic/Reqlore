@@ -1038,3 +1038,120 @@ def test_agent_js_no_longer_claims_referer_is_unsupported() -> None:
         "now that document.referrer auto-inject actually works."
     )
 
+
+# Source attribution -- detectSource() in agent.js
+#
+# Before this fix the agent hardcoded "unknown" as the source on every
+# sink-fire report, so the UI always showed "Source: unknown" even when
+# the canary obviously came from location.hash. agent.js now runs a
+# precedence-ordered detectSource(value) at sink-fire time. These tests
+# guard the wiring at the text level (we have no JS runtime in CI).
+
+
+def _read_agent_js() -> str:
+    from reqlore.dom_hunter.packager import find_extension_source
+    src = find_extension_source()
+    assert src is not None
+    return (src / "content" / "agent.js").read_text(encoding="utf-8")
+
+
+def test_agent_js_defines_detect_source() -> None:
+    agent = _read_agent_js()
+    assert "function detectSource(" in agent, (
+        "agent.js must define detectSource(value) to attribute sink "
+        "hits to a DOM source instead of always emitting 'unknown'."
+    )
+    assert "function _rqdomhSourceMatches(" in agent, (
+        "detectSource relies on _rqdomhSourceMatches() to compare a "
+        "source's content against the sink value."
+    )
+
+
+def test_agent_js_sink_reports_use_detect_source() -> None:
+    """Every report('finding', ...) call inside a sink wrapper MUST
+    pass detectSource(...) as the source argument. Any remaining
+    hardcoded 'unknown' would mean the finding UI shows 'Source:
+    unknown' even when the canary clearly came from a known source."""
+    agent = _read_agent_js()
+    import re
+    # Match: report("finding", <sink-expr>, <source-expr>, ...)
+    pattern = re.compile(
+        r'report\(\s*"finding"\s*,\s*[^,]+,\s*([^,]+?)\s*,',
+        re.MULTILINE,
+    )
+    matches = pattern.findall(agent)
+    assert matches, "expected at least one report('finding', ...) call"
+    bad = [m for m in matches if "detectSource(" not in m]
+    assert not bad, (
+        "every sink-fire report must use detectSource() for source "
+        f"attribution; found hardcoded source expressions: {bad!r}"
+    )
+
+
+def test_agent_js_detect_source_precedence_documented() -> None:
+    """The precedence order is load-bearing for attribution quality
+    when the user auto-injects into multiple sources at once (e.g.
+    both hash and search). Keep the comment in sync with the code."""
+    agent = _read_agent_js()
+    assert "precedence" in agent.lower(), (
+        "detectSource() must explain why one source wins over another."
+    )
+
+
+def test_agent_js_detect_source_emits_only_known_source_ids() -> None:
+    """Every literal source id returned by detectSource MUST exist in
+    reqlore.dom_hunter.SOURCE_INDEX -- otherwise the bridge will coerce
+    it back to 'unknown' on insert and the fix is silently undone."""
+    from reqlore.dom_hunter import SOURCE_INDEX
+    agent = _read_agent_js()
+    # Find the detectSource function body and grep the string literals
+    # returned from it.
+    import re
+    body_match = re.search(
+        r"function detectSource\([^)]*\)\s*\{(.+?)\n\s*\}\s*\n",
+        agent, re.DOTALL,
+    )
+    assert body_match, "could not locate detectSource() body in agent.js"
+    body = body_match.group(1)
+    returned_ids = set(re.findall(r'return\s+"([^"]+)"', body))
+    assert returned_ids, "detectSource() returns no string literals?"
+    unknown_ok = {"unknown"}
+    for sid in returned_ids - unknown_ok:
+        assert sid in SOURCE_INDEX, (
+            f"detectSource emits source id {sid!r} which is not in "
+            f"SOURCE_INDEX; the bridge will coerce it to 'unknown'."
+        )
+
+
+def test_agent_js_tracks_postmessage_canary_for_attribution() -> None:
+    """A sink that fires inside a postMessage handler chain should be
+    attributable to 'postMessage'. The agent stashes the most recent
+    canary-bearing message in a module-scope variable so detectSource()
+    can find it."""
+    agent = _read_agent_js()
+    assert "lastMessageWithCanary" in agent, (
+        "agent.js must track the most recent canary-bearing "
+        "postMessage data to attribute sink hits through it."
+    )
+    # The variable must be both written (in the postMessage logger) and
+    # read (in detectSource).
+    assert agent.count("lastMessageWithCanary") >= 2, (
+        "lastMessageWithCanary should be both written by the "
+        "postMessage logger and read by detectSource()."
+    )
+
+
+def test_dom_hunter_source_index_contains_all_attributable_sources() -> None:
+    """detectSource() emits these ids; SOURCE_INDEX must know them so
+    the bridge accepts and the UI labels them correctly."""
+    from reqlore.dom_hunter import SOURCE_INDEX
+    required = {
+        "location.hash", "location.search", "location.pathname",
+        "document.referrer", "window.name", "document.cookie",
+        "postMessage", "localStorage", "sessionStorage", "unknown",
+    }
+    missing = required - set(SOURCE_INDEX)
+    assert not missing, (
+        f"SOURCE_INDEX missing ids that detectSource() can emit: {missing!r}"
+    )
+

@@ -28,6 +28,11 @@
   let pageUrl = "";
   try { pageUrl = location.href; } catch (_) { /* sandboxed frame */ }
 
+  // Most recent postMessage payload (string form) whose data contained
+  // the canary. Used by detectSource() to attribute sink hits that came
+  // through a web-message handler.
+  let lastMessageWithCanary = "";
+
   // ---------------- helpers ----------------
 
   function safeStr(v) {
@@ -47,6 +52,81 @@
     try {
       window.postMessage({ __rqdomh: RELAY_TAG, payload: payload }, "*");
     } catch (_) { /* page may have frozen postMessage; nothing we can do */ }
+  }
+
+  // ---------------- source attribution ----------------
+  //
+  // When a sink fires we know the value contains CANARY, but not where
+  // the page got it from. Check every DOM source the agent can read and
+  // pick the highest-precedence one whose content overlaps the sink
+  // value. Precedence below is ordered by typical DOM-XSS attribution
+  // accuracy: pure-DOM vectors (hash, postMessage, window.name) before
+  // cross-cutting ones (referrer, search, cookie, storage), so that
+  // when the user auto-injects into multiple sources at once we still
+  // attribute the finding to the most likely real-world attacker path.
+  // All IDs returned MUST exist in reqlore.dom_hunter.SOURCE_INDEX or
+  // the bridge will coerce them back to "unknown".
+
+  function _rqdomhSourceMatches(srcVal, needle) {
+    if (!srcVal || srcVal.indexOf(CANARY) === -1) return false;
+    if (!needle) return false;
+    if (srcVal.indexOf(needle) !== -1) return true;
+    if (needle.indexOf(srcVal) !== -1) return true;
+    // Pages typically strip the leading '#' or '?' before using the
+    // source content (location.hash.slice(1), location.search.slice(1)).
+    if (srcVal.charCodeAt(0) === 35 /* # */
+        || srcVal.charCodeAt(0) === 63 /* ? */) {
+      const stripped = srcVal.slice(1);
+      if (stripped && (needle.indexOf(stripped) !== -1
+                        || stripped.indexOf(needle) !== -1)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function detectSource(value) {
+    const s = safeStr(value);
+    if (!s || s.indexOf(CANARY) === -1) return "unknown";
+
+    let h = "", q = "", p = "", ref = "", n = "", c = "";
+    try { h = location.hash || ""; } catch (_) {}
+    try { q = location.search || ""; } catch (_) {}
+    try { p = location.pathname || ""; } catch (_) {}
+    try { ref = document.referrer || ""; } catch (_) {}
+    try { n = window.name || ""; } catch (_) {}
+    try { c = document.cookie || ""; } catch (_) {}
+
+    if (_rqdomhSourceMatches(h, s)) return "location.hash";
+    if (lastMessageWithCanary
+        && _rqdomhSourceMatches(lastMessageWithCanary, s)) return "postMessage";
+    if (_rqdomhSourceMatches(n, s)) return "window.name";
+    if (_rqdomhSourceMatches(ref, s)) return "document.referrer";
+    if (_rqdomhSourceMatches(q, s)) return "location.search";
+    if (_rqdomhSourceMatches(c, s)) return "document.cookie";
+    if (_rqdomhSourceMatches(p, s)) return "location.pathname";
+
+    // Storage scan is bounded and only fires when nothing else matched.
+    try {
+      const ls = window.localStorage;
+      if (ls) {
+        for (let i = 0; i < ls.length; i++) {
+          const v = ls.getItem(ls.key(i)) || "";
+          if (_rqdomhSourceMatches(v, s)) return "localStorage";
+        }
+      }
+    } catch (_) {}
+    try {
+      const ss = window.sessionStorage;
+      if (ss) {
+        for (let i = 0; i < ss.length; i++) {
+          const v = ss.getItem(ss.key(i)) || "";
+          if (_rqdomhSourceMatches(v, s)) return "sessionStorage";
+        }
+      }
+    } catch (_) {}
+
+    return "unknown";
   }
 
   function report(kind, sink, source, value, extra) {
@@ -95,7 +175,7 @@
           try {
             const s = safeStr(v);
             if (s.indexOf(CANARY) !== -1) {
-              report("finding", sinkName, "unknown", s, null);
+              report("finding", sinkName, detectSource(s), s, null);
             }
           } catch (_) {}
           return origSet.call(this, v);
@@ -123,10 +203,10 @@
               if (sinkName === "Element.setAttribute(on*)") {
                 const attr = String(arguments[0] || "").toLowerCase();
                 if (attr.indexOf("on") === 0) {
-                  report("finding", sinkName, "unknown", s, null);
+                  report("finding", sinkName, detectSource(s), s, null);
                 }
               } else {
-                report("finding", sinkName, "unknown", s, null);
+                report("finding", sinkName, detectSource(s), s, null);
               }
             }
           } catch (_) {}
@@ -159,8 +239,9 @@
     const origEval = window.eval;
     window.eval = function _rqdomh_eval(s) {
       try {
-        if (safeStr(s).indexOf(CANARY) !== -1) {
-          report("finding", "eval", "unknown", safeStr(s), null);
+        const v = safeStr(s);
+        if (v.indexOf(CANARY) !== -1) {
+          report("finding", "eval", detectSource(v), v, null);
         }
       } catch (_) {}
       return origEval(s);
@@ -173,7 +254,7 @@
     window.setTimeout = function _rqdomh_st(handler) {
       try {
         if (typeof handler === "string" && handler.indexOf(CANARY) !== -1) {
-          report("finding", "setTimeout(string)", "unknown", handler, null);
+          report("finding", "setTimeout(string)", detectSource(handler), handler, null);
         }
       } catch (_) {}
       return origST.apply(this, arguments);
@@ -184,7 +265,7 @@
     window.setInterval = function _rqdomh_si(handler) {
       try {
         if (typeof handler === "string" && handler.indexOf(CANARY) !== -1) {
-          report("finding", "setInterval(string)", "unknown", handler, null);
+          report("finding", "setInterval(string)", detectSource(handler), handler, null);
         }
       } catch (_) {}
       return origSI.apply(this, arguments);
@@ -198,7 +279,7 @@
       try {
         const body = arguments[arguments.length - 1];
         if (typeof body === "string" && body.indexOf(CANARY) !== -1) {
-          report("finding", "Function", "unknown", body, null);
+          report("finding", "Function", detectSource(body), body, null);
         }
       } catch (_) {}
       // Forward call to original; mimic both call and construct.
@@ -232,6 +313,12 @@
               dataStr = typeof data === "string" ? data : JSON.stringify(data);
             } catch (_) { dataStr = String(data); }
             const hasCanary = (dataStr || "").indexOf(CANARY) !== -1;
+            if (hasCanary) {
+              // Stash for detectSource(); a sink that fires inside the
+              // handler chain triggered by this message can attribute
+              // back to "postMessage".
+              lastMessageWithCanary = dataStr || "";
+            }
             postRelay({
               kind: "message",
               page_url: pageUrl,
