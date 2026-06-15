@@ -505,6 +505,16 @@ def cmd_browser(args: argparse.Namespace) -> int:
         from .storage import Project
         project = Project(project_path)
 
+    # When --project is supplied the DOM Hunter XPI gets sideloaded, which
+    # only works on Firefox builds that honour xpinstall.signatures.required
+    # (Dev Edition, Nightly, ESR, Unbranded). Default to Dev Edition in that
+    # case so it works out of the box, including under corporate IT policies
+    # that override the ExtensionSettings policy. Plain `reqlore browser`
+    # still defaults to the smaller Release build.
+    channel = getattr(args, "channel", None) or (
+        "devedition" if project is not None else "release"
+    )
+
     try:
         result = fxmod.run_browser(
             ca_path=ca_path,
@@ -515,6 +525,7 @@ def cmd_browser(args: argparse.Namespace) -> int:
             prefer_cache=not args.use_system,
             wait=args.wait,
             project=project,
+            channel=channel,
         )
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)
@@ -1188,6 +1199,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Use a pre-downloaded Mozilla zip/tar.xz instead of fetching.")
     pb2.add_argument("--use-system", action="store_true",
                      help="Prefer the host Firefox install over the managed cache.")
+    pb2.add_argument("--channel", choices=("release", "devedition"), default=None,
+                     help="Firefox release channel to download. Defaults to "
+                          "'devedition' when --project is given (required for "
+                          "the DOM Hunter sideload), else 'release'.")
     pb2.add_argument("--wait", action="store_true",
                      help="Block until Firefox exits (default: spawn and return).")
     pb2.set_defaults(func=cmd_browser)

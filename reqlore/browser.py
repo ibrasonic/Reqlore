@@ -43,6 +43,24 @@ ARCHIVE_BASE = "https://archive.mozilla.org/pub/firefox/releases"
 DEFAULT_TIMEOUT_S = 60.0
 DEFAULT_LANG = "en-US"
 
+# Per-channel download config. Release is the small, fast default. Dev
+# Edition is what we ship when DOM Hunter is enabled because it honours
+# `xpinstall.signatures.required=false` (Release / Beta do not, so an
+# unsigned, sideloaded XPI is silently dropped).
+CHANNELS: dict[str, dict[str, str]] = {
+    "release": {
+        "archive_base": "https://archive.mozilla.org/pub/firefox/releases",
+        "version_key": "LATEST_FIREFOX_VERSION",
+    },
+    "devedition": {
+        "archive_base": "https://archive.mozilla.org/pub/devedition/releases",
+        "version_key": "FIREFOX_DEVEDITION",
+    },
+}
+DEFAULT_CHANNEL = "release"
+# Version strings accept the optional Dev-Edition beta suffix (e.g. 143.0b9).
+_VERSION_RE = re.compile(r"^\d+\.\d+(\.\d+)?(b\d+)?$")
+
 
 # ---------------------------------------------------------------------------
 # Platform detection
@@ -172,28 +190,49 @@ def profile_root() -> Path:
     return cache_root().parent / "firefox-profile"
 
 
-def cached_install(version: str) -> Path:
-    """Path to the per-version extracted Firefox tree."""
-    return cache_root() / version
+def cached_install(version: str, *, channel: str = DEFAULT_CHANNEL) -> Path:
+    """Path to the per-version extracted Firefox tree.
+
+    Channel-keyed subdir so Release and Dev Edition can coexist in the
+    cache without colliding. Release stays at ``<cache>/<version>/`` for
+    backward compat with existing installs.
+    """
+    if channel == DEFAULT_CHANNEL:
+        return cache_root() / version
+    return cache_root() / channel / version
 
 
 # ---------------------------------------------------------------------------
 # Discovery
 # ---------------------------------------------------------------------------
 
-def find_firefox(*, prefer_cache: bool = True) -> Path | None:
+def find_firefox(*, prefer_cache: bool = True,
+                 channel: str | None = None) -> Path | None:
     """Return an absolute path to a usable firefox executable.
 
     If ``prefer_cache`` is True (the default) we prefer our managed cache
     over a host install — guarantees the user gets the policies.json setup.
+    When ``channel`` is given (``"release"`` / ``"devedition"``) we only
+    consider the cache subtree for that channel; ``None`` means "any".
     """
     spec = detect_platform()
     if prefer_cache and spec is not None:
-        root = cache_root()
-        if root.exists():
+        roots: list[Path] = []
+        cache = cache_root()
+        if channel == "devedition":
+            roots.append(cache / "devedition")
+        elif channel == "release":
+            roots.append(cache)
+        else:
+            roots.append(cache)
+            roots.append(cache / "devedition")
+        for root in roots:
+            if not root.exists():
+                continue
             # Pick the most-recent version dir that contains the exe.
             candidates = sorted(
-                (p for p in root.iterdir() if p.is_dir()),
+                (p for p in root.iterdir()
+                 if p.is_dir() and _VERSION_RE.match(p.name)),
                 key=lambda p: p.name, reverse=True,
             )
             for c in candidates:
@@ -219,40 +258,49 @@ def find_firefox(*, prefer_cache: bool = True) -> Path | None:
 # Download
 # ---------------------------------------------------------------------------
 
-def latest_version(timeout_s: float = DEFAULT_TIMEOUT_S) -> str:
-    """Fetch the current 'LATEST_FIREFOX_VERSION' string from Mozilla."""
+def latest_version(timeout_s: float = DEFAULT_TIMEOUT_S,
+                   *, channel: str = DEFAULT_CHANNEL) -> str:
+    """Fetch the current version string for ``channel`` from Mozilla."""
+    if channel not in CHANNELS:
+        raise ValueError(f"unknown Firefox channel: {channel!r}")
+    key = CHANNELS[channel]["version_key"]
     req = urllib.request.Request(
         VERSIONS_JSON_URL, headers={"User-Agent": "reqlore-browser/1.0"}
     )
     with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310
         data = json.loads(r.read().decode("utf-8"))
-    ver = data.get("LATEST_FIREFOX_VERSION")
-    if not isinstance(ver, str) or not re.match(r"^\d+\.\d+(\.\d+)?$", ver):
+    ver = data.get(key)
+    if not isinstance(ver, str) or not _VERSION_RE.match(ver):
         raise RuntimeError(f"unexpected version payload from Mozilla: {ver!r}")
     return ver
 
 
-def _build_archive_url(spec: PlatformSpec, version: str, lang: str) -> str:
+def _build_archive_url(spec: PlatformSpec, version: str, lang: str,
+                       *, channel: str = DEFAULT_CHANNEL) -> str:
+    base = CHANNELS[channel]["archive_base"]
     subdir = spec.archive_subdir.format(lang=lang)
     fname = spec.archive_name.format(ver=version)
-    # URL-encode the filename component (handles spaces in "Firefox Setup ...").
     quoted = urllib.parse.quote(fname)
-    return f"{ARCHIVE_BASE}/{version}/{subdir}/{quoted}"
+    return f"{base}/{version}/{subdir}/{quoted}"
 
 
-def _sha256_sums_url(version: str) -> str:
-    return f"{ARCHIVE_BASE}/{version}/SHA256SUMS"
+def _sha256_sums_url(version: str,
+                     *, channel: str = DEFAULT_CHANNEL) -> str:
+    base = CHANNELS[channel]["archive_base"]
+    return f"{base}/{version}/SHA256SUMS"
 
 
 def _fetch_expected_sha(version: str, archive_basename: str, lang: str,
-                        spec: PlatformSpec, timeout_s: float) -> str | None:
+                        spec: PlatformSpec, timeout_s: float,
+                        *, channel: str = DEFAULT_CHANNEL) -> str | None:
     """Parse Mozilla's SHA256SUMS file for the archive's expected hash.
 
     Returns None if the line isn't found (e.g. very old version layout) —
     we treat that as 'skip verification, log a warning'.
     """
     req = urllib.request.Request(
-        _sha256_sums_url(version), headers={"User-Agent": "reqlore-browser/1.0"}
+        _sha256_sums_url(version, channel=channel),
+        headers={"User-Agent": "reqlore-browser/1.0"}
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310
@@ -352,21 +400,29 @@ def download_firefox(*, version: str | None = None,
                      lang: str = DEFAULT_LANG,
                      timeout_s: float = DEFAULT_TIMEOUT_S,
                      archive_path: Path | None = None,
-                     force: bool = False) -> Path:
+                     force: bool = False,
+                     channel: str = DEFAULT_CHANNEL) -> Path:
     """Ensure a portable Firefox is available; return path to the exe.
 
     Parameters
     ----------
     version:
-        Pin a Firefox release (e.g. ``"127.0"``). Defaults to the current
-        LATEST_FIREFOX_VERSION from product-details.mozilla.org.
+        Pin a Firefox release (e.g. ``"127.0"``, or ``"143.0b9"`` for
+        Dev Edition). Defaults to the latest published version for the
+        requested ``channel`` (from product-details.mozilla.org).
     archive_path:
         If given, **skip the download** and use this local file (must be a
         Mozilla-format zip/tar.xz matching the host OS). Lets air-gapped
         users pre-stage the archive offline.
     force:
         Re-extract even if a cached install already exists.
+    channel:
+        ``"release"`` (default) or ``"devedition"``. Dev Edition is
+        required for DOM Hunter sideloading because Release / Beta
+        enforce extension signing.
     """
+    if channel not in CHANNELS:
+        raise ValueError(f"unknown Firefox channel: {channel!r}")
     spec = detect_platform()
     if spec is None:
         raise RuntimeError(
@@ -377,7 +433,7 @@ def download_firefox(*, version: str | None = None,
     if version is None:
         if archive_path is not None:
             m = re.search(
-                r"(?:firefox-|Firefox Setup )(\d+\.\d+(?:\.\d+)?)\."
+                r"(?:firefox-|Firefox Setup )(\d+\.\d+(?:\.\d+)?(?:b\d+)?)\."
                 r"(?:zip|tar\.xz|exe|msi)$",
                 archive_path.name,
             )
@@ -387,9 +443,9 @@ def download_firefox(*, version: str | None = None,
                 )
             version = m.group(1)
         else:
-            version = latest_version(timeout_s=timeout_s)
+            version = latest_version(timeout_s=timeout_s, channel=channel)
 
-    target = cached_install(version)
+    target = cached_install(version, channel=channel)
     exe = target / spec.exe_relpath
     if exe.exists() and not force:
         log.info("using cached Firefox %s at %s", version, exe)
@@ -403,12 +459,19 @@ def download_firefox(*, version: str | None = None,
         log.info("using local archive: %s", src)
     else:
         archive_name = spec.archive_name.format(ver=version)
-        url = _build_archive_url(spec, version, lang)
-        src = cache_root() / archive_name
+        url = _build_archive_url(spec, version, lang, channel=channel)
+        # Cache the installer under the channel subdir so different-channel
+        # downloads with the same filename pattern don't clobber each other.
+        installer_cache = (cache_root() if channel == DEFAULT_CHANNEL
+                           else cache_root() / channel)
+        installer_cache.mkdir(parents=True, exist_ok=True)
+        src = installer_cache / archive_name
         if not src.exists() or force:
             _download(url, src, timeout_s=timeout_s)
         # Verify against Mozilla's SHA256SUMS.
-        expected = _fetch_expected_sha(version, archive_name, lang, spec, timeout_s)
+        expected = _fetch_expected_sha(
+            version, archive_name, lang, spec, timeout_s, channel=channel,
+        )
         if expected:
             actual = _sha256_file(src)
             if actual.lower() != expected:
@@ -981,18 +1044,23 @@ def run_browser(*, ca_path: Path,
                 archive_path: Path | None = None,
                 prefer_cache: bool = True,
                 wait: bool = False,
-                project=None) -> LaunchResult:
+                project=None,
+                channel: str = DEFAULT_CHANNEL) -> LaunchResult:
     """End-to-end: find/download Firefox, install policies, spawn it.
 
     When ``project`` is supplied we also build the DOM Hunter XPI and
     force-install it into the Reqlore profile, pre-configured with the
-    project's bridge URL and bearer token.
+    project's bridge URL and bearer token. ``channel`` should be set to
+    ``"devedition"`` in that case so the sideload fallback works under
+    corporate ExtensionSettings policies (Release / Beta enforce signing
+    and silently drop the unsigned XPI).
 
     Returns a :class:`LaunchResult` so callers can show the user what was set.
     """
-    exe = find_firefox(prefer_cache=prefer_cache)
+    exe = find_firefox(prefer_cache=prefer_cache, channel=channel)
     if exe is None:
-        exe = download_firefox(version=version, archive_path=archive_path)
+        exe = download_firefox(version=version, archive_path=archive_path,
+                               channel=channel)
     leftover = ensure_linux_runtime(exe)
     if leftover:
         # ensure_linux_runtime already printed a friendly message; abort

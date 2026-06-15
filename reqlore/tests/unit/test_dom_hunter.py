@@ -420,16 +420,65 @@ def test_cmd_browser_with_project_passes_through_and_closes(
     args = argparse.Namespace(
         proxy_port=None, url=None, firefox_zip=None,
         firefox_version=None, use_system=False, wait=False,
-        project=str(proj_path),
+        project=str(proj_path), channel=None,
     )
     rc = reqlore_cli.cmd_browser(args)
 
     assert rc == 0
     assert captured.get("project") is not None
+    # With --project, the channel must default to devedition so the DOM
+    # Hunter sideload (unsigned XPI) actually loads -- Release/Beta enforce
+    # signing and silently drop it.
+    assert captured.get("channel") == "devedition"
     # Project must be closed after launch -- otherwise SQLite locks linger.
     proj = captured["project"]
     # Re-opening must work (i.e., the file isn't write-locked by us).
     Project(proj_path).close()
+
+
+def test_cmd_browser_without_project_uses_release_channel(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """No --project -> small Release Firefox is fine; no need for the
+    larger Dev Edition + sideload workaround."""
+    from reqlore import browser as fxmod
+    from reqlore import cli as reqlore_cli
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(fxmod, "is_wsl", lambda: False)
+
+    captured: dict[str, object] = {}
+
+    class _FakeResult:
+        pid = 1
+        exe = Path("/usr/bin/firefox")
+        profile = Path("/tmp/p")
+        policies = Path("/tmp/pol")
+
+    monkeypatch.setattr(fxmod, "run_browser",
+                        lambda **kw: captured.update(kw) or _FakeResult())
+
+    import argparse
+    args = argparse.Namespace(
+        proxy_port=None, url=None, firefox_zip=None,
+        firefox_version=None, use_system=False, wait=False,
+        project=None, channel=None,
+    )
+    rc = reqlore_cli.cmd_browser(args)
+    assert rc == 0
+    assert captured.get("channel") == "release"
+
+
+def test_cached_install_segregates_channels(tmp_path: Path,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    """Release stays at <cache>/<version>; Dev Edition lives under
+    <cache>/devedition/<version> so the two coexist without colliding."""
+    from reqlore import browser as fxmod
+    monkeypatch.setattr(fxmod, "cache_root", lambda: tmp_path)
+    release = fxmod.cached_install("127.0", channel="release")
+    devedition = fxmod.cached_install("143.0b9", channel="devedition")
+    assert release == tmp_path / "127.0"
+    assert devedition == tmp_path / "devedition" / "143.0b9"
 
 
 def test_run_browser_with_project_builds_xpi_and_installs_policies(
@@ -452,7 +501,8 @@ def test_run_browser_with_project_builds_xpi_and_installs_policies(
     # Pretend firefox is already installed.
     fake_exe = tmp_path / "firefox.exe"
     fake_exe.write_bytes(b"")
-    monkeypatch.setattr(fxmod, "find_firefox", lambda prefer_cache=True: fake_exe)
+    monkeypatch.setattr(fxmod, "find_firefox",
+                        lambda prefer_cache=True, channel=None: fake_exe)
     monkeypatch.setattr(fxmod, "ensure_linux_runtime", lambda exe: [])
     monkeypatch.setattr(fxmod, "ensure_profile", lambda *a, **k: tmp_path / "profile")
     monkeypatch.setattr(fxmod, "profile_root", lambda: tmp_path / "profile_root")
@@ -543,7 +593,8 @@ def test_run_browser_without_project_does_not_install_extension(
     ca.write_text("dummy")
     fake_exe = tmp_path / "firefox.exe"
     fake_exe.write_bytes(b"")
-    monkeypatch.setattr(fxmod, "find_firefox", lambda prefer_cache=True: fake_exe)
+    monkeypatch.setattr(fxmod, "find_firefox",
+                        lambda prefer_cache=True, channel=None: fake_exe)
     monkeypatch.setattr(fxmod, "ensure_linux_runtime", lambda exe: [])
     monkeypatch.setattr(fxmod, "ensure_profile", lambda *a, **k: tmp_path / "profile")
 
