@@ -1344,8 +1344,9 @@ def test_findings_table_action_link_is_short_with_descriptive_aria(app_and_clien
         "Verbose 'View finding N' text must move out of the visible "
         "column and into aria-label only."
     )
-    # aria-label preserves the descriptive context for screen readers.
-    assert f'aria-label="View finding {fid}:' in body
+    # aria-label gives the screen reader the finding id so the user knows
+    # which row they are activating; full details belong on the detail page.
+    assert f'aria-label="View finding {fid}"' in body
 
 
 def test_unixtime_filters_are_safe_on_bad_input(app_and_client):

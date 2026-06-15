@@ -85,7 +85,7 @@
         <td>{{ 'yes' if f.canary_seen else 'no' }}</td>
         <td>
           <a href="{{ url_for('dom_hunter.detail', fid=f.id) }}"
-             aria-label="View finding {{ f.id }}: {{ f.source }} into {{ f.sink }} on {{ f.page_url }}">
+             aria-label="View finding {{ f.id }}">
              View</a>
         </td>
       </tr>
