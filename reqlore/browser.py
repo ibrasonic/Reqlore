@@ -634,24 +634,40 @@ DOM_HUNTER_EXT_ID = "dom-hunter@ibrasonic.github.io"
 # Marker block we append to user.js so the upsert is idempotent.
 _DOM_HUNTER_PREFS_MARKER = "// >>> reqlore: DOM Hunter sideload prefs"
 _DOM_HUNTER_PREFS_END = "// <<< reqlore: DOM Hunter sideload prefs"
-# `xpinstall.signatures.required` deliberately omitted: the shipped
-# DOM Hunter XPI is Mozilla-signed and loads on Release/Beta without
-# any override. Users iterating on the unsigned extension source can
-# flip the pref themselves (or use a Dev Edition build that already
-# defaults it to false).
-_DOM_HUNTER_PREFS_BLOCK = (
-    _DOM_HUNTER_PREFS_MARKER + "\n"
+
+# Common prefs used regardless of signing state.
+_DOM_HUNTER_PREFS_COMMON = (
     # Sideloaded add-ons would normally appear DISABLED and prompt the
     # user; 0 = auto-enable everything we drop into the profile.
     'user_pref("extensions.autoDisableScopes", 0);\n'
     # 15 = SCOPE_PROFILE|SCOPE_USER|SCOPE_APPLICATION|SCOPE_SYSTEM, so
     # the profile-level XPI is in the enabled set.
     'user_pref("extensions.enabledScopes", 15);\n'
+)
+
+# Pref block for a Mozilla-signed XPI (Release / Beta / any channel):
+# no signature override needed. This is the safe default.
+_DOM_HUNTER_PREFS_BLOCK_SIGNED = (
+    _DOM_HUNTER_PREFS_MARKER + "\n"
+    + _DOM_HUNTER_PREFS_COMMON
+    + _DOM_HUNTER_PREFS_END + "\n"
+)
+
+# Pref block for a locally-built unsigned XPI: only effective on Dev
+# Edition / Nightly / ESR / Unbranded, where xpinstall.signatures.required
+# can be flipped. Release / Beta will still drop the add-on regardless.
+# We append this block only on the dev-iteration path so the managed
+# Release profile never weakens signature enforcement.
+_DOM_HUNTER_PREFS_BLOCK_UNSIGNED = (
+    _DOM_HUNTER_PREFS_MARKER + "\n"
+    + _DOM_HUNTER_PREFS_COMMON
+    + 'user_pref("xpinstall.signatures.required", false);\n'
     + _DOM_HUNTER_PREFS_END + "\n"
 )
 
 
-def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
+def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path,
+                       unsigned: bool = False) -> Path:
     """Copy the DOM Hunter XPI into the profile's extensions folder.
 
     Profile-sideload is the fallback path for environments where the
@@ -664,7 +680,10 @@ def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
     With the shipped Mozilla-signed XPI this works on every channel.
     With a locally-built unsigned XPI it only takes effect on Dev
     Edition / Nightly / ESR / Unbranded builds (Release / Beta drop
-    unsigned add-ons regardless of profile prefs).
+    unsigned add-ons regardless of profile prefs). Pass
+    ``unsigned=True`` so the prefs block also disables signature
+    enforcement -- this is gated on the channel by ``run_browser`` so
+    Release profiles never get that pref.
     """
     ext_dir = profile_dir / "extensions"
     ext_dir.mkdir(parents=True, exist_ok=True)
@@ -680,7 +699,7 @@ def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
     if dest.exists():
         try:
             if _files_equal(xpi_path, dest):
-                _ensure_dom_hunter_user_js(profile_dir)
+                _ensure_dom_hunter_user_js(profile_dir, unsigned=unsigned)
                 log.debug("DOM Hunter XPI already up to date -> %s", dest)
                 return dest
         except OSError:
@@ -714,7 +733,7 @@ def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
             f"then re-run). Underlying error: {exc}"
         ) from exc
 
-    _ensure_dom_hunter_user_js(profile_dir)
+    _ensure_dom_hunter_user_js(profile_dir, unsigned=unsigned)
     log.info("DOM Hunter XPI sideloaded -> %s", dest)
     return dest
 
@@ -733,13 +752,20 @@ def _files_equal(a: Path, b: Path, *, chunk: int = 1 << 16) -> bool:
                 return True
 
 
-def _ensure_dom_hunter_user_js(profile_dir: Path) -> None:
-    """Idempotently append the DOM Hunter prefs block to user.js."""
+def _ensure_dom_hunter_user_js(profile_dir: Path, *,
+                               unsigned: bool = False) -> None:
+    """Idempotently append the DOM Hunter prefs block to user.js.
+
+    Picks the unsigned-XPI block (with signature override) only when
+    asked; the signed-XPI block is the default and never weakens
+    signature enforcement.
+    """
     user_js = profile_dir / "user.js"
     existing = user_js.read_text(encoding="utf-8") if user_js.exists() else ""
     if _DOM_HUNTER_PREFS_MARKER not in existing:
-        user_js.write_text(existing + "\n" + _DOM_HUNTER_PREFS_BLOCK,
-                           encoding="utf-8")
+        block = (_DOM_HUNTER_PREFS_BLOCK_UNSIGNED
+                 if unsigned else _DOM_HUNTER_PREFS_BLOCK_SIGNED)
+        user_js.write_text(existing + "\n" + block, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -1146,6 +1172,7 @@ def run_browser(*, ca_path: Path,
     xpi_path: Path | None = None
     bridge_url: str | None = None
     token: str | None = None
+    xpi_is_unsigned = False
     if project is not None:
         try:
             from .dom_hunter import get_or_make_token
@@ -1156,7 +1183,18 @@ def run_browser(*, ca_path: Path,
             try:
                 token = get_or_make_token(project)
                 bridge_url = ui_url.rstrip("/")
-                signed = find_signed_xpi()
+                # On Dev Edition / Nightly / Unbranded we ALWAYS build
+                # a fresh XPI from the in-tree extension source so a
+                # developer iterating on agent.js gets their latest
+                # code -- not the stale signed XPI bundled for Release
+                # users. Release / Beta enforce signing, so for those
+                # we must use the bundled signed XPI (and fall back to
+                # the unsigned build only if no signed XPI is bundled,
+                # with a clear warning that it won't load on Release).
+                ch = (channel or "release").lower()
+                dev_channel = ch in ("devedition", "nightly", "unbranded")
+                signed = None if dev_channel else find_signed_xpi()
+                xpi_is_unsigned = False
                 if signed is not None:
                     # The signed XPI is small, immutable and already on
                     # disk inside the package. Copy it to a stable path
@@ -1172,16 +1210,24 @@ def run_browser(*, ca_path: Path,
                 else:
                     xpi_dir = profile_root().parent / "dom-hunter"
                     xpi_path = build_xpi(out_path=xpi_dir / "dom-hunter.xpi")
-                    log.warning(
-                        "Signed DOM Hunter XPI not bundled; built an "
-                        "unsigned XPI from source. This only loads on "
-                        "Firefox Dev Edition / Nightly / ESR / Unbranded; "
-                        "use --channel devedition."
-                    )
-                    log.info("DOM Hunter (unsigned) XPI built: %s", xpi_path)
+                    xpi_is_unsigned = True
+                    if dev_channel:
+                        log.info(
+                            "DOM Hunter (unsigned, dev) XPI built from "
+                            "in-tree source: %s", xpi_path,
+                        )
+                    else:
+                        log.warning(
+                            "Signed DOM Hunter XPI not bundled; built an "
+                            "unsigned XPI from source. This only loads on "
+                            "Firefox Dev Edition / Nightly / ESR / Unbranded; "
+                            "use --channel devedition."
+                        )
+                        log.info("DOM Hunter (unsigned) XPI built: %s", xpi_path)
             except (OSError, FileNotFoundError) as exc:
                 log.warning("DOM Hunter auto-install skipped: %s", exc)
                 xpi_path = None
+                xpi_is_unsigned = False
 
     install_policies(
         exe=exe, ca_path=ca_path,
@@ -1198,7 +1244,8 @@ def run_browser(*, ca_path: Path,
         # entry (HKLM\\SOFTWARE\\Policies\\Mozilla\\Firefox\\ExtensionSettings
         # replaces our distribution/policies.json entry wholesale).
         try:
-            sideload_dom_hunter(profile_dir=profile, xpi_path=xpi_path)
+            sideload_dom_hunter(profile_dir=profile, xpi_path=xpi_path,
+                                unsigned=xpi_is_unsigned)
             log.info("DOM Hunter sideloaded into profile: %s",
                      profile / "extensions" / f"{DOM_HUNTER_EXT_ID}.xpi")
         except PermissionError as exc:

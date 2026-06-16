@@ -505,12 +505,14 @@ def cmd_browser(args: argparse.Namespace) -> int:
         from .storage import Project
         project = Project(project_path)
 
-    # Firefox channel to use. Defaults to Release for everyone: the
-    # bundled DOM Hunter XPI is Mozilla-signed and loads on Release
-    # without any signature override. Users iterating on the unsigned
-    # extension source can opt into Dev Edition explicitly via
-    # --channel devedition.
-    channel = getattr(args, "channel", None) or "release"
+    # Firefox channel to use. Defaults to Dev Edition while iterating
+    # on a new in-tree extension build that has not yet been re-signed
+    # by Mozilla AMO -- only Dev / Nightly / ESR / Unbranded honour
+    # `xpinstall.signatures.required=false`, which the build_xpi() dev
+    # fallback path relies on. Once the in-tree extension version
+    # matches a bundled signed XPI again, this default can flip back
+    # to 'release'.
+    channel = getattr(args, "channel", None) or "devedition"
 
     try:
         result = fxmod.run_browser(
@@ -1198,9 +1200,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Prefer the host Firefox install over the managed cache.")
     pb2.add_argument("--channel", choices=("release", "devedition"), default=None,
                      help="Firefox release channel to download. Defaults to "
-                          "'release' (the bundled DOM Hunter XPI is signed "
-                          "and loads on Release). Use 'devedition' only when "
-                          "iterating on an unsigned local extension build.")
+                          "'devedition' while a newer in-tree extension build "
+                          "is being verified (Dev Edition loads the unsigned "
+                          "build_xpi() fallback). Use 'release' once a matching "
+                          "Mozilla-signed XPI is bundled.")
     pb2.add_argument("--wait", action="store_true",
                      help="Block until Firefox exits (default: spawn and return).")
     pb2.set_defaults(func=cmd_browser)

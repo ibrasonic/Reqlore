@@ -139,6 +139,48 @@ AUTO_INJECT_TARGETS: list[tuple[str, str]] = [
     ("document.referrer", "document.referrer"),
 ]
 
+# Per-auto-inject-source canary tag suffix. When auto-injecting we
+# append "-<tag>" to the base canary so the agent can PROVE which
+# source a tainted value flowed through by exact substring match,
+# instead of guessing from canary co-occurrence across sources.
+# Single ASCII letter, URL-safe in fragment / query / Referer / name.
+CANARY_TAGS: dict[str, str] = {
+    "location.hash":     "h",
+    "location.search":   "s",
+    "window.name":       "n",
+    "document.referrer": "r",
+}
+CANARY_TAG_SEP = "-"
+
+
+def tagged_canary(canary: str, source_id: str) -> str:
+    """Return the canary variant the auto-inject path stamps into ``source_id``.
+
+    Falls back to the base canary when ``source_id`` is not an auto-inject
+    source (postMessage, document.cookie, storage, ...): those are
+    observation-only and there is nothing to tag.
+    """
+    if not canary:
+        return ""
+    tag = CANARY_TAGS.get(source_id)
+    if not tag:
+        return canary
+    return f"{canary}{CANARY_TAG_SEP}{tag}"
+
+
+def tagged_canaries(canary: str) -> dict[str, str]:
+    """Return ``{source_id: tagged_canary}`` for every auto-inject source.
+
+    The agent uses this map to (a) auto-inject the right variant into
+    each enabled source and (b) prove source attribution at sink-fire
+    time by exact-substring match. Missing or empty ``canary`` yields
+    an empty dict.
+    """
+    if not canary:
+        return {}
+    return {sid: f"{canary}{CANARY_TAG_SEP}{tag}"
+            for sid, tag in CANARY_TAGS.items()}
+
 
 def severity_rank(sev: str) -> int:
     try:

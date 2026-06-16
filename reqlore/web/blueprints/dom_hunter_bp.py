@@ -155,9 +155,16 @@ def settings():
 def bridge_config():
     """Extension polls this at install time and on every page load."""
     _check_token()
+    canary = S.get_or_make_canary(g.project)
     return jsonify({
         "enabled": S.is_enabled(g.project),
-        "canary": S.get_or_make_canary(g.project),
+        "canary": canary,
+        # Per-source tagged canary variants. The agent uses these to
+        # stamp a uniquely-identifiable string into each enabled
+        # auto-inject source, so source attribution at sink-fire time
+        # is provable by exact substring match (no heuristic co-
+        # occurrence guessing across sources).
+        "tagged_canaries": S.tagged_canaries(canary),
         "scope": S.get_scope(g.project),
         "auto_inject": S.get_auto_inject(g.project),
         "sinks": [s["id"] for s in S.SINKS],

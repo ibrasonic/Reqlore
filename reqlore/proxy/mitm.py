@@ -142,8 +142,15 @@ class _HistoryAddon:
                 from .. import dom_hunter as _dh
                 if _dh.should_inject_referer(self.project, host):
                     cur = list(req.headers.items())
+                    # Use the "-r" tagged canary variant so DOM Hunter's
+                    # source attribution can prove the value flowed in
+                    # via the Referer header (exact substring match)
+                    # instead of guessing from co-occurrence with
+                    # location.hash / search / window.name.
+                    base = _dh.get_or_make_canary(self.project)
                     new = _dh.inject_referer_canary(
-                        cur, _dh.get_or_make_canary(self.project),
+                        cur,
+                        _dh.tagged_canary(base, "document.referrer"),
                     )
                     if new != cur:
                         req.headers.clear()

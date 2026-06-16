@@ -227,6 +227,17 @@ def test_bridge_config_with_correct_token(app_and_client):
     assert body["scope"] == ["example.com"]
     assert body["auto_inject"] == ["location.hash"]
     assert isinstance(body["sinks"], list) and "eval" in body["sinks"]
+    # Per-source tagged canaries must be wired through so the content
+    # script can deterministically attribute findings instead of guessing
+    # via substring heuristics.
+    tagged = body.get("tagged_canaries")
+    assert isinstance(tagged, dict)
+    assert set(tagged.keys()) == {
+        "location.hash", "location.search", "window.name", "document.referrer",
+    }
+    for src, tag in [("location.hash", "h"), ("location.search", "s"),
+                     ("window.name", "n"), ("document.referrer", "r")]:
+        assert tagged[src] == f"{canary}-{tag}", tagged
 
 
 def test_bridge_report_finding_inserts_and_dedupes(app_and_client):
@@ -655,20 +666,21 @@ def test_cmd_browser_with_project_passes_through_and_closes(
 
     assert rc == 0
     assert captured.get("project") is not None
-    # The bundled DOM Hunter XPI is Mozilla-signed and loads on stock
-    # Release, so --project no longer drags Dev Edition along by default.
-    assert captured.get("channel") == "release"
+    # While we iterate on a newer in-tree extension build that has not
+    # yet been re-signed by Mozilla AMO, --project defaults to Dev
+    # Edition so the unsigned build_xpi() fallback actually loads.
+    assert captured.get("channel") == "devedition"
     # Project must be closed after launch -- otherwise SQLite locks linger.
     proj = captured["project"]
     # Re-opening must work (i.e., the file isn't write-locked by us).
     Project(proj_path).close()
 
 
-def test_cmd_browser_without_project_uses_release_channel(
+def test_cmd_browser_without_project_uses_devedition_channel(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """No --project still defaults to Release Firefox -- the small,
-    fast download. Same default as the --project case now that the
-    bundled DOM Hunter XPI is signed."""
+    """No --project still defaults to Dev Edition for now: the
+    in-tree extension version is ahead of the bundled signed XPI,
+    so we need a channel that loads the unsigned build_xpi() XPI."""
     from reqlore import browser as fxmod
     from reqlore import cli as reqlore_cli
 
@@ -695,7 +707,7 @@ def test_cmd_browser_without_project_uses_release_channel(
     )
     rc = reqlore_cli.cmd_browser(args)
     assert rc == 0
-    assert captured.get("channel") == "release"
+    assert captured.get("channel") == "devedition"
 
 
 def test_cached_install_segregates_channels(tmp_path: Path,
@@ -816,6 +828,61 @@ def test_sideload_dom_hunter_is_idempotent(tmp_path: Path) -> None:
     user_js = (profile / "user.js").read_text(encoding="utf-8")
     # Marker appears exactly once even after two runs.
     assert user_js.count("// >>> reqlore: DOM Hunter sideload prefs") == 1
+
+
+def test_sideload_dom_hunter_signed_does_not_disable_signatures(
+        tmp_path: Path) -> None:
+    """Default sideload path (signed XPI) must NOT write the
+    `xpinstall.signatures.required=false` pref into user.js -- doing so
+    silently weakens add-on signing for every Firefox launched via
+    Reqlore."""
+    from reqlore import browser as fxmod
+    profile = tmp_path / "p"
+    profile.mkdir()
+    xpi = tmp_path / "src.xpi"
+    xpi.write_bytes(b"PK\x03\x04")
+    fxmod.sideload_dom_hunter(profile_dir=profile, xpi_path=xpi)
+    user_js = (profile / "user.js").read_text(encoding="utf-8")
+    assert 'xpinstall.signatures.required' not in user_js
+    assert 'extensions.autoDisableScopes' in user_js
+
+
+def test_sideload_dom_hunter_unsigned_disables_signatures(
+        tmp_path: Path) -> None:
+    """When the caller signals the XPI is unsigned (Dev/Nightly dev
+    iteration path), the prefs block must include the signature
+    override so the freshly-built in-tree XPI actually loads."""
+    from reqlore import browser as fxmod
+    profile = tmp_path / "p"
+    profile.mkdir()
+    xpi = tmp_path / "src.xpi"
+    xpi.write_bytes(b"PK\x03\x04")
+    fxmod.sideload_dom_hunter(profile_dir=profile, xpi_path=xpi,
+                              unsigned=True)
+    user_js = (profile / "user.js").read_text(encoding="utf-8")
+    assert 'user_pref("xpinstall.signatures.required", false);' in user_js
+    assert 'extensions.autoDisableScopes' in user_js
+
+
+def test_tagged_canaries_returns_per_source_variants() -> None:
+    """The per-source tagged-canary helpers must produce a stable
+    `<base>-<tag>` for each known source so the content script can
+    deterministically attribute findings without substring guessing."""
+    from reqlore import dom_hunter as dh
+
+    base = "rl_test123"
+    tagged = dh.tagged_canaries(base)
+    assert tagged == {
+        "location.hash":     f"{base}-h",
+        "location.search":   f"{base}-s",
+        "window.name":       f"{base}-n",
+        "document.referrer": f"{base}-r",
+    }
+    # Single-source helper agrees with the dict.
+    for src, value in tagged.items():
+        assert dh.tagged_canary(base, src) == value
+    # Unknown source IDs fall back to the base canary (no fabricated tag).
+    assert dh.tagged_canary(base, "no.such.source") == base
 
 
 def test_sideload_dom_hunter_skips_replace_when_already_up_to_date(
@@ -1084,8 +1151,11 @@ def test_proxy_request_hook_injects_referer_canary(tmp_path: Path) -> None:
     addon = _HistoryAddon(proj, rules=[], sync_hold=False, ui_port=8787)
     flow = _Flow()
     asyncio.run(addon.request(flow))
+    # The proxy hook stamps the per-source tagged variant ("-r" for
+    # document.referrer) so the agent can attribute the sink hit to
+    # the Referer source by exact substring match.
     assert flow.request.headers["Referer"] == \
-        f"https://example.com/prev?rqdomh={canary}"
+        f"https://example.com/prev?rqdomh={canary}-r"
     proj.close()
 
 
@@ -1223,12 +1293,16 @@ def test_agent_js_detect_source_emits_only_known_source_ids() -> None:
     from reqlore.dom_hunter import SOURCE_INDEX
     agent = _read_agent_js()
     import re
-    body_match = re.search(
-        r"function detectSource\([^)]*\)\s*\{(.+?)\n\s*\}\s*\n",
-        agent, re.DOTALL,
-    )
-    assert body_match, "could not locate detectSource() body in agent.js"
-    body = body_match.group(1)
+    start = agent.find("function detectSource(")
+    assert start != -1, "could not locate detectSource() in agent.js"
+    # Walk past the signature, then find the next top-level `function ` token
+    # so nested braces in the body do not truncate our slice. This keeps the
+    # test robust against future internal blocks (the new tagged-canary
+    # pass-1 added a nested `if (...) { ... }` that broke the old greedy
+    # regex).
+    after_sig = agent.index("{", start) + 1
+    next_fn = agent.find("\n  function ", after_sig)
+    body = agent[after_sig:next_fn] if next_fn != -1 else agent[after_sig:]
     # Every double-quoted string in the function body. We then filter
     # to the ones that look like a source id (dotted identifier, or
     # one of the bare source ids). The body contains many empty `""`

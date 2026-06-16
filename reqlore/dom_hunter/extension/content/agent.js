@@ -23,6 +23,20 @@
   if (!cfg.enabled || !cfg.canary) return;
 
   const CANARY = String(cfg.canary);
+  // {source_id: tagged_variant}. When the bridge ships this, the agent
+  // injects the tagged variant into each enabled source so attribution
+  // at sink-fire time is provable by exact-substring match (not a
+  // co-occurrence heuristic). Empty / missing => fall back to the
+  // base-canary heuristic in detectSource().
+  const TAGGED = (cfg.tagged_canaries && typeof cfg.tagged_canaries === "object")
+    ? cfg.tagged_canaries : {};
+  // Reverse lookup, ordered longest-tagged-value-first so we never
+  // mis-match a shorter prefix when two tagged canaries share a base.
+  const TAG_ENTRIES = Object.keys(TAGGED)
+    .filter(k => typeof TAGGED[k] === "string" && TAGGED[k].length > CANARY.length)
+    .map(k => [k, String(TAGGED[k])])
+    .sort((a, b) => b[1].length - a[1].length);
+
   const RELAY_TAG = "__rqdomh_relay__";
   const seen = new Set();
   let pageUrl = "";
@@ -145,6 +159,33 @@
     const s = safeStr(value);
     if (!s || s.indexOf(CANARY) === -1) return "unknown";
 
+    // ---- pass 1: deterministic tag match (preferred) ----
+    // When the bridge configured per-source tagged canaries, any
+    // tagged variant present in `s` is *proof* the value flowed
+    // through that source. No need to scan live source values, no
+    // co-occurrence ambiguity. Returns every tagged source found
+    // (multiple are possible if the page concatenated values from
+    // several inputs).
+    if (TAG_ENTRIES.length) {
+      const tagMatched = [];
+      const tagSeen = Object.create(null);
+      for (let i = 0; i < TAG_ENTRIES.length; i++) {
+        const sid = TAG_ENTRIES[i][0];
+        const tagged = TAG_ENTRIES[i][1];
+        if (!tagSeen[sid] && s.indexOf(tagged) !== -1) {
+          tagMatched.push(sid);
+          tagSeen[sid] = true;
+        }
+      }
+      if (tagMatched.length) return tagMatched.join(",");
+    }
+
+    // ---- pass 2: heuristic fallback (manual canary, no tags) ----
+    // The user pasted the bare canary into some source themselves
+    // (e.g. typed it into a form), or the bridge config predates
+    // tagged canaries. Scan every live source value and report any
+    // with bidirectional-substring overlap, preserving precedence
+    // order as display order.
     let h = "", q = "", p = "", ref = "", n = "", c = "";
     try { h = location.hash || ""; } catch (_) {}
     try { q = location.search || ""; } catch (_) {}
@@ -509,33 +550,45 @@
 
   try {
     const ai = Array.isArray(cfg.auto_inject) ? cfg.auto_inject : [];
+    // Helper: tagged variant if the bridge provided one; otherwise
+    // fall back to the base canary (older bridge / unknown source).
+    function _rqdomhInjectFor(id) {
+      const t = TAGGED[id];
+      return (typeof t === "string" && t.length) ? t : CANARY;
+    }
     if (ai.indexOf("location.hash") !== -1) {
+      const inj = _rqdomhInjectFor("location.hash");
       const h = location.hash || "";
-      if (h.indexOf(CANARY) === -1) {
-        // Append, don't replace: existing routes may matter.
-        try { location.hash = (h ? h + "&" : "#") + "rqdomh=" + CANARY; }
+      // Idempotent: don't re-inject if our tagged variant is already
+      // present (also prevents the bank-style hashchange feedback loop
+      // where the agent's inject re-triggers the page's hashchange
+      // handler on every navigation).
+      if (h.indexOf(inj) === -1) {
+        try { location.hash = (h ? h + "&" : "#") + "rqdomh=" + inj; }
         catch (_) {}
       }
     }
     if (ai.indexOf("location.search") !== -1) {
+      const inj = _rqdomhInjectFor("location.search");
       const s = location.search || "";
-      if (s.indexOf(CANARY) === -1) {
+      if (s.indexOf(inj) === -1) {
         try {
           const u = new URL(location.href);
-          u.searchParams.set("rqdomh", CANARY);
+          u.searchParams.set("rqdomh", inj);
           history.replaceState(null, "", u.toString());
         } catch (_) {}
       }
     }
     if (ai.indexOf("window.name") !== -1) {
-      try { if ((window.name || "").indexOf(CANARY) === -1) {
-        window.name = (window.name || "") + " " + CANARY;
+      const inj = _rqdomhInjectFor("window.name");
+      try { if ((window.name || "").indexOf(inj) === -1) {
+        window.name = (window.name || "") + " " + inj;
       } } catch (_) {}
     }
     // document.referrer is read-only from a content script. When the
     // user ticks the "document.referrer" auto-inject box, the Reqlore
-    // proxy's request hook splices the canary into the outgoing Referer
-    // header for in-scope requests instead. See
+    // proxy's request hook splices the canary (the "-r" tagged variant)
+    // into the outgoing Referer header for in-scope requests. See
     // reqlore.dom_hunter.inject_referer_canary.
   } catch (_) {}
 
