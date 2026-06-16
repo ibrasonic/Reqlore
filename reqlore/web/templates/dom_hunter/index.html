@@ -80,9 +80,17 @@
         <td><code>{{ f.page_url }}</code></td>
         <td><code>{{ f.sink }}</code></td>
         <td>
-          {% for sid in f.source.split(',') %}
-            <code>{{ sid.strip() }}</code>{% if not loop.last %} <span aria-hidden="true">+</span> {% endif %}
-          {% endfor %}
+          {% set _src_ids = f.source.split(',') | map('trim') | reject('equalto', '') | list %}
+          {% if _src_ids | length <= 1 %}
+            <code>{{ _src_ids[0] if _src_ids else 'unknown' }}</code>
+          {% else %}
+            <ul class="sources-list" aria-label="{{ _src_ids|length }} candidate sources for this sink">
+              {% for sid in _src_ids %}
+              <li><code>{{ sid }}</code></li>
+              {% endfor %}
+            </ul>
+            <span class="sources-note">(any of these could be the entry point)</span>
+          {% endif %}
         </td>
         <td>{{ f.severity }}</td>
         <td>{{ f.hit_count }}</td>

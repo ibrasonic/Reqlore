@@ -115,6 +115,24 @@ body {
   white-space: nowrap;
 }
 
+/* Multi-source list inside DOM Hunter table cells: compact stacked
+   bullets that read as a real list to AT but stay narrow visually. */
+.sources-list {
+  list-style: disc inside;
+  margin: 0;
+  padding: 0;
+}
+.sources-list > li {
+  margin: 0;
+  padding: 0;
+}
+.sources-note {
+  display: block;
+  margin: 0.25rem 0 0 0;
+  font-size: 0.85em;
+  color: var(--muted, #666);
+}
+
 /* Header / nav */
 .topbar {
   background: var(--bg);

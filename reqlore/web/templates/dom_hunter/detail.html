@@ -13,11 +13,18 @@
     <dt>Frame</dt>     <dd><code>{{ f.frame_url }}</code></dd>
     {% endif %}
     <dt>Sink</dt>      <dd><code>{{ f.sink }}</code></dd>
-    <dt>Source{% if ',' in f.source %}s{% endif %}</dt>
+    {% set _src_ids = f.source.split(',') | map('trim') | reject('equalto', '') | list %}
+    <dt>Source{% if _src_ids | length > 1 %}s{% endif %}</dt>
     <dd>
-      {% for sid in f.source.split(',') %}
-        <code>{{ sid.strip() }}</code>{% if not loop.last %} <span aria-hidden="true">+</span> {% endif %}
-      {% endfor %}
+      {% if _src_ids | length <= 1 %}
+        <code>{{ _src_ids[0] if _src_ids else 'unknown' }}</code>
+      {% else %}
+        <ul class="sources-list" aria-label="{{ _src_ids|length }} candidate sources for this sink">
+          {% for sid in _src_ids %}
+          <li><code>{{ sid }}</code></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
     </dd>
     <dt>Severity</dt>  <dd>{{ f.severity }}</dd>
     <dt>Hits</dt>      <dd>{{ f.hit_count }}</dd>
