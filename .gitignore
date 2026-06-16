@@ -71,6 +71,11 @@ _check.py
 _smoke_*
 -p/
 _push_to_github.ps1
+_amo_*.py
+
+# ---------- web-ext / AMO local state ----------
+reqlore/dom_hunter/extension/web-ext-artifacts/
+reqlore/dom_hunter/extension/.amo-upload-uuid
 
 # ---------- Docker volumes ----------
 .docker-data/
