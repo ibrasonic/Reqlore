@@ -77,9 +77,16 @@ Full per-finding page rendering, in order:
 #### How the *source* is attributed
 
 When a sink fires with the canary in the value, the agent runs
-`detectSource(value)` to figure out which DOM source the canary came
-from. It compares the value against the live content of every readable
-source and returns the highest-precedence match, in this order:
+`detectSource(value)` to figure out which DOM source(s) the canary
+came from. It compares the value against the live content of every
+readable source — also against `decodeURIComponent(...)` of each
+variant, so a page that URL-decodes `location.hash` before piping
+it into the sink still attributes back to `location.hash` instead
+of getting lost. **Every** source whose content has verified
+overlap with the value is reported, in precedence order, joined
+with commas (e.g. `location.hash,location.search` when the user
+has more than one auto-inject toggle on and the page reads more
+than one of them). The precedence list:
 
 1. `location.hash`
 2. `postMessage` — last canary-bearing `MessageEvent.data` seen on the page
@@ -88,17 +95,27 @@ source and returns the highest-precedence match, in this order:
 5. `location.search`
 6. `document.cookie`
 7. `location.pathname`
-8. bounded scan of `localStorage` keys
-9. bounded scan of `sessionStorage` keys
+8. bounded scan of `localStorage` keys *(only when no live source matched)*
+9. bounded scan of `sessionStorage` keys *(only when no live source matched)*
 10. `unknown` — canary reached the sink but the agent could not match it
     back to any readable source (e.g. the page derived the value from a
     `fetch` response). The finding is still recorded.
 
-Pure-DOM vectors (hash, postMessage, window.name) intentionally outrank
-cross-cutting ones (referrer, search, cookie, storage) so that with
-multiple auto-inject toggles on at once the finding is attributed to the
-channel a real attacker would most naturally use. A leading `#` or `?`
-stripped by the page before use is tolerated.
+Precedence is **display order**, not a tiebreaker: pure-DOM vectors
+(hash, postMessage, window.name) appear before cross-cutting ones
+(referrer, search, cookie, storage) so the channel a real attacker
+would most naturally use shows first in the list — but every
+channel the canary actually travelled through is recorded, so the
+user who ticks every auto-inject toggle to test them at once sees
+all of them on the finding. A leading `#` or `?` stripped by the
+page before use is tolerated. The web UI renders each source as
+its own `<code>` chip on the findings index and lists the
+plain-language explanation per source on the detail page.
+
+The `/dom-hunter/__bridge/report` endpoint validates each part of
+a comma-joined `source` against `SOURCE_INDEX`; unknown parts are
+dropped silently, and the field falls back to `"unknown"` if
+nothing survives validation.
 
 ### `/dom-hunter/messages` — `postMessage` log
 

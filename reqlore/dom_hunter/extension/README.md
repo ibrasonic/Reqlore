@@ -30,11 +30,17 @@ no custom widgets, no focus traps, no ARIA roles fighting the platform.
   `new Worker(url)`, `importScripts`, `DOMParser.parseFromString`,
   `Range.createContextualFragment` (18 sinks total).
 - Watches every wrapped sink for the project's canary string.
-- Attributes every hit back to a real source (`detectSource()` ranks
-  `location.hash`, `postMessage`, `window.name`, `document.referrer`,
-  `location.search`, `document.cookie`, `location.pathname`,
-  `localStorage`, `sessionStorage`; falls back to `unknown` when no
-  readable source matches the value).
+- Attributes every hit back to its real source(s) — `detectSource()`
+  walks `location.hash`, `postMessage`, `window.name`,
+  `document.referrer`, `location.search`, `document.cookie`,
+  `location.pathname`, `localStorage`, `sessionStorage` (in that
+  precedence order) and reports **every** source whose content
+  reached the sink, comma-joined (e.g. `location.hash,location.search`
+  when the user has multiple auto-inject toggles on and the page
+  reads more than one). Decoded variants of each source are tried
+  as well, so a hash the page URL-decoded before piping to the sink
+  still attributes to `location.hash`. Falls back to `unknown` when
+  no readable source matches.
 - Logs every `postMessage` event with origin, data, and handler stack.
 - Optionally injects the canary into `location.hash`, `location.search`,
   `window.name`, or `document.referrer` so source-to-sink flows surface
