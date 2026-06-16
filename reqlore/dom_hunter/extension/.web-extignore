@@ -1,0 +1,19 @@
+# Files excluded from `web-ext build` and `web-ext sign`.
+# Same syntax as .gitignore.
+
+# Lab pages used to test sinks during development -- never ship.
+tests/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*.orig
+*~
+
+# Repo-internal docs (the manifest is the source of truth for AMO).
+README.md
+
+# web-ext output (so re-running the build doesn't pack previous artifacts).
+web-ext-artifacts/

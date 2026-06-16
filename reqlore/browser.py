@@ -546,7 +546,7 @@ def _policies_dict(*, ca_path: Path, proxy_host: str, proxy_port: int,
         }
     }
     if dom_hunter_xpi is not None:
-        ext_id = "reqlore-dom-hunter@reqlore.local"
+        ext_id = DOM_HUNTER_EXT_ID
         pol["policies"]["ExtensionSettings"] = {
             ext_id: {
                 "installation_mode": "force_installed",
@@ -627,7 +627,7 @@ def ensure_profile(profile_dir: Path | None = None) -> Path:
     return p
 
 
-DOM_HUNTER_EXT_ID = "reqlore-dom-hunter@reqlore.local"
+DOM_HUNTER_EXT_ID = "dom-hunter@ibrasonic.github.io"
 
 # Marker block we append to user.js so the upsert is idempotent.
 _DOM_HUNTER_PREFS_MARKER = "// >>> reqlore: DOM Hunter sideload prefs"

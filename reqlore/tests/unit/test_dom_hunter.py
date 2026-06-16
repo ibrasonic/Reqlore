@@ -521,7 +521,8 @@ def test_browser_policy_embeds_dom_hunter(tmp_path: Path):
         dom_hunter_token="testtoken",
     )["policies"]
 
-    ext_id = "reqlore-dom-hunter@reqlore.local"
+    from reqlore.browser import DOM_HUNTER_EXT_ID
+    ext_id = DOM_HUNTER_EXT_ID
     assert "ExtensionSettings" in pol
     assert pol["ExtensionSettings"][ext_id]["installation_mode"] == "force_installed"
     assert pol["ExtensionSettings"][ext_id]["install_url"].startswith("file:")
@@ -576,7 +577,8 @@ def test_install_policies_writes_valid_json(tmp_path: Path):
     )
     assert out.exists()
     data = json.loads(out.read_text(encoding="utf-8"))
-    ext_id = "reqlore-dom-hunter@reqlore.local"
+    from reqlore.browser import DOM_HUNTER_EXT_ID
+    ext_id = DOM_HUNTER_EXT_ID
     assert data["policies"]["ExtensionSettings"][ext_id]["installation_mode"] \
         == "force_installed"
     assert data["policies"]["3rdparty"]["Extensions"][ext_id]["token"] == "abc"
