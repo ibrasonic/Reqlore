@@ -1,11 +1,23 @@
 """Package the DOM Hunter WebExtension into an XPI for auto-install.
 
-The XPI is a plain ZIP of the extension source folder. We use it together
-with Firefox's enterprise ``ExtensionSettings`` policy (set in
-:mod:`reqlore.browser`) to force-install the extension into Reqlore's
-managed profile. ``force_installed`` add-ons are exempt from Mozilla's
-signing requirement, which is exactly what we want for a self-hosted
-defensive-testing tool that the operator already trusts.
+Two install paths exist, in order of preference:
+
+  1. The Mozilla-signed XPI shipped under ``extension_signed/``. This
+     is the canonical install source: it loads on every Firefox channel
+     (Release, Beta, Dev Edition, Nightly, ESR, Android) without any
+     signature-enforcement workaround. :func:`find_signed_xpi` returns
+     it.
+
+  2. A freshly-zipped XPI built from the source tree under
+     ``extension/`` via :func:`build_xpi`. This is a development path:
+     the resulting XPI is unsigned and will only load on builds that
+     honour ``xpinstall.signatures.required=false`` (Dev Edition,
+     Nightly, ESR, Unbranded). Use it when iterating on extension code
+     between AMO releases.
+
+We use the chosen XPI together with Firefox's enterprise
+``ExtensionSettings`` policy (set in :mod:`reqlore.browser`) to
+force-install the extension into Reqlore's managed profile.
 """
 from __future__ import annotations
 
@@ -16,6 +28,31 @@ from pathlib import Path
 _SKIP_TOP_LEVEL = {"tests", "README.md"}
 
 
+def find_signed_xpi() -> Path | None:
+    """Locate the bundled Mozilla-signed XPI on disk, if any.
+
+    Returns:
+        Absolute path to the newest ``.xpi`` under
+        ``<reqlore-package>/dom_hunter/extension_signed/``, or ``None``
+        if the directory is missing / empty (e.g. an editable install
+        where the maintainer has not run ``web-ext sign`` yet).
+
+    The returned XPI carries Mozilla's signature (``META-INF/cose.sig``,
+    ``META-INF/mozilla.rsa``) and loads on stock Firefox Release without
+    requiring any signature-enforcement override.
+    """
+    here = Path(__file__).resolve().parent
+    signed_dir = here / "extension_signed"
+    if not signed_dir.is_dir():
+        return None
+    candidates = sorted(signed_dir.glob("*.xpi"))
+    if not candidates:
+        return None
+    # Newest by mtime so a freshly-shipped update wins over an older one
+    # if both happen to be on disk.
+    return max(candidates, key=lambda p: p.stat().st_mtime)
+
+
 def find_extension_source() -> Path | None:
     """Locate the DOM Hunter extension source folder on disk.
 
@@ -23,7 +60,7 @@ def find_extension_source() -> Path | None:
         Absolute path to the extension source directory, or ``None`` if
         not found. We look in two places, in order:
         1. ``<reqlore-package>/dom_hunter/extension/`` (the shipped
-           location — works for any pip / pipx install).
+           location -- works for any pip / pipx install).
         2. ``<repo>/extensions/dom-hunter/`` (legacy dev layout, kept
            for back-compat with older checkouts).
     """

@@ -43,10 +43,11 @@ ARCHIVE_BASE = "https://archive.mozilla.org/pub/firefox/releases"
 DEFAULT_TIMEOUT_S = 60.0
 DEFAULT_LANG = "en-US"
 
-# Per-channel download config. Release is the small, fast default. Dev
-# Edition is what we ship when DOM Hunter is enabled because it honours
-# `xpinstall.signatures.required=false` (Release / Beta do not, so an
-# unsigned, sideloaded XPI is silently dropped).
+# Per-channel download config. Release is the small, fast default and
+# now also the default when DOM Hunter is enabled, since the bundled
+# XPI is Mozilla-signed and loads on Release without any signature
+# override. Dev Edition stays as an opt-in via `--channel devedition`
+# for users who want to iterate on the unsigned extension source.
 CHANNELS: dict[str, dict[str, str]] = {
     "release": {
         "archive_base": "https://archive.mozilla.org/pub/firefox/releases",
@@ -418,8 +419,9 @@ def download_firefox(*, version: str | None = None,
         Re-extract even if a cached install already exists.
     channel:
         ``"release"`` (default) or ``"devedition"``. Dev Edition is
-        required for DOM Hunter sideloading because Release / Beta
-        enforce extension signing.
+        only needed when sideloading an *unsigned* DOM Hunter build
+        (development workflow); the shipped, Mozilla-signed XPI loads
+        on Release.
     """
     if channel not in CHANNELS:
         raise ValueError(f"unknown Firefox channel: {channel!r}")
@@ -632,12 +634,13 @@ DOM_HUNTER_EXT_ID = "dom-hunter@ibrasonic.github.io"
 # Marker block we append to user.js so the upsert is idempotent.
 _DOM_HUNTER_PREFS_MARKER = "// >>> reqlore: DOM Hunter sideload prefs"
 _DOM_HUNTER_PREFS_END = "// <<< reqlore: DOM Hunter sideload prefs"
+# `xpinstall.signatures.required` deliberately omitted: the shipped
+# DOM Hunter XPI is Mozilla-signed and loads on Release/Beta without
+# any override. Users iterating on the unsigned extension source can
+# flip the pref themselves (or use a Dev Edition build that already
+# defaults it to false).
 _DOM_HUNTER_PREFS_BLOCK = (
     _DOM_HUNTER_PREFS_MARKER + "\n"
-    # Allow loading unsigned XPIs from the profile's extensions/ folder.
-    # Honoured by Firefox Developer Edition, Nightly, ESR and Unbranded
-    # builds only; Release / Beta silently reject unsigned add-ons.
-    'user_pref("xpinstall.signatures.required", false);\n'
     # Sideloaded add-ons would normally appear DISABLED and prompt the
     # user; 0 = auto-enable everything we drop into the profile.
     'user_pref("extensions.autoDisableScopes", 0);\n'
@@ -649,7 +652,7 @@ _DOM_HUNTER_PREFS_BLOCK = (
 
 
 def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
-    """Copy the DOM Hunter XPI into the profile and enable unsigned loading.
+    """Copy the DOM Hunter XPI into the profile's extensions folder.
 
     Profile-sideload is the fallback path for environments where the
     ``ExtensionSettings`` enterprise policy is overridden by a corporate
@@ -658,9 +661,10 @@ def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path) -> Path:
 
     Returns the final on-disk XPI path inside the profile.
 
-    Caveat: signature enforcement can only be disabled on Firefox
-    Developer Edition, Nightly, ESR or Unbranded builds. On Release /
-    Beta the unsigned XPI will be silently dropped at launch.
+    With the shipped Mozilla-signed XPI this works on every channel.
+    With a locally-built unsigned XPI it only takes effect on Dev
+    Edition / Nightly / ESR / Unbranded builds (Release / Beta drop
+    unsigned add-ons regardless of profile prefs).
     """
     ext_dir = profile_dir / "extensions"
     ext_dir.mkdir(parents=True, exist_ok=True)
@@ -1107,12 +1111,13 @@ def run_browser(*, ca_path: Path,
                 channel: str = DEFAULT_CHANNEL) -> LaunchResult:
     """End-to-end: find/download Firefox, install policies, spawn it.
 
-    When ``project`` is supplied we also build the DOM Hunter XPI and
-    force-install it into the Reqlore profile, pre-configured with the
-    project's bridge URL and bearer token. ``channel`` should be set to
-    ``"devedition"`` in that case so the sideload fallback works under
-    corporate ExtensionSettings policies (Release / Beta enforce signing
-    and silently drop the unsigned XPI).
+    When ``project`` is supplied we also install the DOM Hunter add-on
+    into the Reqlore profile, pre-configured with the project's bridge
+    URL and bearer token. The bundled Mozilla-signed XPI is preferred
+    (loads on every channel); if it is missing -- e.g. an editable
+    install where the maintainer has not run ``web-ext sign`` yet --
+    we fall back to building an unsigned XPI from source, which only
+    loads on Dev Edition / Nightly / ESR / Unbranded.
 
     Returns a :class:`LaunchResult` so callers can show the user what was set.
     """
@@ -1136,16 +1141,36 @@ def run_browser(*, ca_path: Path,
     if project is not None:
         try:
             from .dom_hunter import get_or_make_token
-            from .dom_hunter.packager import build_xpi
+            from .dom_hunter.packager import build_xpi, find_signed_xpi
         except ImportError as exc:
             log.warning("DOM Hunter package unavailable, skipping auto-install: %s", exc)
         else:
             try:
                 token = get_or_make_token(project)
                 bridge_url = ui_url.rstrip("/")
-                xpi_dir = profile_root().parent / "dom-hunter"
-                xpi_path = build_xpi(out_path=xpi_dir / "dom-hunter.xpi")
-                log.info("DOM Hunter XPI built: %s", xpi_path)
+                signed = find_signed_xpi()
+                if signed is not None:
+                    # The signed XPI is small, immutable and already on
+                    # disk inside the package. Copy it to a stable path
+                    # under the profile root so the policies.json
+                    # ``install_url`` doesn't point at site-packages
+                    # (which gets clobbered on pip upgrade).
+                    xpi_dir = profile_root().parent / "dom-hunter"
+                    xpi_dir.mkdir(parents=True, exist_ok=True)
+                    xpi_path = xpi_dir / signed.name
+                    if not xpi_path.exists() or not _files_equal(signed, xpi_path):
+                        shutil.copy2(signed, xpi_path)
+                    log.info("DOM Hunter (signed) XPI staged: %s", xpi_path)
+                else:
+                    xpi_dir = profile_root().parent / "dom-hunter"
+                    xpi_path = build_xpi(out_path=xpi_dir / "dom-hunter.xpi")
+                    log.warning(
+                        "Signed DOM Hunter XPI not bundled; built an "
+                        "unsigned XPI from source. This only loads on "
+                        "Firefox Dev Edition / Nightly / ESR / Unbranded; "
+                        "use --channel devedition."
+                    )
+                    log.info("DOM Hunter (unsigned) XPI built: %s", xpi_path)
             except (OSError, FileNotFoundError) as exc:
                 log.warning("DOM Hunter auto-install skipped: %s", exc)
                 xpi_path = None
@@ -1166,14 +1191,8 @@ def run_browser(*, ca_path: Path,
         # replaces our distribution/policies.json entry wholesale).
         try:
             sideload_dom_hunter(profile_dir=profile, xpi_path=xpi_path)
-            log.info(
-                "DOM Hunter sideloaded into profile. Note: Release/Beta\n"
-                "  Firefox enforces extension signing and will reject the\n"
-                "  unsigned XPI. For the sideload to take effect, use\n"
-                "  Firefox Developer Edition, Nightly, ESR, or an Unbranded\n"
-                "  build. The ExtensionSettings policy path still works on\n"
-                "  Release when no competing HKLM policy is present."
-            )
+            log.info("DOM Hunter sideloaded into profile: %s",
+                     profile / "extensions" / f"{DOM_HUNTER_EXT_ID}.xpi")
         except PermissionError as exc:
             # XPI is locked by an already-running managed Firefox; the
             # in-use copy is almost certainly the one we wanted anyway,

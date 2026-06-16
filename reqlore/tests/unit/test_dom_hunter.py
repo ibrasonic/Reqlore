@@ -323,6 +323,29 @@ def test_packager_finds_extension_source():
     assert (src / "devtools" / "devtools.html").exists()
 
 
+def test_packager_finds_signed_xpi():
+    """The bundled, Mozilla-signed XPI must be discoverable -- this is
+    what `reqlore browser --project` ships into the managed profile so
+    the extension loads on stock Firefox Release without any signing
+    override."""
+    from reqlore.dom_hunter.packager import find_signed_xpi
+    signed = find_signed_xpi()
+    assert signed is not None, (
+        "extension_signed/*.xpi missing from the package; releases must "
+        "be built with `web-ext sign --channel=unlisted` and the result "
+        "copied into reqlore/dom_hunter/extension_signed/."
+    )
+    assert signed.suffix == ".xpi"
+    assert signed.is_file()
+    # Signed XPIs carry Mozilla's signature blocks; the unsigned build
+    # output does not, so this asserts we shipped the right file.
+    import zipfile
+    with zipfile.ZipFile(signed) as zf:
+        names = set(zf.namelist())
+    assert "META-INF/mozilla.rsa" in names
+    assert "META-INF/cose.sig" in names
+
+
 def test_packager_builds_xpi(tmp_path: Path):
     import zipfile
     from reqlore.dom_hunter.packager import build_xpi
@@ -632,10 +655,9 @@ def test_cmd_browser_with_project_passes_through_and_closes(
 
     assert rc == 0
     assert captured.get("project") is not None
-    # With --project, the channel must default to devedition so the DOM
-    # Hunter sideload (unsigned XPI) actually loads -- Release/Beta enforce
-    # signing and silently drop it.
-    assert captured.get("channel") == "devedition"
+    # The bundled DOM Hunter XPI is Mozilla-signed and loads on stock
+    # Release, so --project no longer drags Dev Edition along by default.
+    assert captured.get("channel") == "release"
     # Project must be closed after launch -- otherwise SQLite locks linger.
     proj = captured["project"]
     # Re-opening must work (i.e., the file isn't write-locked by us).
@@ -644,8 +666,9 @@ def test_cmd_browser_with_project_passes_through_and_closes(
 
 def test_cmd_browser_without_project_uses_release_channel(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """No --project -> small Release Firefox is fine; no need for the
-    larger Dev Edition + sideload workaround."""
+    """No --project still defaults to Release Firefox -- the small,
+    fast download. Same default as the --project case now that the
+    bundled DOM Hunter XPI is signed."""
     from reqlore import browser as fxmod
     from reqlore import cli as reqlore_cli
 
@@ -690,7 +713,7 @@ def test_cached_install_segregates_channels(tmp_path: Path,
 def test_run_browser_with_project_builds_xpi_and_installs_policies(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """End-to-end (mocked Firefox) check that run_browser with project=:
-      - calls build_xpi,
+      - locates or builds a DOM Hunter XPI,
       - forwards the resulting XPI + bridge URL + token to install_policies.
     Failure mode regression: any of these dropped -> extension shows up
     in Firefox unconfigured, options page editable, no auto-install."""
@@ -765,8 +788,14 @@ def test_run_browser_with_project_builds_xpi_and_installs_policies(
     assert sideloaded.exists(), \
         f"DOM Hunter not sideloaded into profile: {sideloaded}"
     user_js = (tmp_path / "profile" / "user.js").read_text(encoding="utf-8")
-    assert 'xpinstall.signatures.required' in user_js
+    # The signed-XPI flow must NOT disable signature enforcement -- that
+    # would weaken every Firefox launched via Reqlore for no benefit.
+    assert 'xpinstall.signatures.required' not in user_js
+    # Profile-level scopes still need to be enabled so the sideloaded
+    # XPI is auto-enabled instead of showing a 'do you want to enable'
+    # prompt on first launch.
     assert 'extensions.autoDisableScopes' in user_js
+    assert 'extensions.enabledScopes' in user_js
 
 
 def test_sideload_dom_hunter_is_idempotent(tmp_path: Path) -> None:
