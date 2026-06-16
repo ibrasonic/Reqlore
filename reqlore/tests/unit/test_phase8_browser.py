@@ -298,6 +298,9 @@ def test_launch_invokes_popen_with_profile(tmp_path, monkeypatch):
     assert "--profile" in captured["args"]
     assert str(profile) in captured["args"]
     assert "http://x/" in captured["args"]
+    # Suppresses the "older version of Firefox" downgrade dialog when a
+    # managed profile was previously opened with a newer build.
+    assert "--allow-downgrade" in captured["args"]
 
 
 # ---------------------------------------------------------------------------

@@ -1030,6 +1030,14 @@ def launch(*, exe: Path, profile_dir: Path, url: str,
         str(exe),
         "--no-remote",
         "--new-instance",
+        # Suppress the "You've launched an older version of Firefox"
+        # dialog that appears when the same managed profile was
+        # previously opened with a newer Firefox (e.g. the user's
+        # system Firefox, or our cached Dev Edition before we moved
+        # the default to Release). Without this, the user is stuck
+        # at a modal with "Create new profile" / "Exit" and the
+        # browser never reaches our policies / proxy settings.
+        "--allow-downgrade",
         "--profile", str(profile_dir),
         url,
     ]
