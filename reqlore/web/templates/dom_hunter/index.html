@@ -79,7 +79,11 @@
         <td><time datetime="{{ f.ts|unixtime_iso }}">{{ f.ts|unixtime_human }}</time></td>
         <td><code>{{ f.page_url }}</code></td>
         <td><code>{{ f.sink }}</code></td>
-        <td><code>{{ f.source }}</code></td>
+        <td>
+          {% for sid in f.source.split(',') %}
+            <code>{{ sid.strip() }}</code>{% if not loop.last %} <span aria-hidden="true">+</span> {% endif %}
+          {% endfor %}
+        </td>
         <td>{{ f.severity }}</td>
         <td>{{ f.hit_count }}</td>
         <td>{{ 'yes' if f.canary_seen else 'no' }}</td>

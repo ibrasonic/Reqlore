@@ -87,37 +87,58 @@
   // ---------------- source attribution ----------------
   //
   // When a sink fires we know value contains CANARY, but not which DOM
-  // source the page read it from. detectSource() consults every source
-  // the agent can observe and returns the BEST match: the candidate
-  // whose content has the largest verified overlap with value. Ties
-  // are broken by precedence (pure-DOM vectors before cross-cutting
-  // ones), which matches typical real-world DOM-XSS attribution when
-  // the user auto-injects into multiple sources at once.
+  // source(s) the page read it from. detectSource() consults every
+  // source the agent can observe and returns EVERY source whose
+  // content has a verified overlap with value -- joined with "," and
+  // ordered by precedence (pure-DOM vectors before cross-cutting
+  // ones). When the user auto-injects into multiple sources at once,
+  // all of them appear in the finding rather than one silently winning.
+  //
+  // The precedence order survives only as the display order when
+  // multiple sources match; it is no longer a tiebreaker that hides
+  // other matches.
   //
   // All IDs returned MUST exist in reqlore.dom_hunter.SOURCE_INDEX or
-  // the bridge coerces them to "unknown" on insert.
+  // the bridge drops them as "unknown".
 
-  // Overlap score using the bidirectional-substring heuristic. We
-  // deliberately don't compute true LCS (O(n*m) on 8K strings on every
-  // sink hit is too slow). Handles:
-  //   - source ⊂ value (page used the whole source)    -> len(source)
-  //   - value ⊂ source (page sliced part of source)    -> len(value)
-  //   - leading '#' or '?' stripped before use          -> as above on tail
-  // Returns 0 if no overlap; caller falls through to other candidates.
+  // Overlap score using the bidirectional-substring heuristic. Pages
+  // often decode the source (decodeURIComponent on location.hash) or
+  // encode the value (URLSearchParams stringifies) before the canary
+  // reaches the sink, so we also try the decoded and decoded-tail
+  // forms. Returns 0 if no overlap; caller falls through to other
+  // candidates.
+  function _rqdomhSafeDecode(s) {
+    try { return decodeURIComponent(s); } catch (_) { return ""; }
+  }
   function _rqdomhSourceScore(srcVal, needle) {
     if (!srcVal || !needle) return 0;
-    if (srcVal.indexOf(CANARY) === -1) return 0;
-    if (srcVal.indexOf(needle) !== -1) return needle.length;
-    if (needle.indexOf(srcVal) !== -1) return srcVal.length;
+    // Try raw, decoded, and (when prefixed with # or ?) the tail forms.
+    const variants = [srcVal];
+    const dec = _rqdomhSafeDecode(srcVal);
+    if (dec && dec !== srcVal) variants.push(dec);
     const c0 = srcVal.charCodeAt(0);
     if (c0 === 35 /* # */ || c0 === 63 /* ? */) {
       const tail = srcVal.slice(1);
       if (tail) {
-        if (needle.indexOf(tail) !== -1) return tail.length;
-        if (tail.indexOf(needle) !== -1) return needle.length;
+        variants.push(tail);
+        const tdec = _rqdomhSafeDecode(tail);
+        if (tdec && tdec !== tail) variants.push(tdec);
       }
     }
-    return 0;
+    let best = 0;
+    for (let i = 0; i < variants.length; i++) {
+      const v = variants[i];
+      if (!v) continue;
+      if (v.indexOf(CANARY) === -1) continue;
+      if (v.indexOf(needle) !== -1) {
+        if (needle.length > best) best = needle.length;
+        continue;
+      }
+      if (needle.indexOf(v) !== -1) {
+        if (v.length > best) best = v.length;
+      }
+    }
+    return best;
   }
 
   function detectSource(value) {
@@ -155,46 +176,56 @@
       ["location.pathname", initial.pathname]
     );
 
-    let bestId = "";
-    let bestScore = 0;
-    let bestRank = candidates.length + 1;
+    // Collect EVERY source id with a verified overlap. We keep the
+    // precedence order as display order but no longer let it hide
+    // other matches.
+    const matched = [];
+    const seenIds = Object.create(null);
     for (let rank = 0; rank < candidates.length; rank++) {
       const id = candidates[rank][0];
+      if (seenIds[id]) continue;
       const content = candidates[rank][1];
-      const score = _rqdomhSourceScore(content, s);
-      if (score > bestScore
-          || (score === bestScore && score > 0 && rank < bestRank)) {
-        bestScore = score;
-        bestId = id;
-        bestRank = rank;
+      if (_rqdomhSourceScore(content, s) > 0) {
+        matched.push(id);
+        seenIds[id] = true;
       }
     }
-    if (bestScore > 0) return bestId;
 
-    // Bounded storage scan: only runs when nothing else matched.
-    const STORAGE_SCAN_LIMIT = 200;
-    try {
-      const ls = window.localStorage;
-      if (ls) {
-        const n2 = Math.min(ls.length, STORAGE_SCAN_LIMIT);
-        for (let i = 0; i < n2; i++) {
-          const v = ls.getItem(ls.key(i)) || "";
-          if (_rqdomhSourceScore(v, s) > 0) return "localStorage";
+    // Bounded storage scan: only runs when nothing live matched. Two
+    // separate buckets (localStorage / sessionStorage) so each can
+    // appear independently.
+    if (matched.length === 0) {
+      const STORAGE_SCAN_LIMIT = 200;
+      try {
+        const ls = window.localStorage;
+        if (ls) {
+          const n2 = Math.min(ls.length, STORAGE_SCAN_LIMIT);
+          for (let i = 0; i < n2; i++) {
+            const v = ls.getItem(ls.key(i)) || "";
+            if (_rqdomhSourceScore(v, s) > 0) {
+              matched.push("localStorage");
+              break;
+            }
+          }
         }
-      }
-    } catch (_) {}
-    try {
-      const ss = window.sessionStorage;
-      if (ss) {
-        const n2 = Math.min(ss.length, STORAGE_SCAN_LIMIT);
-        for (let i = 0; i < n2; i++) {
-          const v = ss.getItem(ss.key(i)) || "";
-          if (_rqdomhSourceScore(v, s) > 0) return "sessionStorage";
+      } catch (_) {}
+      try {
+        const ss = window.sessionStorage;
+        if (ss) {
+          const n2 = Math.min(ss.length, STORAGE_SCAN_LIMIT);
+          for (let i = 0; i < n2; i++) {
+            const v = ss.getItem(ss.key(i)) || "";
+            if (_rqdomhSourceScore(v, s) > 0) {
+              matched.push("sessionStorage");
+              break;
+            }
+          }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
 
-    return "unknown";
+    if (matched.length === 0) return "unknown";
+    return matched.join(",");
   }
 
   function report(kind, sink, source, value, extra) {

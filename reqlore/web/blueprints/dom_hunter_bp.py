@@ -70,11 +70,16 @@ def detail(fid: int):
     row = g.project.get_dom_hunter_finding(fid)
     if not row:
         abort(404)
+    raw_source = row["source"] or ""
+    source_ids = [p.strip() for p in raw_source.split(",") if p.strip()]
+    source_metas = [
+        S.SOURCE_INDEX[s] for s in source_ids if s in S.SOURCE_INDEX
+    ]
     return render_template(
         "dom_hunter/detail.html",
         f=row,
         sink_meta=S.SINK_INDEX.get(row["sink"]),
-        source_meta=S.SOURCE_INDEX.get(row["source"]),
+        source_metas=source_metas,
     )
 
 
@@ -181,8 +186,18 @@ def bridge_report():
             if not sink:
                 abort(400, description="Missing sink id.")
         source = (body.get("source") or "unknown").strip() or "unknown"
-        if source not in S.SOURCE_INDEX:
-            source = "unknown"
+        # The agent may attribute a sink hit to multiple DOM sources
+        # at once (comma-joined in precedence order) when more than
+        # one source actually contained the canary that reached the
+        # sink. Validate each id independently against SOURCE_INDEX
+        # and drop unknowns; if nothing survives, fall back to
+        # "unknown".
+        parts = [p.strip() for p in source.split(",") if p.strip()]
+        parts = [p for p in parts if p in S.SOURCE_INDEX]
+        # De-duplicate while preserving precedence order.
+        seen_p: set[str] = set()
+        deduped = [p for p in parts if not (p in seen_p or seen_p.add(p))]
+        source = ",".join(deduped) if deduped else "unknown"
         severity = S.normalise_severity(
             body.get("severity") or S.SINK_INDEX.get(sink, {}).get("severity", "medium")
         )

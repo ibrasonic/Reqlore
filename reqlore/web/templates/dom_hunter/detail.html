@@ -13,7 +13,12 @@
     <dt>Frame</dt>     <dd><code>{{ f.frame_url }}</code></dd>
     {% endif %}
     <dt>Sink</dt>      <dd><code>{{ f.sink }}</code></dd>
-    <dt>Source</dt>    <dd><code>{{ f.source }}</code></dd>
+    <dt>Source{% if ',' in f.source %}s{% endif %}</dt>
+    <dd>
+      {% for sid in f.source.split(',') %}
+        <code>{{ sid.strip() }}</code>{% if not loop.last %} <span aria-hidden="true">+</span> {% endif %}
+      {% endfor %}
+    </dd>
     <dt>Severity</dt>  <dd>{{ f.severity }}</dd>
     <dt>Hits</dt>      <dd>{{ f.hit_count }}</dd>
     <dt>Canary seen in value?</dt>
@@ -23,11 +28,18 @@
   </dl>
 </section>
 
-{% if source_meta or sink_meta %}
+{% if source_metas or sink_meta %}
 <section aria-labelledby="plain-h">
   <h2 id="plain-h">In plain language</h2>
-  {% if source_meta %}
-  <p><strong>Source:</strong> {{ source_meta.label }} — {{ source_meta.plain }}</p>
+  {% for meta in source_metas %}
+  <p><strong>Source{% if source_metas|length > 1 %} {{ loop.index }}{% endif %}:</strong>
+     <code>{{ meta.id }}</code> &mdash; {{ meta.label }} &mdash; {{ meta.plain }}</p>
+  {% endfor %}
+  {% if source_metas and source_metas|length > 1 %}
+  <p>The canary that reached this sink was present in {{ source_metas|length }}
+     sources at the same time. Any one of them could have been the
+     channel the page used; all are recorded so you can pick the one
+     that best matches the page's actual code path on the stack below.</p>
   {% endif %}
   {% if sink_meta %}
   <p><strong>Sink:</strong> {{ sink_meta.label }} — {{ sink_meta.plain }}</p>

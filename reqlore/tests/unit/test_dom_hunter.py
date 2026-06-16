@@ -1163,23 +1163,34 @@ def test_agent_js_sink_reports_use_detect_source() -> None:
 
 
 def test_agent_js_detect_source_precedence_documented() -> None:
-    """The precedence order is load-bearing for attribution quality
-    when the user auto-injects into multiple sources at once (e.g.
-    both hash and search). Keep the comment in sync with the code."""
+    """The precedence order survives as the DISPLAY order when more
+    than one source contains the canary that reached the sink. The
+    comment must still call out precedence so a future reader does
+    not reshuffle the candidate list and silently change attribution
+    order in the UI."""
     agent = _read_agent_js()
     assert "precedence" in agent.lower(), (
-        "detectSource() must explain why one source wins over another."
+        "detectSource() must document its precedence-ordered display."
+    )
+    # When more than one source matches, ALL must be reported (joined),
+    # not just the highest-precedence one.
+    assert 'matched.join(",")' in agent, (
+        "detectSource() must join every matching source id, not pick "
+        "one winner -- otherwise the user who ticks every auto-inject "
+        "toggle sees only one of the channels the canary travelled "
+        "through."
     )
 
 
 def test_agent_js_detect_source_emits_only_known_source_ids() -> None:
-    """Every literal source id returned by detectSource MUST exist in
-    reqlore.dom_hunter.SOURCE_INDEX -- otherwise the bridge will coerce
-    it back to 'unknown' on insert and the fix is silently undone."""
+    """Every literal source id detectSource() can put into a finding
+    MUST exist in reqlore.dom_hunter.SOURCE_INDEX -- otherwise the
+    bridge will drop it on insert and the attribution is silently
+    lost. The agent now collects matches into matched[] and joins
+    them, so we scan the whole function body for source-id literals,
+    not just literal `return "...";` statements."""
     from reqlore.dom_hunter import SOURCE_INDEX
     agent = _read_agent_js()
-    # Find the detectSource function body and grep the string literals
-    # returned from it.
     import re
     body_match = re.search(
         r"function detectSource\([^)]*\)\s*\{(.+?)\n\s*\}\s*\n",
@@ -1187,14 +1198,47 @@ def test_agent_js_detect_source_emits_only_known_source_ids() -> None:
     )
     assert body_match, "could not locate detectSource() body in agent.js"
     body = body_match.group(1)
-    returned_ids = set(re.findall(r'return\s+"([^"]+)"', body))
-    assert returned_ids, "detectSource() returns no string literals?"
-    unknown_ok = {"unknown"}
-    for sid in returned_ids - unknown_ok:
-        assert sid in SOURCE_INDEX, (
-            f"detectSource emits source id {sid!r} which is not in "
-            f"SOURCE_INDEX; the bridge will coerce it to 'unknown'."
-        )
+    # Every double-quoted string in the function body. We then filter
+    # to the ones that look like a source id (dotted identifier, or
+    # one of the bare source ids). The body contains many empty `""`
+    # placeholders inside try/catch lines, so the literal-extraction
+    # regex must reject anything containing whitespace -- otherwise
+    # a pair of empty quotes on consecutive statements gets joined
+    # into one fake "literal" that spans them.
+    literals = set(re.findall(r'"([^"\s]+)"', body))
+    candidates = {
+        s for s in literals
+        if "." in s
+        or s in {"postMessage", "localStorage", "sessionStorage",
+                 "window.name"}
+    }
+    assert candidates, "detectSource() defines no source-id literals?"
+    allowed = set(SOURCE_INDEX) | {"unknown"}
+    bogus = candidates - allowed
+    assert not bogus, (
+        f"detectSource() emits source id(s) {sorted(bogus)!r} which "
+        f"are not in SOURCE_INDEX; the bridge will drop them."
+    )
+
+
+def test_agent_js_source_score_tolerates_decoded_source() -> None:
+    """Pages frequently decodeURIComponent(location.hash) before piping
+    it into a sink, so the raw `location.hash` string still has the
+    canary URL-encoded while the value at the sink is decoded. The
+    matcher must try the decoded form of every source variant -- if
+    it does not, `location.hash` is silently dropped from the
+    attribution and the user sees `location.search` (or worse,
+    `unknown`) for a hash-sourced bug."""
+    agent = _read_agent_js()
+    assert "_rqdomhSafeDecode" in agent, (
+        "_rqdomhSourceScore must consult a decoded variant of each "
+        "source value so URL-decoded payloads still attribute back to "
+        "the source they came from."
+    )
+    assert "decodeURIComponent" in agent, (
+        "agent.js must call decodeURIComponent somewhere in the "
+        "source-matching path."
+    )
 
 
 def test_agent_js_tracks_postmessage_canary_for_attribution() -> None:
@@ -1255,17 +1299,21 @@ def test_agent_js_snapshots_initial_source_values() -> None:
 
 def test_agent_js_uses_overlap_scoring_for_source_attribution() -> None:
     """When the canary is present in multiple sources (e.g. user has
-    auto-inject ticked for both hash and search) we should pick the
-    source whose content has the LARGEST verified overlap with the
-    sink value, not just first by precedence. This is the difference
-    between 'good guess' and 'reliable attribution'."""
+    auto-inject ticked for both hash and search) the agent must
+    surface EVERY matching source instead of guessing a single
+    winner. The score helper still exists so we can drop a source
+    with no verified overlap."""
     agent = _read_agent_js()
     assert "_rqdomhSourceScore" in agent, (
         "agent.js must define a source-score helper used by "
-        "detectSource() to pick the best candidate."
+        "detectSource() to gate each candidate."
     )
-    assert "bestScore" in agent and "bestId" in agent, (
-        "detectSource() must run a max-score selection over candidates."
+    # Each candidate with a positive score is pushed into matched[]
+    # rather than being passed through a single-winner comparison.
+    assert "matched.push(" in agent, (
+        "detectSource() must collect every matching source id "
+        "(matched.push) -- not pick one winner -- so all channels "
+        "the canary travelled through are visible in the finding."
     )
 
 
@@ -1449,5 +1497,150 @@ def test_detail_page_formats_unix_timestamp(app_and_client):
     body = page.data.decode("utf-8")
     assert "2026-06-15 18:35:17 UTC" in body
     assert ">1781548517<" not in body
+
+
+# Multi-source attribution -- bridge accepts comma-joined source ids
+#
+# When the user ticks every auto-inject toggle and the page reads
+# more than one of them, detectSource() now emits e.g.
+# "location.hash,location.search" instead of picking one winner. The
+# bridge must validate each part independently against SOURCE_INDEX
+# and the UI must render each part as its own chip.
+
+
+def test_bridge_accepts_comma_joined_multi_source(app_and_client):
+    """Bridge must store every known source id from a comma-joined
+    'source' value, in the order received, deduped."""
+    app, c = app_and_client
+    proj = app.extensions["reqlore_project"]
+    token = S.get_or_make_token(proj)
+    r = c.post("/dom-hunter/__bridge/report", json={
+        "kind": "finding",
+        "sink": "Element.innerHTML",
+        "source": "location.hash,location.search",
+        "severity": "high",
+        "canary_seen": True,
+        "page_url": "https://x/",
+        "value": "rqdomh-test",
+        "stack": "Error\n    at f (a.js:1:1)",
+    }, headers={"X-DOMHunter-Token": token})
+    assert r.status_code == 200
+    rows = proj.list_dom_hunter_findings()
+    assert len(rows) == 1
+    assert rows[0]["source"] == "location.hash,location.search"
+
+
+def test_bridge_drops_unknown_parts_from_multi_source(app_and_client):
+    """Unknown source ids in the middle of a comma-joined value must
+    be silently dropped, leaving the known parts. If nothing
+    survives, fall back to 'unknown' (not '')."""
+    app, c = app_and_client
+    proj = app.extensions["reqlore_project"]
+    token = S.get_or_make_token(proj)
+
+    # Mixed known + unknown.
+    r = c.post("/dom-hunter/__bridge/report", json={
+        "kind": "finding",
+        "sink": "eval",
+        "source": "location.hash,not-a-real-source,location.search",
+        "page_url": "https://x/a",
+        "value": "y", "stack": "",
+    }, headers={"X-DOMHunter-Token": token})
+    assert r.status_code == 200
+
+    # All-unknown.
+    r = c.post("/dom-hunter/__bridge/report", json={
+        "kind": "finding",
+        "sink": "eval",
+        "source": "nope,bogus",
+        "page_url": "https://x/b",
+        "value": "y2", "stack": "",
+    }, headers={"X-DOMHunter-Token": token})
+    assert r.status_code == 200
+
+    rows = proj.list_dom_hunter_findings()
+    by_url = {r["page_url"]: r["source"] for r in rows}
+    assert by_url["https://x/a"] == "location.hash,location.search"
+    assert by_url["https://x/b"] == "unknown"
+
+
+def test_bridge_dedupes_repeated_source_ids(app_and_client):
+    """`location.hash,location.hash` must collapse to `location.hash`
+    -- otherwise the live + snapshot pair the agent passes for
+    robustness would double-print on the UI."""
+    app, c = app_and_client
+    proj = app.extensions["reqlore_project"]
+    token = S.get_or_make_token(proj)
+    r = c.post("/dom-hunter/__bridge/report", json={
+        "kind": "finding",
+        "sink": "eval",
+        "source": "location.hash,location.hash,location.search",
+        "page_url": "https://x/",
+        "value": "z", "stack": "",
+    }, headers={"X-DOMHunter-Token": token})
+    assert r.status_code == 200
+    rows = proj.list_dom_hunter_findings()
+    assert rows[0]["source"] == "location.hash,location.search"
+
+
+def _seed_multi_source_finding(app, c, *, source: str = "location.hash,location.search"):
+    proj = app.extensions["reqlore_project"]
+    token = S.get_or_make_token(proj)
+    r = c.post("/dom-hunter/__bridge/report", json={
+        "kind": "finding",
+        "sink": "Element.innerHTML",
+        "source": source,
+        "severity": "high",
+        "canary_seen": True,
+        "page_url": "https://example.test/p",
+        "value": "<img src=x onerror=alert(1)>",
+        "stack": "Error\n    at f (page.js:1:1)",
+    }, headers={"X-DOMHunter-Token": token})
+    assert r.status_code == 200
+    return proj.list_dom_hunter_findings()[0]["id"]
+
+
+def test_findings_index_renders_each_source_as_its_own_chip(app_and_client):
+    """A finding with `source = "location.hash,location.search"` must
+    show BOTH source ids as separate <code> chips in the table, not
+    a single chip with a comma in it."""
+    app, c = app_and_client
+    _seed_multi_source_finding(app, c)
+    page = c.get("/dom-hunter/")
+    body = page.data.decode("utf-8")
+    assert "<code>location.hash</code>" in body
+    assert "<code>location.search</code>" in body
+    # Never as a single fused chip.
+    assert "<code>location.hash,location.search</code>" not in body
+
+
+def test_detail_page_lists_every_source_in_plain_language(app_and_client):
+    """Detail page must render the plain-language explanation for
+    EACH matched source, so the user can see what each channel
+    means without leaving the page."""
+    app, c = app_and_client
+    fid = _seed_multi_source_finding(app, c)
+    page = c.get(f"/dom-hunter/finding/{fid}")
+    body = page.data.decode("utf-8")
+    # Chip for each id appears in the summary dl.
+    assert "<code>location.hash</code>" in body
+    assert "<code>location.search</code>" in body
+    # Plain-language line per source.
+    assert "URL fragment (after #)" in body
+    assert "URL query (after ?)" in body
+    # Plural label so the user knows multiple sources matched.
+    assert "Sources" in body
+
+
+def test_detail_page_keeps_singular_label_for_one_source(app_and_client):
+    """The 'Source' label must stay singular for the common single-
+    source case; only switches to 'Sources' when more than one is
+    attributed."""
+    app, c = app_and_client
+    fid = _seed_multi_source_finding(app, c, source="location.hash")
+    page = c.get(f"/dom-hunter/finding/{fid}")
+    body = page.data.decode("utf-8")
+    assert ">Source<" in body  # singular dt label
+    assert ">Sources<" not in body
 
 
