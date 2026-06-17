@@ -443,6 +443,26 @@ button:disabled { opacity: 0.6; cursor: not-allowed; }
 .inline-form { display: inline; }
 .inline-form button { padding: 0.2rem 0.6rem; }
 
+/* Quick-presets list on Match & Replace: each preset is a checkbox with a
+   programmatically-associated help paragraph beneath it. Generous spacing
+   keeps the description legible (WCAG 1.4.8). */
+.preset-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.preset-list > li {
+  margin: 0 0 0.75rem 0;
+  padding: 0;
+}
+.preset-list .hint {
+  margin: 0.25rem 0 0 1.75rem;
+}
+.hint {
+  font-size: 0.95em;
+  opacity: 0.85;
+}
+
 /* Breadcrumb (WCAG 2.4.8 Location). */
 .breadcrumb {
   list-style: none;

@@ -5,6 +5,96 @@
 <p>Rewrite proxied traffic on the fly. Rules apply to live proxy flows only.
    Order is insertion order; first match wins per location.</p>
 
+<section aria-labelledby="presets-h">
+  <h2 id="presets-h">Quick presets</h2>
+  <p id="presets-help">
+    Each preset adds one or more Match &amp; Replace rules scoped to the host
+    you choose. The new rules appear in the table below where you can review,
+    edit, disable, or delete them.
+  </p>
+  <form method="post" action="{{ url_for('matchreplace.preset_apply') }}"
+        class="stack" aria-label="Apply quick presets" aria-describedby="presets-help">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <fieldset>
+      <legend>Host scope</legend>
+      <p>
+        <label for="preset-host">
+          Host filter <span aria-hidden="true">*</span>
+          <span class="visually-hidden">required</span>
+        </label>
+        <input id="preset-host" name="host_regex" required autocomplete="off"
+               aria-describedby="preset-host-help"
+               placeholder="^app\.example\.com$">
+      </p>
+      <p id="preset-host-help" class="hint">
+        Python regular expression for the target host. Anchor with
+        <code>^</code> at the start and <code>$</code> at the end (for example
+        <code>^api\.example\.com$</code>) so the rules do not match
+        attacker-controlled subdomains.
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Presets to apply</legend>
+      <ul class="preset-list">
+      {% for preset in presets %}
+        <li>
+          <label for="preset-{{ preset.slug }}">
+            <input id="preset-{{ preset.slug }}" type="checkbox"
+                   name="preset" value="{{ preset.slug }}"
+                   aria-describedby="preset-{{ preset.slug }}-desc">
+            <strong>{{ preset.title }}</strong>
+          </label>
+          <p id="preset-{{ preset.slug }}-desc" class="hint">
+            {{ preset.description }}
+          </p>
+        </li>
+      {% endfor %}
+      </ul>
+    </fieldset>
+
+    <button type="submit">Apply selected presets</button>
+  </form>
+
+  {% if active_presets %}
+  <h3 id="active-presets-h">Active presets</h3>
+  <table aria-labelledby="active-presets-h">
+    <caption class="visually-hidden">Presets currently in effect, grouped by host.</caption>
+    <thead>
+      <tr>
+        <th scope="col">Preset</th>
+        <th scope="col">Host filter</th>
+        <th scope="col">Rules</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for ap in active_presets %}
+      <tr>
+        <td>{{ ap.title }}</td>
+        <td><code>{{ ap.host or '(any host)' }}</code></td>
+        <td>{{ ap.count }}</td>
+        <td>
+          <form method="post" action="{{ url_for('matchreplace.preset_remove') }}"
+                class="inline-form"
+                onsubmit="return confirm('Remove this preset and its rules?');">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <input type="hidden" name="slug" value="{{ ap.slug }}">
+            <input type="hidden" name="host_regex" value="{{ ap.host }}">
+            <button type="submit" aria-label="Remove preset {{ ap.title }} for host {{ ap.host or 'any' }}">
+              Remove
+            </button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+
+<section aria-labelledby="custom-rule-h">
+<h2 id="custom-rule-h">Custom rule</h2>
 <form method="post" action="{{ url_for('matchreplace.add') }}" class="stack" aria-label="Add rule">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <fieldset>
@@ -43,8 +133,11 @@
     <button type="submit">Add rule</button>
   </fieldset>
 </form>
+</section>
 
-<table>
+<section aria-labelledby="rules-h">
+<h2 id="rules-h">Rules</h2>
+<table aria-labelledby="rules-h">
   <caption>Active rules</caption>
   <thead>
     <tr><th scope="col">#</th><th scope="col">On</th><th scope="col">Where</th>
@@ -79,4 +172,5 @@
   {% endfor %}
   </tbody>
 </table>
+</section>
 {% endblock %}

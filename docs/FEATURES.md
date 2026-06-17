@@ -36,6 +36,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | Intercept rules (host / method / status / CT) | ✅ | |
 | Sync + async hold queue | ✅ | SR-friendly forward / edit / drop. |
 | Match & Replace (req/resp, scoped, literal + regex) | ✅ | See [matchreplace.md](modules/matchreplace.md). |
+| Match & Replace Quick Presets (reveal hidden fields, strip CSP/XFO/HttpOnly, unlock inputs) | ✅ | One-click rule bundles, host-scoped. See [matchreplace.md](modules/matchreplace.md#quick-presets). |
 
 ## History & targeting
 

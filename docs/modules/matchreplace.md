@@ -23,15 +23,61 @@ headers / response body.
 5. *Replace with*: the replacement (regex backreferences `\1`, `\2` allowed when regex mode is on).
 6. *Comment*: human note.
 7. **Add rule**. The rule is live on the next proxied request — no restart.
+## Quick presets
 
+A short list of pre-baked rule bundles for common pen-test moves
+("reveal hidden form fields", "disable CSP", and so on). Each preset
+is just shorthand for one or more Match & Replace rules -- applying a
+preset inserts those rules into the table below, where you can review,
+edit, disable, or delete them like any other rule.
+
+**Safety**: presets require a non-empty `host_regex`. The server
+flashes "Choose a host filter before applying presets." if you leave it
+blank, rejects invalid regexes, and warns when the regex is not
+anchored (`^...$`) so a typo like `example.com` cannot match
+`evil-example.com.attacker.tld`.
+
+### Available presets
+
+| Preset                                | What it inserts                                                                              |
+|---------------------------------------|----------------------------------------------------------------------------------------------|
+| Reveal hidden form fields             | `resp_body` regex: `type=(["']?)hidden\1` -> `type=\1text\1` so `<input type="hidden">` becomes editable text. |
+| Strip readonly, disabled, maxlength   | Three `resp_body` regexes that remove the `readonly`, `disabled`, and `maxlength` HTML attributes. |
+| Disable Content Security Policy       | `resp_header` regex strips `Content-Security-Policy` and `Content-Security-Policy-Report-Only`. |
+| Allow framing (remove X-Frame-Options)| `resp_header` regex strips `X-Frame-Options` so the page can be loaded in an iframe (clickjacking PoCs). |
+| Strip HttpOnly from cookies           | `resp_header` regex removes `; HttpOnly` from `Set-Cookie` so JavaScript can read session cookies. |
+
+### How presets are tracked
+
+Applied presets are tagged in the rule's `comment` column with a
+sentinel of the form `__preset:<slug>__ <title>`. No new schema, no
+hidden state. The page reads those comments back to show an **Active
+presets** table grouped by `(preset, host)`, with a *Remove* button
+that deletes every rule sharing that `(slug, host_regex)` pair.
+
+If you edit the `host_regex` of a preset-tagged rule by hand, *Remove*
+will no longer find that rule -- it groups by the exact host string the
+rule currently carries.
+
+### Workflow
+
+1. Type a host filter (anchored: `^app.example.com$`).
+2. Tick one or more preset checkboxes.
+3. **Apply selected presets** -- the rules appear in the rules table
+   with their `__preset:...__` comment.
+4. Browse the target. Rules apply on the next proxied request.
+5. To revert: in *Active presets*, click **Remove** next to the
+   `(preset, host)` row.
 ## Routes
 
-| URL                              | Method | What it does                                |
-|----------------------------------|--------|---------------------------------------------|
-| `/match-replace/`                | GET    | List all rules + add-rule form.              |
-| `/match-replace/add`             | POST   | Insert a new rule.                           |
-| `/match-replace/<id>/toggle`     | POST   | Flip `enabled` 0/1 on the rule.              |
-| `/match-replace/<id>/delete`     | POST   | Remove the rule.                             |
+| URL                              | Method | What it does                                                                       |
+|----------------------------------|--------|------------------------------------------------------------------------------------|
+| `/match-replace/`                | GET    | Quick presets + add-rule form + rules table.                                       |
+| `/match-replace/add`             | POST   | Insert a new rule.                                                                  |
+| `/match-replace/<id>/toggle`     | POST   | Flip `enabled` 0/1 on the rule.                                                     |
+| `/match-replace/<id>/delete`     | POST   | Remove the rule.                                                                    |
+| `/match-replace/preset/apply`    | POST   | Insert one or more Quick Preset bundles, scoped to a required host filter.          |
+| `/match-replace/preset/remove`   | POST   | Delete every rule belonging to one `(preset, host)` pair.                           |
 
 ## Form fields
 
@@ -82,16 +128,37 @@ proxy restart.
 
 ## Accessibility notes
 
+- The page is split into three landmark sections via `<section
+  aria-labelledby="...">` headings: *Quick presets*, *Custom rule*,
+  *Rules*.
+- Quick presets form: `<form aria-label="Apply quick presets"
+  aria-describedby="presets-help">`. Host scope and presets are
+  grouped in their own `<fieldset><legend>` blocks. Each preset
+  checkbox carries `aria-describedby` pointing at a sibling `<p
+  class="hint">` so screen readers announce the description after the
+  label.
+- *Host filter* input is marked `required`; the visible `*` is hidden
+  from assistive tech (`aria-hidden="true"`) and paired with a
+  `visually-hidden` "required" span.
+- Active presets table: `<caption class="visually-hidden">`, `<th
+  scope="col">`, and each *Remove* button has an `aria-label` that
+  names the preset and host.
 - Add form: `<form aria-label="Add rule">` with `<fieldset><legend>New
-  rule</legend>`. Every input has an explicit `<label for="…">`.
-- `pattern` carries HTML5 `required`.
-- Rules table has `<caption>Active rules</caption>` and
-  `<th scope="col">` headers.
-- Toggle / Delete buttons are individual `<form><button>` POSTs. Delete
-  uses an inline confirm dialog (`onsubmit="return confirm('Delete?');"`).
+  rule</legend>`. Every input has an explicit `<label for="...">`.
+  `pattern` carries HTML5 `required`.
+- Rules table has `<caption>Active rules</caption>` and `<th
+  scope="col">` headers.
+- Toggle / Delete / Remove buttons are individual `<form><button>`
+  POSTs. Destructive actions use an inline confirm dialog
+  (`onsubmit="return confirm(...)"`).
 - Flash messages render in the global `role="alert"` region:
-  *"Rule added. It applies to proxy traffic immediately."*,
-  *"Pattern cannot be empty."*, *"Rule deleted."*
+  *"Rule added. It applies to proxy traffic immediately."*, *"Pattern
+  cannot be empty."*, *"Rule deleted."*, *"Added N preset rules for
+  host filter ..."*, *"Choose a host filter before applying presets."*,
+  *"Heads up: host filter is not anchored..."*.
+- **No automatic context changes** when toggling preset checkboxes
+  (WCAG 2.2 Level AAA 3.2.5 *Change on Request*): nothing happens until
+  the operator presses *Apply selected presets*.
 
 ## How it integrates
 
@@ -179,7 +246,20 @@ proxy automatically.
 - `test_regex_response_body_replace` — regex resp_body rule with `\b` word boundaries.
 - `test_host_filter_skips_other_hosts` — non-matching hosts are skipped.
 - `test_disabled_rule_is_skipped` — `enabled=0` rules don't fire.
+`reqlore/tests/unit/test_matchreplace_presets.py`:
 
+- `test_preset_comment_round_trip` -- preset comment encode/decode.
+- `test_parse_preset_slug_returns_empty_for_non_preset` -- user comments are not misread.
+- `test_every_preset_has_required_keys` -- every shipped preset is well-formed.
+- `test_active_presets_groups_by_slug_and_host` -- grouping logic.
+- `test_index_renders_presets_section` -- HTML carries the preset list and `aria-describedby` links.
+- `test_apply_preset_inserts_tagged_rules` -- POST insert path round-trips through the DB.
+- `test_apply_preset_rejects_empty_host` -- host scope is mandatory.
+- `test_apply_preset_rejects_invalid_regex` -- host regex is validated.
+- `test_apply_preset_warns_when_unanchored` -- M-14 warning fires for presets too.
+- `test_apply_preset_with_no_selection` -- empty selection is a soft error.
+- `test_remove_preset_deletes_only_matching_rules` -- *Remove* removes only its own bundle.
+- `test_remove_preset_unknown_slug` -- unknown slug rejected.
 `reqlore/tests/unit/test_web_smoke_phase2.py::test_matchreplace_index` —
 the index page renders.
 
