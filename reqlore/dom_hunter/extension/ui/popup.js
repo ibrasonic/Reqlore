@@ -19,13 +19,28 @@ async function init() {
   if (off && off.off) offRadio.checked = true; else onRadio.checked = true;
 
   const settings = await browser.runtime.sendMessage({ type: "dom_hunter.settings.get" });
-  if (!settings.token || !settings.baseUrl) {
+  let cfg = null;
+  let diag = null;
+  try { cfg = await browser.runtime.sendMessage({ type: "dom_hunter.getProjectConfig" }); }
+  catch (_) {}
+  if (!cfg) {
+    try { diag = await browser.runtime.sendMessage({ type: "dom_hunter.diagnose" }); }
+    catch (_) {}
+  }
+
+  if (cfg) {
+    state.className = "status status-ok";
+    state.textContent = "Configured. Reporting to " + (settings.baseUrl || "Reqlore") + ".";
+  } else if (diag && diag.kind === "http" && diag.status === 401) {
+    state.className = "status status-err";
+    state.textContent = "Token mismatch (HTTP 401). Keep `reqlore both`/`ui` and `reqlore browser` on the same --project, then reload tab.";
+  } else if (!settings.token || !settings.baseUrl) {
     state.className = "status status-warn";
     state.textContent = "Not configured yet. Open the options page to set the "
                        + "Reqlore base URL and bridge token.";
   } else {
-    state.className = "status status-ok";
-    state.textContent = "Configured. Reporting to " + settings.baseUrl + ".";
+    state.className = "status status-warn";
+    state.textContent = "Configured, but cannot reach Reqlore right now.";
   }
 
   form.addEventListener("submit", async (ev) => {

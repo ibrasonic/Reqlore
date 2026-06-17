@@ -74,57 +74,80 @@ async function setTabOff(tabId, off) {
   await browser.storage.local.set({ [STORE_KEYS.tabOff]: map });
 }
 
+async function getManagedSeed() {
+  try {
+    const managed = await browser.storage.managed.get();
+    return {
+      baseUrl: (managed && typeof managed.baseUrl === "string") ? managed.baseUrl : "",
+      token:   (managed && typeof managed.token === "string") ? managed.token : "",
+    };
+  } catch (_) {
+    return { baseUrl: "", token: "" };
+  }
+}
+
+async function bridgeRequest(path, init) {
+  const { baseUrl, token } = await getSettings();
+  if (!baseUrl || !token) return null;
+
+  const url = baseUrl.replace(/\/+$/, "") + path;
+  const managed = await getManagedSeed();
+  let usedToken = token;
+  let r = await fetch(url, {
+    method: (init && init.method) || "GET",
+    headers: Object.assign({}, (init && init.headers) || {}, {
+      "X-DOMHunter-Token": usedToken,
+      "Accept": "application/json",
+    }),
+    body: init && init.body,
+    cache: "no-store",
+    credentials: "omit",
+  });
+
+  // If local token is stale, retry once with managed-policy token.
+  if (r.status === 401 && managed.token && managed.token !== usedToken) {
+    const rr = await fetch(url, {
+      method: (init && init.method) || "GET",
+      headers: Object.assign({}, (init && init.headers) || {}, {
+        "X-DOMHunter-Token": managed.token,
+        "Accept": "application/json",
+      }),
+      body: init && init.body,
+      cache: "no-store",
+      credentials: "omit",
+    });
+    if (rr.ok) {
+      r = rr;
+      usedToken = managed.token;
+      // Persist fallback token so subsequent calls stop hitting 401.
+      try {
+        await browser.storage.local.set({ [STORE_KEYS.token]: usedToken });
+      } catch (_) {}
+    }
+  }
+
+  return { response: r, baseUrl, token, usedToken };
+}
+
 // -------------------- bridge to Reqlore --------------------
 
 async function fetchConfig() {
   const now = Date.now();
   if (cachedCfg && (now - cachedAt) < CFG_TTL_MS) return cachedCfg;
-  const { baseUrl, token } = await getSettings();
-  if (!baseUrl || !token) return null;
   try {
-    const url = baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/config";
-    let usedToken = token;
-    let r = await fetch(url, {
-      method: "GET",
-      headers: { "X-DOMHunter-Token": usedToken, "Accept": "application/json" },
-      cache: "no-store",
-      credentials: "omit",
-    });
-
-    // Project-switch self-heal: if local token is stale and the bridge
-    // rejects it, retry once with managed-policy token (if different).
-    // This fixes the common case where the user changes project/launcher
-    // and local storage still holds an old token.
-    if (r.status === 401) {
-      try {
-        const managed = await browser.storage.managed.get();
-        const managedToken = managed && typeof managed.token === "string"
-          ? managed.token : "";
-        if (managedToken && managedToken !== usedToken) {
-          const rr = await fetch(url, {
-            method: "GET",
-            headers: { "X-DOMHunter-Token": managedToken, "Accept": "application/json" },
-            cache: "no-store",
-            credentials: "omit",
-          });
-          if (rr.ok) {
-            r = rr;
-            usedToken = managedToken;
-          }
-        }
-      } catch (_) {}
-    }
-
-    if (!r.ok) return null;
-    const cfg = await r.json();
+    const req = await bridgeRequest("/dom-hunter/__bridge/config", { method: "GET" });
+    if (!req || !req.response || !req.response.ok) return null;
+    const cfg = await req.response.json();
+    const finalToken = (cfg && typeof cfg.token === "string" && cfg.token)
+      ? cfg.token : req.usedToken;
     // Self-healing token rotation: if Reqlore handed us a token that
     // differs from what we just used to authenticate, persist it so
     // every subsequent request uses the fresh value. The just-used
     // token was the previous one (still accepted under the server's
     // grace window); next call will use the new one.
-    if (cfg && typeof cfg.token === "string" && cfg.token && cfg.token !== usedToken) {
+    if (finalToken && finalToken !== req.token) {
       try {
-        await browser.storage.local.set({ [STORE_KEYS.token]: cfg.token });
+        await browser.storage.local.set({ [STORE_KEYS.token]: finalToken });
       } catch (_) {}
     }
     cachedCfg = cfg;
@@ -151,14 +174,18 @@ async function diagnoseBridge() {
   if (!baseUrl) return { ok: false, kind: "no-base-url", baseUrl: "", token: hasToken };
   if (!hasToken) return { ok: false, kind: "no-token", baseUrl, token: false };
   try {
-    const r = await fetch(baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/config", {
-      method: "GET",
-      headers: { "X-DOMHunter-Token": token, "Accept": "application/json" },
-      cache: "no-store",
-      credentials: "omit",
-    });
-    if (r.ok) return { ok: true, baseUrl, token: true };
-    return { ok: false, kind: "http", status: r.status, baseUrl, token: true };
+    const req = await bridgeRequest("/dom-hunter/__bridge/config", { method: "GET" });
+    if (!req || !req.response) {
+      return { ok: false, kind: "no-token", baseUrl, token: false };
+    }
+    if (req.response.ok) return { ok: true, baseUrl: req.baseUrl, token: true };
+    return {
+      ok: false,
+      kind: "http",
+      status: req.response.status,
+      baseUrl: req.baseUrl,
+      token: true,
+    };
   } catch (e) {
     return {
       ok: false, kind: "network",
@@ -169,21 +196,15 @@ async function diagnoseBridge() {
 }
 
 async function sendReport(payload, tabId) {
-  const { baseUrl, token } = await getSettings();
-  if (!baseUrl || !token) return false;
   try {
-    const r = await fetch(baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/report", {
+    const req = await bridgeRequest("/dom-hunter/__bridge/report", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-DOMHunter-Token": token,
-        "Accept": "application/json",
       },
       body: JSON.stringify(payload),
-      cache: "no-store",
-      credentials: "omit",
     });
-    if (r.ok) {
+    if (req && req.response && req.response.ok) {
       // Broadcast to every interested view (popup, sidebar, devtools panel).
       try {
         browser.runtime.sendMessage({
@@ -193,7 +214,7 @@ async function sendReport(payload, tabId) {
         }).catch(() => {});
       } catch (_) {}
     }
-    return r.ok;
+    return !!(req && req.response && req.response.ok);
   } catch (_) { return false; }
 }
 
@@ -339,18 +360,15 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 
   if (msg.type === "dom_hunter.findings.list") {
     return (async () => {
-      const { baseUrl, token } = await getSettings();
-      if (!baseUrl || !token) return { findings: [], total: 0 };
       try {
-        const r = await fetch(baseUrl.replace(/\/+$/, "")
-          + "/dom-hunter/__bridge/findings.json?limit=" + (msg.limit || 50), {
-          method: "GET",
-          headers: { "X-DOMHunter-Token": token, "Accept": "application/json" },
-          cache: "no-store",
-          credentials: "omit",
-        });
-        if (!r.ok) return { findings: [], total: 0 };
-        return await r.json();
+        const req = await bridgeRequest(
+          "/dom-hunter/__bridge/findings.json?limit=" + (msg.limit || 50),
+          { method: "GET" }
+        );
+        if (!req || !req.response || !req.response.ok) {
+          return { findings: [], total: 0 };
+        }
+        return await req.response.json();
       } catch (_) { return { findings: [], total: 0 }; }
     })();
   }
