@@ -268,3 +268,39 @@ def test_sequencer_post_empty_flashes_warning(tmp_path):
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
     assert "Paste at least one token" in body
+
+
+def test_sequencer_renders_plain_english_verdict_random(tmp_path):
+    """High-entropy tokens must trigger the explicit 'look random'
+    sentence, not just the STRONG / EXCELLENT word."""
+    client = _client(tmp_path)
+    csrf = _csrf(client)
+    tokens = "\n".join(secrets.token_urlsafe(24) for _ in range(60))
+    resp = client.post(
+        "/sequencer/",
+        data={"_csrf": csrf, "tokens": tokens,
+              "significance": "0.01", "deep": "1"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Verdict:" in body
+    assert "look random" in body  # plain English
+
+
+def test_sequencer_renders_plain_english_verdict_not_random(tmp_path):
+    """Counter-style tokens must trigger the explicit 'NOT random'
+    sentence so a non-cryptographer can read the verdict."""
+    client = _client(tmp_path)
+    csrf = _csrf(client)
+    tokens = "\n".join(f"id-{i:08d}" for i in range(60))
+    resp = client.post(
+        "/sequencer/",
+        data={"_csrf": csrf, "tokens": tokens,
+              "significance": "0.01", "deep": "1"},
+        follow_redirects=True,
+    )
+    assert resp.status_code == 200
+    body = resp.get_data(as_text=True)
+    assert "Verdict:" in body
+    assert "NOT random" in body

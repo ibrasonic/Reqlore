@@ -135,6 +135,36 @@
   {% if result.sample_count == 0 %}
     <p>No tokens were supplied; nothing to analyse.</p>
   {% else %}
+    {# Plain-English one-line verdict, computed from the deep rating
+       when available, falling back to the Shannon rating. Phrased so
+       a non-cryptographer (or a screen-reader user not interested in
+       p-values) gets a yes / no / qualified answer up front. #}
+    {% set _r = (result.deep.deep_rating if result.deep else result.rating) %}
+    {% if _r == 'strong' or _r == 'excellent' %}
+      {% set _verdict = 'These tokens look random.' %}
+      {% set _detail = 'No statistical test detected non-randomness at the chosen significance level.' %}
+    {% elif _r == 'good' %}
+      {% set _verdict = 'These tokens look mostly random.' %}
+      {% set _detail = 'Shannon entropy is high; deep statistical battery was not run for this result.' %}
+    {% elif _r == 'fair' %}
+      {% set _verdict = 'These tokens are partly random.' %}
+      {% set _detail = 'Some positions or bits failed the statistical tests, or a few bit-pair correlations survived the multiple-comparisons correction. Treat as suspect.' %}
+    {% elif _r == 'weak' %}
+      {% set _verdict = 'These tokens are NOT random.' %}
+      {% set _detail = 'One or more statistical tests rejected randomness. See the Notes below and the per-position / per-bit tables for the exact failures.' %}
+    {% elif _r == 'n/a' %}
+      {% set _verdict = 'Not enough samples to decide.' %}
+      {% set _detail = 'Deep analysis needs at least 8 tokens; collect more and re-run.' %}
+    {% else %}
+      {% set _verdict = 'Verdict: ' ~ _r %}
+      {% set _detail = '' %}
+    {% endif %}
+
+    <p class="verdict" role="status">
+      <strong>Verdict:</strong> {{ _verdict }}
+      {% if _detail %}<br><span class="hint">{{ _detail }}</span>{% endif %}
+    </p>
+
     <dl>
       <dt>Quick Shannon rating</dt>
       <dd>

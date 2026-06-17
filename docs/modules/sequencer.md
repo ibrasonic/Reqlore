@@ -78,6 +78,17 @@ skipped rule_run — coverage stays honest).
 
 ## Output sections
 
+- **Verdict** -- a single plain-English line at the top of the Summary
+  block, computed from the deep rating (or the Shannon rating when
+  deep was not requested):
+  - `strong` / `excellent` -> `These tokens look random.`
+  - `good` -> `These tokens look mostly random.`
+  - `fair` -> `These tokens are partly random.`
+  - `weak` -> `These tokens are NOT random.`
+  - `n/a` -> `Not enough samples to decide.`
+  Marked `role="status"` so screen readers announce it; the page never
+  relies on colour or on the operator interpreting `STRONG` / `WEAK`
+  keywords.
 - **Summary** -- quick Shannon rating, deep rating (when deep is on),
   effective bits, common length, entropy, longest run, Hamming
   min/mean/max, character classes, notes.
