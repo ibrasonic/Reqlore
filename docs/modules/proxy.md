@@ -2,8 +2,8 @@
 
 The Proxy is the intercepting MITM that sits between your browser and the
 target. It always binds to `127.0.0.1:8080`, ships its own CA, supports
-Burp-style interactive holds, and is the producer of almost every row you
-see in [History](history.md).
+interactive request holds (forward / drop / forward-edited), and is the
+producer of almost every row you see in [History](history.md).
 
 ## Where it is
 

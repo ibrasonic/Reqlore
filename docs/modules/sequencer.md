@@ -1,7 +1,7 @@
 # Sequencer — `/sequencer/`
 
 Paste a pile of session IDs, CSRF tokens, password-reset tokens, or
-anti-bot tokens -- get a Burp-Sequencer-style randomness report:
+anti-bot tokens -- get a comprehensive randomness report:
 Shannon entropy + per-position analysis + Hamming distance + longest-run
 for a quick verdict, plus an optional **deep statistical battery**
 (character transition / FIPS-style monobit / runs / poker / longest-run
@@ -13,8 +13,9 @@ engine:
 
 1. **Paste analyser** -- `/sequencer/`. Bring your own tokens
    (Intruder scrape, `curl` loop, hand-collected). One per line.
-2. **Live capture** -- `/sequencer/capture/...`. Burp-Sequencer-style.
-   Point at a request, pick the response field that holds the token,
+2. **Live capture** -- `/sequencer/capture/...`. Live token
+   replay-and-extract. Point at a request, pick the response field
+   that holds the token,
    press **Start**. Reqlore re-fires the request in a background
    thread, extracts the token from each response, and persists it. Pause
    / Resume / Cancel at will. When you have enough samples, press
@@ -234,8 +235,9 @@ want to script it from a plugin.
 
 ## Live capture
 
-The live-capture surface mirrors Burp Sequencer: bring a request, point
-at the response field that holds the token, let the tool collect.
+The live-capture surface follows the classic live-token-collection
+workflow: bring a request, point at the response field that holds the
+token, let the tool collect.
 
 ### URLs
 

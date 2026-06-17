@@ -3,8 +3,8 @@
 These exercise the end-to-end browser flow: a held intercept can be
 copied into Repeater, Intruder, Comparer, PoC, JWT and Decoder; the
 target page must hydrate from the snapshot history row; the held
-intercept is left in the queue (non-destructive, like Burp's Action
-menu); and the menu adapts to the request shape (JWT only when an
+intercept is left in the queue (non-destructive Action menu); and the
+menu adapts to the request shape (JWT only when an
 Authorization: Bearer JWT is present, Decoder only when a body exists).
 """
 from __future__ import annotations

@@ -1,13 +1,14 @@
-"""Burp-Sequencer-style **live capture**.
+"""Sequencer **live capture**.
 
 The classic Sequencer page is paste-only: the operator collects tokens
 themselves (curl loop, Intruder scrape) and pastes them into the
-textarea. Burp's killer feature is *live capture*: point at a request,
-tell it which response field holds the token, press start, and Burp
-re-fires the request thousands of times in the background, extracts
-the token from each response, and updates the statistics live.
+textarea. The live-capture workflow streamlines that: point at a
+request, tell Reqlore which response field holds the token, press
+start, and Reqlore re-fires the request thousands of times in the
+background, extracts the token from each response, and updates the
+statistics live.
 
-This module provides the same workflow for Reqlore. It is intentionally
+This module provides that workflow. It is intentionally
 a thin shell around the same primitives Intruder already uses:
 
 * `Project` for persistent storage of captures and samples,

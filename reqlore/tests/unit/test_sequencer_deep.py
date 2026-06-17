@@ -1,4 +1,4 @@
-"""Deep statistical battery for the Sequencer (Burp-Sequencer parity)."""
+"""Deep statistical randomness battery for the Sequencer."""
 from __future__ import annotations
 
 import math

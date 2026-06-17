@@ -142,7 +142,7 @@ def test_oast_helper_emits_finding_per_interaction(tmp_path: Path):
                           path="/abc123/y", bytes_in=24),
     ]
     ids = oast.record_oast_interactions(p, ixs,
-                                          probe_url="https://t/?u=BURPCOL",
+                                          probe_url="https://t/?u=RLRCOL",
                                           probe_host="t",
                                           probe_kind="ssrf")
     assert len(ids) == 2

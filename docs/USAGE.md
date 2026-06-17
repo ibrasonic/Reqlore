@@ -3,7 +3,7 @@
 This is the **entry point**. It covers install, first run, the CLI, and links
 into one reference page per panel under [`modules/`](modules/).
 
-If you have used Burp Suite or ZAP, the mental model is the same: a local UI
+If you have used a traditional pentest GUI before, the mental model is the same: a local UI
 on `http://127.0.0.1:8787`, an intercepting MITM proxy on
 `127.0.0.1:8080`, and a set of workbenches that operate on captured requests
 and findings stored in a single SQLite project file (`*.rlr`).
@@ -233,7 +233,7 @@ Storage.
 ## Where to go next
 
 - **New user?** [`modules/proxy.md`](modules/proxy.md) → [`modules/history.md`](modules/history.md) → [`modules/repeater.md`](modules/repeater.md).
-- **Came from Burp?** [`workflows.md`](workflows.md) is the fastest map between Burp menus and Reqlore panels.
+- **Migrating from another pentest GUI?** [`workflows.md`](workflows.md) is the fastest map between classic desktop-suite menus and Reqlore panels.
 - **Screen-reader user?** [`ACCESSIBILITY.md`](ACCESSIBILITY.md) and the *Accessibility notes* section in each module page.
 - **Setting up CI?** [`engines.md`](engines.md) + [`RUNNER.md`](RUNNER.md) + `reqlore run job.yaml`.
 - **Air-gapped / offline?** [`browser-launcher.md`](browser-launcher.md) (`prefetch-firefox`) + the `--firefox-zip` flag.

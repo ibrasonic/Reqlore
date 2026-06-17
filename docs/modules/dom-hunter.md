@@ -1,7 +1,8 @@
 # DOM Hunter — `/dom-hunter/`
 
 DOM Hunter is Reqlore's DOM-XSS source/sink tracer. It is the same
-category of tool as Burp Suite's DOM Invader: a browser-side agent
+category of tool as the browser-side DOM-XSS tracers that ship with
+other professional pentest suites: a browser-side agent
 that wraps every dangerous JavaScript sink, watches them for a
 per-project canary string, logs every `postMessage`, and streams the
 findings back to Reqlore over a token-authenticated bridge.

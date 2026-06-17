@@ -1,9 +1,10 @@
 # Reqlore DOM Hunter
 
 Accessibility-first DOM-XSS source/sink tracer for the Reqlore-managed
-Firefox browser. Functionally equivalent to Burp Suite's DOM Invader,
-but driven entirely by native HTML controls, server-side findings, and
-a DevTools panel built to meet WCAG 2.2 AAA where practical.
+Firefox browser. Functionally equivalent to the DOM-XSS tracers that
+ship with other professional pentest suites, but driven entirely by
+native HTML controls, server-side findings, and a DevTools panel built
+to meet WCAG 2.2 AAA where practical.
 
 ## Where you see it in the browser
 

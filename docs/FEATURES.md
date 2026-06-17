@@ -122,7 +122,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | Param-miner (header / cookie / param brute via length oracle) | ✅ | 200-word built-in list. See [param-miner.md](modules/param-miner.md). |
 | Sequencer (entropy, per-position, Hamming, longest-run) | ✅ | See [sequencer.md](modules/sequencer.md). |
 | Sequencer deep statistical battery (transition / FIPS monobit-runs-poker per bit / Bonferroni-corrected pairwise correlation / zlib compression) | ✅ | Pure-Python, no scipy. See [sequencer.md](modules/sequencer.md#limits-deep-analysis-only). |
-| Sequencer **live capture** (Burp-Sequencer-parity) | ✅ | Send a request from History, point at cookie / header / regex / JSON path, press Start. Background runner with pause / resume / cancel, then deep-analyse the captured pile. See [sequencer.md](modules/sequencer.md#live-capture). |
+| Sequencer **live capture** | ✅ | Send a request from History, point at cookie / header / regex / JSON path, press Start. Background runner with pause / resume / cancel, then deep-analyse the captured pile. See [sequencer.md](modules/sequencer.md#live-capture). |
 | CSRF PoC generator (form + fetch flavours) | ✅ | See [poc.md](modules/poc.md). |
 | Clickjacking tester | ✅ | |
 | OAST (in-process HTTP receiver, per-token routing) | ✅ | See [oast.md](modules/oast.md). |
@@ -179,6 +179,6 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 |---|---|
 | Cloud / SaaS deployment | Reqlore is local-only by design. |
 | Native desktop GUI (Qt / GTK) | Web UI in the user's browser already inherits the OS a11y stack. |
-| Replacing every Burp BApp | Plugin API ships; community covers the long tail. |
+| Replacing every third-party extension from other suites | Plugin API ships; community covers the long tail. |
 | Cert-pinning bypass | Out of scope (use a jailbroken device). |
 | Built-in DNS exfiltration receiver | Use a dedicated interactsh client. |

@@ -108,7 +108,7 @@ SUPPORTED_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE",
 
 @dataclass
 class InterceptConfig:
-    """User-tunable filter for the Burp-style intercept toggle.
+    """User-tunable filter for the interactive intercept toggle.
 
     Sensible defaults: hold POST/PUT/PATCH/DELETE only (state-changing
     requests), on any host. Browser background traffic (Mozilla /

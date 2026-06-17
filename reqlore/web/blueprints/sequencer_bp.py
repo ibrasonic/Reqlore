@@ -14,9 +14,8 @@ Two surfaces share the same module:
    the operator can analyse the live-collected pile with the same
    deep statistical battery as the paste flow.
 
-The capture half is the Burp-Sequencer parity feature; the paste half
-is preserved unchanged so existing tests and muscle memory keep
-working.
+The capture half is the live-capture feature; the paste half is
+preserved unchanged so existing tests and muscle memory keep working.
 """
 from __future__ import annotations
 

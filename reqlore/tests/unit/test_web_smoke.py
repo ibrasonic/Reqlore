@@ -297,8 +297,8 @@ def test_repeater_response_body_has_raw_and_decoded_views(client, monkeypatch):
 
 
 def test_proxy_intercept_toggle_round_trips(tmp_path):
-    """Burp-style intercept toggle: checkbox flips OFF<->ON, persists in
-    project state, and re-applies to the proxy after app restart.
+    """Intercept toggle: checkbox flips OFF<->ON, persists in project
+    state, and re-applies to the proxy after app restart.
     """
     from reqlore.web import create_app
 

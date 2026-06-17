@@ -42,7 +42,7 @@ from .engines import curl_cffi_engine, h3_engine
 from .storage import Project
 
 
-DEFAULT_MARKER = "\u00a7"   # section sign — same as Burp
+DEFAULT_MARKER = "\u00a7"   # section sign — conventional payload marker
 
 
 # ---------- marker parsing ----------

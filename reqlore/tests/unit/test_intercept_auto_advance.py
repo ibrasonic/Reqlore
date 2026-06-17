@@ -2,8 +2,8 @@
 
 When the operator hits Forward / Drop / Forward-edited on an intercept
 detail page, Reqlore should jump straight to the next still-pending
-intercept (Burp-style "stay in the held flow") instead of bouncing back
-to the queue page. This file pins that behaviour: one redirect per
+intercept (i.e. "stay in the held flow") instead of bouncing back to
+the queue page. This file pins that behaviour: one redirect per
 decision, never two.
 
 Empty-queue case must still land on ``/proxy/`` so the operator sees

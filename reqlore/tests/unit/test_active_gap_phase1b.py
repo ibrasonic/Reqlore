@@ -257,7 +257,7 @@ def _seed_set_cookie_history(proj, host: str, token_values: list[str],
 
 def test_sequencer_pass_fires_on_low_entropy_counter_tokens(project):
     """Counter-style tokens that increment by one byte per row must be
-    rated weak by the Burp-Sequencer-style analyser."""
+    rated weak by the Sequencer's statistical analyser."""
     weak_tokens = [f"abc{i:05d}" for i in range(12)]  # only the last 5 chars vary
     _seed_set_cookie_history(project, "weak.test", weak_tokens)
 

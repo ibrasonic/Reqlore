@@ -1,9 +1,10 @@
 # Intruder — `/intruder/`
 
 The Intruder bulk-attacks a request template by walking through one or more
-payload lists. It is Reqlore's answer to Burp Suite Intruder, with the same
-four attack types, the same six request engines as Repeater, and an extended
-payload-processor pipeline that includes per-payload JWT signing.
+payload lists. It is Reqlore's templated payload-fuzzer, with the four
+classic attack types (sniper / battering ram / pitchfork / cluster bomb),
+the same six request engines as Repeater, and an extended payload-processor
+pipeline that includes per-payload JWT signing.
 
 ## Where it is
 

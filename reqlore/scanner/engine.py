@@ -228,8 +228,8 @@ def _parse_set_cookie(raw: str) -> tuple[str, str] | None:
 
 def _scan_session_entropy(project, *, limit: int = 5000) -> tuple[int, int]:
     """Aggregate Set-Cookie tokens across the recorded history and emit a
-    finding for any (host, cookie_name) group whose Burp-Sequencer-style
-    rating comes back as ``"weak"``.
+    finding for any (host, cookie_name) group whose Sequencer rating
+    comes back as ``"weak"``.
 
     Returns ``(samples_examined, findings_emitted)``. ``rule_runs`` is
     updated for every group we evaluated so the coverage page can show
@@ -295,7 +295,7 @@ def _scan_session_entropy(project, *, limit: int = 5000) -> tuple[int, int]:
             severity="medium",
             title=f"Weak session token entropy ({name})",
             description=(
-                "The Burp-Sequencer-style analyser rated the session "
+                "The Sequencer's statistical analyser rated the session "
                 f"token '{name}' on {host or '(unknown host)'} as "
                 "WEAK. Low-entropy session identifiers can be guessed "
                 "or brute-forced; consecutive tokens may differ by a "

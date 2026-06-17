@@ -346,7 +346,7 @@ class ProxyController:
 
     def set_intercept(self, on: bool,
                       config: InterceptConfig | None = None) -> None:
-        """Burp-style global intercept: when on, hold requests that match
+        """Global intercept switch: when on, hold requests that match
         the current InterceptConfig. Mutates self.rules in place so the
         running mitmproxy addon (which holds a reference to the same
         list) sees the change.

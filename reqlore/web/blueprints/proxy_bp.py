@@ -24,8 +24,8 @@ bp = Blueprint("proxy", __name__)
 #
 # Each held request can be copied into one of the other Reqlore tools
 # (Repeater, Intruder, Comparer, PoC, JWT, Decoder). The flow itself
-# stays held — "Send to" never decides forward/drop, mirroring Burp's
-# behaviour where the Action menu is non-destructive.
+# stays held — "Send to" never decides forward/drop; the Action menu
+# is deliberately non-destructive.
 #
 # Mechanism: we materialise the held bytes into the `http_history` table
 # as an `intercept-snapshot` row, then redirect to the target tool with
@@ -251,7 +251,7 @@ def stop():
 
 @bp.route("/intercept/toggle", methods=["POST"])
 def toggle_intercept():
-    """Burp-style global intercept on/off. Persists across restarts.
+    """Global intercept on/off. Persists across restarts.
     When the form was submitted from the checkbox (hidden `from=checkbox`),
     the absence of the `on` field means unchecked → OFF. Otherwise
     (legacy / external callers), simply flip the current state.
@@ -390,7 +390,7 @@ def drop_all():
 def send_to(iid: int, slug: str):
     """Copy a held request into the named tool and redirect there.
     The intercepted flow stays in the queue — the operator still has
-    to Forward or Drop it explicitly. Mirrors Burp's Action menu.
+    to Forward or Drop it explicitly. The Action menu is non-destructive.
     """
     item = g.project.get_intercept(iid)
     if item is None:

@@ -8,7 +8,7 @@ parameter whose presence visibly changes the response — different status,
 different body length beyond a tolerance band, or the sentinel reflected in
 the response body.
 
-This is the classic Burp "param miner" workflow. We use simple difference
+This is the classic "param miner" workflow. We use simple difference
 detection rather than backslash-canary tricks so the algorithm is auditable.
 
 Module is offline-safe: a ``send=`` callable can be injected by tests.

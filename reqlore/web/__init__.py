@@ -35,7 +35,7 @@ def create_app(project_path: Path, settings: Settings, *,
     if proxy:
         proxy.ui_port = settings.ui_port
 
-    # Restore Burp-style intercept toggle + filter config across restarts.
+    # Restore intercept toggle + filter config across restarts.
     if proxy:
         from ..proxy.rules import InterceptConfig
         import json as _json

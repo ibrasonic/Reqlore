@@ -1,6 +1,6 @@
 # Reqlore
 
-Burp-grade web application pentesting suite. Python-native. Accessible-first. Local web UI.
+Professional-grade web application pentesting suite. Python-native. Accessible-first. Local web UI.
 
 > **Status:** Active development past Phase 9. Full unit suite: **1368 passed, 239 skipped**. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
@@ -23,7 +23,7 @@ Full per-module walkthrough: [`docs/USAGE.md`](docs/USAGE.md).
 
 ## Why
 
-Burp Suite is the industry standard but its Java Swing UI is a barrier for screen-reader users. Reqlore is built ground-up as plain semantic HTML5 + Jinja2, which is the most reliable substrate for NVDA, JAWS, Orca, and VoiceOver. Targets **WCAG 2.2 AA**; details in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md).
+The industry-standard desktop pentest suites are built on Java/JavaFX Swing UIs that are a barrier for screen-reader users. Reqlore is built ground-up as plain semantic HTML5 + Jinja2, which is the most reliable substrate for NVDA, JAWS, Orca, and VoiceOver. Targets **WCAG 2.2 AA**; details in [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md).
 
 ## Install
 

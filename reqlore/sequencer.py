@@ -1,4 +1,4 @@
-"""Token-quality analyser (Burp Sequencer-style, deterministic, no plotting).
+"""Token-quality analyser (deterministic, no plotting).
 
 Given a list of session/CSRF/anti-bot tokens, compute:
 
@@ -77,7 +77,7 @@ class CorrelationWarning:
 
 @dataclass
 class DeepAnalysis:
-    """Burp-Sequencer-style deep statistical analysis."""
+    """Deep statistical analysis (FIPS-style randomness battery)."""
     significance: float                # e.g. 0.01
     bits_per_token: int                # sum of per-position bit widths
     per_position_bits: list[int]       # bit width assigned to each character position
@@ -317,7 +317,7 @@ def record_sequencer_finding(project, result: SequencerResult, *,
 
 
 # ---------------------------------------------------------------------------
-# Deep analysis: Burp-Sequencer-style statistical battery.
+# Deep analysis: FIPS-style statistical randomness battery.
 #
 # All math is pure-Python (no scipy/numpy). Implementations follow the FIPS
 # 140-2 / NIST SP 800-22 style tests, with the closed-form p-value formulae
@@ -535,7 +535,7 @@ def _per_bit_tests(bits: list[int], significance: float) -> PerBitStats:
 
 def _encode_to_bits(tokens: list[str], common_length: int
                       ) -> tuple[int, list[int], list[list[int]]]:
-    """Burp-style per-position bit encoding.
+    """Per-position bit encoding (industry-standard layout).
 
     For each character position (0..common_length-1):
       * gather the alphabet observed at that position,
@@ -681,7 +681,7 @@ def _correlation_warnings(bit_matrix: list[list[int]], bits_per_token: int,
 
 def analyse_deep(tokens: list[str], *, significance: float = 0.01
                   ) -> SequencerResult:
-    """Run the full Burp-Sequencer-style battery.
+    """Run the full deep statistical randomness battery.
 
     Wraps :func:`analyse` and additionally populates
     :attr:`SequencerResult.deep` with per-bit / transition / correlation
