@@ -22,6 +22,12 @@ about:debugging dance, no copy-pasting tokens.
 - **Toolbar popup:** click the puzzle-piece, choose *DOM Hunter*.
 - **Bridge endpoints (token-auth, no session):** `/dom-hunter/__bridge/config`,
   `/dom-hunter/__bridge/report`, `/dom-hunter/__bridge/findings.json`.
+  These accept the project's per-project bridge token via
+  `X-DOMHunter-Token`. When the request did not arrive on a loopback
+  address (e.g. you bound the UI to a non-loopback interface with
+  `--unsafe-bind`) the bridge additionally **refuses plain HTTP** and
+  returns 403: a bearer token over cleartext is one passive observer
+  away from compromise. Loopback callers can use either http or https.
 
 ## Quick start — zero-config tracing in one command
 
@@ -134,7 +140,7 @@ nothing survives validation.
 | **Scope** | One host per line, `*.example.com` supported. Empty = every host. |
 | **Auto-inject targets** | Check any of `location.hash`, `location.search`, `window.name`, `document.referrer` — the agent rewrites those sources on each in-scope page load so source→sink flows surface without you crafting payloads. `document.referrer` is read-only from JavaScript, so Reqlore implements it by splicing `rqdomh=<canary>` into the **`Referer` request header** at the MITM proxy (only when a Referer is already present; never synthesised). |
 | **Rotate canary** | Generates a fresh `rqdomh<12-hex>` value. Existing findings keep their old canary; new findings use the new one. |
-| **Rotate token** | Generates a fresh URL-safe 32-byte bridge token. After rotation, run `reqlore browser --project my.rlr` again so the new token is written into Firefox's enterprise policy and picked up by the extension via `storage.managed`. |
+| **Rotate token** | Generates a fresh URL-safe 32-byte bridge token. **No browser relaunch needed.** The previous token stays valid for a 30-second grace window after rotation; the extension polls `/__bridge/config` every ~3 seconds, the response carries the new token, and the extension persists it locally. After the grace window the old token is rejected. |
 
 ### DevTools panel (`F12 → DOM Hunter`)
 
@@ -153,7 +159,7 @@ disables hooks for the current tab and reloads.
 | `/dom-hunter/settings` | GET / POST | Enable, scope, auto-inject, rotate canary, rotate token. |
 | `/dom-hunter/clear-findings` | POST | Wipe `dom_hunter_findings`. |
 | `/dom-hunter/clear-messages` | POST | Wipe `dom_hunter_messages`. |
-| `/dom-hunter/__bridge/config` | GET | Token-authed config feed for the extension (`enabled`, `canary`, `scope`, `auto_inject`, `sinks`, `ui_url`). |
+| `/dom-hunter/__bridge/config` | GET | Token-authed config feed for the extension. Returns `enabled`, `canary`, `token` (current value, so the extension can self-heal after a rotation within the grace window), `tagged_canaries` (`{source_id: canary-tag}` map used by the agent for deterministic source attribution), `scope`, `auto_inject`, `sinks`, `ui_url`. |
 | `/dom-hunter/__bridge/report` | POST | Token-authed sink: `{kind:"finding", ...}` or `{kind:"message", ...}`. Findings dedupe on `sha256(sink|source|page_url|stack-top|canary_seen)`. |
 | `/dom-hunter/__bridge/findings.json` | GET | Token-authed read mirror for the sidebar/popup. |
 
@@ -161,7 +167,9 @@ The three `__bridge/*` paths are exempted from the global CSRF
 before-request in [reqlore/web/__init__.py](../../reqlore/web/__init__.py)
 because the extension has no Reqlore session cookie; they enforce
 their own auth via `X-DOMHunter-Token` (constant-time compared
-against the per-project secret).
+against the per-project secret) and -- when the caller is not on a
+loopback interface -- additionally require HTTPS to keep the token
+out of plaintext on the wire.
 
 ## How it integrates
 
@@ -283,12 +291,14 @@ to mirror findings into another tool.
 
 ### 5. Reset everything for a fresh engagement
 
-1. *DOM Hunter → Settings* → **Rotate canary**, **Rotate token**.
-2. *DOM Hunter* index → **Clear findings**.
-3. *DOM Hunter → Messages* → **Clear messages**.
-4. `reqlore browser --project my.rlr` — re-launches Firefox with the
-   new policy so the extension picks up the new token without you
-   touching `about:addons`.
+1. *DOM Hunter -> Settings* -> **Rotate canary**, **Rotate token**.
+2. *DOM Hunter* index -> **Clear findings**.
+3. *DOM Hunter -> Messages* -> **Clear messages**.
+4. (No relaunch needed.) The running extension picks up the new
+   canary and token within a few seconds via its periodic
+   `/__bridge/config` poll. Only relaunch with
+   `reqlore browser --project my.rlr` if you also need to refresh
+   the Firefox policy or reinstall the XPI.
 
 ### 6. Force-disable tracing on a single noisy tab
 
@@ -373,7 +383,7 @@ Troubleshooting:
 |---|---|---|
 | No *DOM Hunter* DevTools tab | You launched Firefox **without** `--project`, so the policy did not include the XPI. | `reqlore browser --project <foo.rlr>`. Check `about:policies` for `ExtensionSettings → dom-hunter@ibrasonic.github.io`. |
 | `about:policies` shows `ExtensionSettings` with **other** extensions but **not** `dom-hunter@…` (only `3rdparty` for our id is present) | A higher-precedence enterprise policy (typically `HKLM\SOFTWARE\Policies\Mozilla\Firefox\ExtensionSettings`, set by corporate IT or anti-malware software) replaced our `distribution/policies.json` entry wholesale. | Reqlore also **sideloads** the XPI into `<profile>/extensions/dom-hunter@ibrasonic.github.io.xpi` with `xpinstall.signatures.required=false`. The sideload only works on **Firefox Developer Edition, Nightly, ESR, or Unbranded** — Release/Beta enforce signing. `reqlore browser --project` now defaults to `--channel devedition` and auto-downloads Dev Edition for you, so this should Just Work. If you forced `--channel release` or pointed at a Release build via `--use-system`, switch back to Dev Edition. |
-| Findings on a page but nothing in Reqlore | Bridge token mismatch — usually because you rotated it but didn't relaunch Firefox. | Rotate again, then `reqlore browser --project <foo.rlr>` to re-emit the policy. |
+| Findings on a page but nothing in Reqlore | Bridge token mismatch -- happens if more than 30 seconds passed between the rotation and the extension's next config poll, or if the extension was suspended by the browser during that window. | Rotate the token again. The 30-second grace starts fresh; the next config poll picks up the new value. If polls are not happening at all, click the puzzle-piece -> *DOM Hunter* in Firefox to wake the service worker. |
 | Options page is editable when it should be locked | `storage.managed` was not delivered — the `3rdparty → Extensions` policy block is missing. | Open `about:policies` and confirm the block; if absent, relaunch Reqlore with `--project`. |
 | Page enforces `Trusted Types` and the agent throws | Expected. DOM Hunter still records the *attempt* in `dom_hunter_findings`; the assignment just doesn't execute. | Use a Trusted Types-aware payload (sink-specific) and re-test. |
 | Live updates stop arriving in the DevTools panel | The panel filters by `inspectedWindow.tabId`. Reloading or navigating that tab clears the local view; new rows still appear. | Click **Refresh** in the panel or switch tabs and back. |
@@ -438,9 +448,11 @@ Re-inserts of an existing key bump `hit_count` and set `canary_seen
 
 | Key | Purpose | Default |
 |---|---|---|
-| `dom_hunter_enabled` | `"1"` / `"0"` — master tracer switch. | `"0"` |
+| `dom_hunter_enabled` | `"1"` / `"0"` -- master tracer switch. | `"0"` |
 | `dom_hunter_canary` | `rqdomh<12-hex>` per-project canary. | generated on first read |
 | `dom_hunter_token` | URL-safe 32-byte bridge token. | generated on first read |
+| `dom_hunter_previous_token` | Previous bridge token, kept briefly after a rotation so a running extension can pick up the new value without a browser relaunch. | empty |
+| `dom_hunter_previous_token_at` | Unix-second timestamp of the rotation that filled `dom_hunter_previous_token`. The previous token is accepted only while `(now - this) < 30s`. | empty |
 | `dom_hunter_scope` | Comma-separated host list (`*.example.com` allowed). | empty = all hosts |
 | `dom_hunter_auto_inject` | Comma list of source ids: `location.hash`, `location.search`, `window.name`, `document.referrer`. | empty |
 

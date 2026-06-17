@@ -85,5 +85,10 @@ pytest_*.txt
 
 XSS-EXPLAINED.txt
 
-# ---------- Local-only security notes ----------
+# ---------- Local-only audit / assessment notes ----------
+# Any audit, assessment, or review document is kept local.
 docs/SECURITY-ASSESSMENT.md
+docs/CODE-QUALITY-AUDIT.md
+docs/*AUDIT*.md
+docs/*ASSESSMENT*.md
+docs/*REVIEW*.md
