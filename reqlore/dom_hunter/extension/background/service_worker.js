@@ -221,6 +221,7 @@ async function configForTab(tabId, url) {
   return {
     enabled: true,
     canary: cfg.canary,
+    tagged_canaries: cfg.tagged_canaries || {},
     auto_inject: cfg.auto_inject || [],
     ui_url: cfg.ui_url || "",
   };
