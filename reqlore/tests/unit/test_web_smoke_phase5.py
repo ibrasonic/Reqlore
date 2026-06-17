@@ -40,8 +40,8 @@ def test_sequencer_post_analyses_tokens(client):
         "tokens": "abc123\ndef456\nghi789\njkl012",
     }, follow_redirects=True)
     assert r.status_code == 200
-    assert b"Result &mdash;" in r.data or b"Result" in r.data
-    assert b"sample(s)" in r.data
+    assert b"Summary" in r.data
+    assert b"sample" in r.data
 
 
 # ---- OAST ----

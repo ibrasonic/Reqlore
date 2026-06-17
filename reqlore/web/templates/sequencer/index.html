@@ -1,70 +1,340 @@
 {% extends "base.html" %}
 {% block title %}Reqlore — Sequencer{% endblock %}
 {% block main %}
-<h1>Sequencer — token quality analyser</h1>
-<p>Paste one token per line (session IDs, CSRF tokens, password-reset codes...).
-   Reqlore computes Shannon entropy per character, per-position character
-   distribution, Hamming distance between consecutive tokens, and longest
-   repeated run.</p>
 
-<form method="post" class="stack">
-  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-  <p>
-    <label for="tokens">Tokens (one per line)</label><br>
-    <textarea id="tokens" name="tokens" rows="14" cols="80" required>{{ tokens_text }}</textarea>
-  </p>
-  <p>
-    <button type="submit">Analyse</button>
-  </p>
-</form>
+<h1>Sequencer — token quality analyser</h1>
+
+<p id="page-help">
+  Paste opaque tokens (session IDs, CSRF tokens, password-reset codes,
+  anti-bot nonces) and Reqlore measures their randomness. The basic
+  report gives Shannon entropy, per-position character distribution and
+  Hamming distance; <strong>Deep analysis</strong> additionally runs the
+  per-character transition (Markov) test, NIST-style monobit / runs /
+  poker / longest-run tests on every effective bit, a per-bit
+  compression check and Bonferroni-corrected pairwise bit-bit
+  independence test.
+</p>
+
+<section aria-labelledby="input-h">
+  <h2 id="input-h">Input</h2>
+
+  <form method="post" class="stack" aria-describedby="page-help">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <fieldset>
+      <legend>Tokens</legend>
+      <p>
+        <label for="tokens">
+          One token per line
+          <span aria-hidden="true">*</span>
+          <span class="visually-hidden">(required)</span>
+        </label>
+      </p>
+      <p>
+        <textarea id="tokens" name="tokens" rows="14" cols="80"
+                  required aria-describedby="tokens-hint"
+                  spellcheck="false" autocomplete="off">{{ tokens_text }}</textarea>
+      </p>
+      <p id="tokens-hint" class="hint">
+        Empty and whitespace-only lines are dropped. 30+ tokens are
+        usable, 100+ recommended, 1000+ for FIPS-grade confidence.
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Analysis options</legend>
+      <p>
+        <label for="significance">Significance level (alpha)</label><br>
+        <select id="significance" name="significance"
+                aria-describedby="significance-hint">
+          {% for value, label in significance_options %}
+            <option value="{{ value }}"{% if value == significance %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p id="significance-hint" class="hint">
+        A test "fails" when its p-value is below this threshold. Lower
+        alpha = stronger evidence required to call a token non-random.
+        Pairwise correlation uses Bonferroni correction so the
+        family-wise false-positive rate stays at this level.
+      </p>
+
+      <p>
+        <label>
+          <input type="checkbox" name="deep" value="1"
+                 {% if deep_on %}checked{% endif %}
+                 aria-describedby="deep-hint">
+          Run deep analysis (transition / FIPS bit-level / correlation)
+        </label>
+      </p>
+      <p id="deep-hint" class="hint">
+        Deep analysis adds about 50&nbsp;ms per hundred 32-character
+        tokens. Skip it if you only want the quick Shannon overview.
+      </p>
+    </fieldset>
+
+    <p>
+      <button type="submit">Analyse</button>
+    </p>
+  </form>
+</section>
 
 {% if result %}
-  <h2 id="result">Result — {{ result.sample_count }} sample(s)</h2>
-  <dl>
-    <dt>Overall rating</dt>
-    <dd><strong>{{ result.rating | upper }}</strong></dd>
-    <dt>Common token length</dt>
-    <dd>{{ result.common_length }} characters
-        {% if result.length_variance %} (varies by {{ result.length_variance }}){% endif %}</dd>
-    <dt>Entropy</dt>
-    <dd>{{ "%.2f" | format(result.overall_entropy_bits_per_char) }} bits/char
-        — {{ "%.2f" | format(result.overall_entropy_bits_per_token) }} bits/token</dd>
-    <dt>Longest run of identical chars</dt>
-    <dd>{{ result.longest_run }}</dd>
-    <dt>Hamming distance (consecutive)</dt>
-    <dd>min {{ result.min_hamming }} · mean {{ "%.2f" | format(result.mean_hamming) }} · max {{ result.max_hamming }}</dd>
-    <dt>Character classes</dt>
-    <dd>
-      {% for cls, n in result.char_classes.items() %}
-        <code>{{ cls }}={{ n }}</code>{% if not loop.last %} · {% endif %}
-      {% endfor %}
-    </dd>
-  </dl>
 
-  {% if result.notes %}
-    <h3>Notes</h3>
-    <ul>
-      {% for n in result.notes %}<li>{{ n }}</li>{% endfor %}
-    </ul>
+<section aria-labelledby="summary-h">
+  <h2 id="summary-h">Summary — {{ result.sample_count }} sample{{ '' if result.sample_count == 1 else 's' }}</h2>
+
+  {% if result.sample_count == 0 %}
+    <p>No tokens were supplied; nothing to analyse.</p>
+  {% else %}
+    <dl>
+      <dt>Quick Shannon rating</dt>
+      <dd>
+        <strong>{{ result.rating | upper }}</strong>
+        — based on bits-per-character ranges.
+      </dd>
+      {% if result.deep %}
+        <dt>Deep statistical rating</dt>
+        <dd>
+          <strong>{{ result.deep.deep_rating | upper }}</strong>
+          — {{ result.deep.effective_bits_at_significance }} effective bit(s)
+          out of {{ result.deep.bits_per_token }} at alpha = {{ result.deep.significance }};
+          {{ result.deep.correlation_warnings | length }} bit-pair correlation(s) above the
+          Bonferroni-corrected threshold.
+        </dd>
+      {% endif %}
+      <dt>Common token length</dt>
+      <dd>
+        {{ result.common_length }} character{{ '' if result.common_length == 1 else 's' }}
+        {% if result.length_variance %}(varies by {{ result.length_variance }} character{{ '' if result.length_variance == 1 else 's' }}){% endif %}
+      </dd>
+      <dt>Overall entropy (Shannon)</dt>
+      <dd>
+        {{ "%.2f"|format(result.overall_entropy_bits_per_char) }} bits per character —
+        {{ "%.2f"|format(result.overall_entropy_bits_per_token) }} bits per token.
+      </dd>
+      <dt>Longest run of identical characters</dt>
+      <dd>{{ result.longest_run }} character(s).</dd>
+      <dt>Hamming distance between consecutive tokens</dt>
+      <dd>
+        minimum {{ result.min_hamming }},
+        mean {{ "%.2f"|format(result.mean_hamming) }},
+        maximum {{ result.max_hamming }}.
+      </dd>
+      <dt>Character classes seen</dt>
+      <dd>
+        {% for cls, n in result.char_classes.items() %}
+          {{ cls }} = {{ n }}{% if not loop.last %};{% endif %}
+        {% endfor %}
+      </dd>
+    </dl>
+
+    {% if result.notes %}
+      <h3>Notes</h3>
+      <ul>
+        {% for n in result.notes %}<li>{{ n }}</li>{% endfor %}
+      </ul>
+    {% endif %}
   {% endif %}
+</section>
 
-  <h3>Per-position breakdown</h3>
+{% if result.sample_count > 0 %}
+
+<section aria-labelledby="positions-h">
+  <h2 id="positions-h">Per-position character breakdown</h2>
   <table>
-    <caption>Entropy and most-common characters at each position</caption>
+    <caption>
+      Shannon entropy (in bits) at each character position. Rows marked
+      "weak" have less than 2&nbsp;bits of entropy — meaning fewer than
+      four distinct characters ever appear in that slot.
+    </caption>
     <thead>
-      <tr><th scope="col">Pos</th><th scope="col">Distinct</th>
-          <th scope="col">Bits</th><th scope="col">Most common</th></tr>
+      <tr>
+        <th scope="col">Position</th>
+        <th scope="col">Distinct chars</th>
+        <th scope="col">Bits</th>
+        <th scope="col">Status</th>
+        <th scope="col">Most common (count)</th>
+      </tr>
     </thead>
     <tbody>
       {% for p in result.positions %}
-        <tr{% if p.index in result.weak_positions %} class="row-warn"{% endif %}>
+        {% set is_weak = p.index in result.weak_positions %}
+        <tr{% if is_weak %} class="row-warn"{% endif %}>
           <td>{{ p.index }}</td>
           <td>{{ p.distinct }}</td>
-          <td>{{ "%.2f" | format(p.entropy_bits) }}</td>
-          <td>{% for ch, n in p.most_common %}<code>{{ ch }}</code>×{{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+          <td>{{ "%.2f"|format(p.entropy_bits) }}</td>
+          <td>{% if is_weak %}weak{% else %}ok{% endif %}</td>
+          <td>
+            {% for ch, n in p.most_common -%}
+              <code>{{ ch }}</code>&times;{{ n }}{% if not loop.last %}; {% endif %}
+            {%- endfor %}
+          </td>
         </tr>
       {% endfor %}
     </tbody>
   </table>
-{% endif %}
+</section>
+
+{% if result.deep %}
+
+<section aria-labelledby="deep-h">
+  <h2 id="deep-h">Deep statistical analysis</h2>
+
+  {% if result.deep.notes %}
+    <ul>
+      {% for n in result.deep.notes %}<li>{{ n }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+
+  <p>
+    Total bits per token: <strong>{{ result.deep.bits_per_token }}</strong>
+    (sum of <code>ceil(log2(alphabet))</code> across character positions).
+    Overall compression ratio: <strong>{{ "%.3f"|format(result.deep.overall_compression_ratio) }}</strong>
+    (1.000 = incompressible / looks random; lower = more structure).
+    Effective bits at alpha {{ result.deep.significance }}:
+    <strong>{{ result.deep.effective_bits_at_significance }} / {{ result.deep.bits_per_token }}</strong>.
+  </p>
+
+  {% if result.deep.transitions %}
+    <h3 id="transition-h">Transition (Markov) test — per character position</h3>
+    <p>
+      For each character position, builds the contingency table of
+      <em>(char in token N, char in token N+1)</em> and runs a Pearson
+      chi-square independence test. A failure means the character at
+      that position in one token is predictable from the previous token.
+    </p>
+    <table aria-describedby="transition-h">
+      <caption class="visually-hidden">
+        Transition test results by character position.
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Position</th>
+          <th scope="col">chi-square</th>
+          <th scope="col">df</th>
+          <th scope="col">p-value</th>
+          <th scope="col">Verdict</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in result.deep.transitions %}
+          <tr{% if not t.passed %} class="row-warn"{% endif %}>
+            <td>{{ t.index }}</td>
+            <td>{{ "%.2f"|format(t.chi_square) }}</td>
+            <td>{{ t.df }}</td>
+            <td>{{ "%.4g"|format(t.p_value) }}</td>
+            <td>{% if t.passed %}pass{% else %}FAIL (non-random){% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>Transition test was not run (need at least 4 tokens with at least 2 distinct characters at a position).</p>
+  {% endif %}
+
+  {% if result.deep.per_bit %}
+    <h3 id="per-bit-h">Per-bit FIPS-style tests</h3>
+    <p>
+      Each character position is converted to a fixed-width bit slice
+      based on its observed alphabet. The following four tests run on
+      every bit position across the sample: <strong>monobit</strong>
+      (balance of 0s and 1s), <strong>runs</strong> (number of bit
+      runs), <strong>poker</strong> (chi-square over 4-bit nibbles, df
+      15), and <strong>longest-run</strong> (informational; flags when
+      the longest run of 1s is much larger than log2 of the sample).
+      A bit counts as "effective" when monobit, runs and poker all pass.
+    </p>
+
+    <details>
+      <summary>Show per-bit detail ({{ result.deep.per_bit | length }} bit position{{ '' if result.deep.per_bit|length == 1 else 's' }})</summary>
+      <table aria-describedby="per-bit-h">
+        <caption class="visually-hidden">
+          Bit-level statistical test results, one row per bit position.
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Bit</th>
+            <th scope="col">Ones</th>
+            <th scope="col">Zeros</th>
+            <th scope="col">Longest run of 1s</th>
+            <th scope="col">Compression</th>
+            <th scope="col">Monobit p</th>
+            <th scope="col">Runs p</th>
+            <th scope="col">Poker p</th>
+            <th scope="col">Effective?</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for pb in result.deep.per_bit %}
+            {% set pmap = {} %}
+            {% for tt in pb.tests %}{% set _ = pmap.update({tt.name: tt}) %}{% endfor %}
+            <tr{% if not pb.effective_bit %} class="row-warn"{% endif %}>
+              <td>{{ pb.index }}</td>
+              <td>{{ pb.ones }}</td>
+              <td>{{ pb.zeros }}</td>
+              <td>{{ pb.longest_run }}</td>
+              <td>{{ "%.3f"|format(pb.compression_ratio) }}</td>
+              <td>{% if pmap.monobit and pmap.monobit.p_value is not none %}{{ "%.3g"|format(pmap.monobit.p_value) }}{% else %}n/a{% endif %}</td>
+              <td>{% if pmap.runs and pmap.runs.p_value is not none %}{{ "%.3g"|format(pmap.runs.p_value) }}{% else %}n/a{% endif %}</td>
+              <td>{% if pmap.poker and pmap.poker.p_value is not none %}{{ "%.3g"|format(pmap.poker.p_value) }}{% else %}n/a{% endif %}</td>
+              <td>{% if pb.effective_bit %}yes{% else %}no{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </details>
+  {% else %}
+    <p>No bit-level tests were run: the sample provides no usable per-position alphabet.</p>
+  {% endif %}
+
+  <h3 id="correlation-h">Bit-pair correlation (Bonferroni-corrected)</h3>
+  {% if result.deep.correlation_skipped_reason %}
+    <p>{{ result.deep.correlation_skipped_reason }}</p>
+  {% else %}
+    <p>
+      Tested <strong>{{ result.deep.correlation_pairs_tested }}</strong>
+      bit pairs for independence
+      (Pearson chi-square, df 1, threshold alpha /
+      pairs_tested = {{ "%.3g"|format(result.deep.significance / (result.deep.correlation_pairs_tested or 1)) }}).
+      {% if result.deep.correlation_warnings %}
+        <strong>{{ result.deep.correlation_warnings | length }}</strong>
+        pair{{ '' if result.deep.correlation_warnings|length == 1 else 's' }}
+        showed correlation beyond the corrected threshold:
+      {% else %}
+        No bit-pair correlations survived correction — bits look independent.
+      {% endif %}
+    </p>
+    {% if result.deep.correlation_warnings %}
+      <table aria-describedby="correlation-h">
+        <caption class="visually-hidden">
+          Bit pairs whose joint distribution rejected the independence
+          hypothesis after Bonferroni correction.
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Bit A</th>
+            <th scope="col">Bit B</th>
+            <th scope="col">chi-square</th>
+            <th scope="col">p-value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in result.deep.correlation_warnings %}
+            <tr class="row-warn">
+              <td>{{ c.bit_a }}</td>
+              <td>{{ c.bit_b }}</td>
+              <td>{{ "%.2f"|format(c.chi_square) }}</td>
+              <td>{{ "%.3g"|format(c.p_value) }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  {% endif %}
+</section>
+
+{% endif %}{# /deep #}
+{% endif %}{# /samples > 0 #}
+{% endif %}{# /result #}
 {% endblock %}

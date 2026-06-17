@@ -1,10 +1,12 @@
 # Sequencer — `/sequencer/`
 
 Paste a pile of session IDs, CSRF tokens, password-reset tokens, or
-anti-bot tokens — get a Shannon-entropy report with per-position
-analysis, Hamming-distance summary, longest-run check, and a verdict
-(weak / fair / good / excellent). If the verdict is weak or fair, a
-finding is recorded.
+anti-bot tokens -- get a Burp-Sequencer-style randomness report:
+Shannon entropy + per-position analysis + Hamming distance + longest-run
+for a quick verdict, plus an optional **deep statistical battery**
+(character transition / FIPS-style monobit / runs / poker / longest-run
+per bit / Bonferroni-corrected pairwise bit correlation / zlib
+compression). If the verdict is weak or fair, a finding is recorded.
 
 ## Where it is
 
@@ -31,10 +33,12 @@ finding is recorded.
 
 ## Form fields
 
-| Field    | Type     | Default | Notes                                                                |
-|----------|----------|---------|----------------------------------------------------------------------|
-| `tokens` | textarea | empty   | **Required.** One token per line. Empty / whitespace lines dropped.   |
-| `_csrf`  | hidden   | (gen.)  | CSRF token for the form.                                              |
+| Field          | Type     | Default  | Notes                                                                |
+|----------------|----------|----------|----------------------------------------------------------------------|
+| `tokens`       | textarea | empty    | **Required.** One token per line. Empty / whitespace lines dropped.   |
+| `significance` | select   | `0.01`   | Alpha threshold for deep tests: `0.05`, `0.01`, `0.001`, `0.0001`.     |
+| `deep`         | checkbox | unchecked on first POST, then sticky | Toggles the deep statistical battery.        |
+| `_csrf`        | hidden   | (gen.)   | CSRF token for the form.                                              |
 
 ## Pipeline
 
@@ -61,21 +65,80 @@ skipped rule_run — coverage stays honest).
 
 ## Output sections
 
-- Rating + sample count + common length.
-- Entropy (bits/char and bits/token).
-- Longest run.
-- Hamming min / mean / max.
-- Char-class counts.
-- Per-position table: position / distinct / bits / top-3 chars.
-  Weak positions get a `row-warn` CSS class.
+- **Summary** -- quick Shannon rating, deep rating (when deep is on),
+  effective bits, common length, entropy, longest run, Hamming
+  min/mean/max, character classes, notes.
+- **Per-position table** -- one row per character position with distinct
+  count, Shannon bits, status, top-3 most common characters. Weak
+  positions get a `row-warn` CSS class plus a textual `weak` status.
+- **Deep statistical analysis** (only when the `deep` checkbox is on):
+  - **Transition (Markov) test** -- per character position, Pearson
+    chi-square independence test of `(char in token N, char in token N+1)`.
+    A failure means a character at that position predicts the next token's
+    character at the same position.
+  - **Per-bit FIPS-style tests** -- each character position is converted
+    to a `ceil(log2(alphabet))` bit slice. For each bit position across
+    the sample we run:
+    - **monobit** (balance of 0s and 1s -- closed-form NIST p-value via
+      complementary error function),
+    - **runs** (total run count -- closed-form NIST p-value, skipped
+      when the monobit pre-test `|pi - 0.5| < 2/sqrt(N)` fails),
+    - **poker** (chi-square over the distribution of 4-bit nibbles, df 15,
+      requires at least 16 bits),
+    - **longest-run** (informational: flags when the longest run of 1s is
+      far above `log2(N)`).
+    A bit is "effective" when monobit, runs and poker all have
+    `p >= alpha`.
+  - **Bit-pair correlation** -- pairwise Pearson chi-square (df 1) over
+    all `bits_per_token choose 2` pairs, with **Bonferroni correction**
+    so the family-wise false-positive rate stays at the chosen alpha.
+    Skipped above 256 bits per token to keep runtime bounded.
+  - **Per-bit compression** -- zlib(level 9) ratio per bit position
+    (1.000 = incompressible; lower = structured).
+  - **Deep rating** -- `strong` when at least 128 effective bits and no
+    surviving correlations; `fair` when at least 64 effective bits and
+    no more than 2 correlations; `weak` otherwise. Independent from the
+    legacy Shannon `rating` so both numbers are visible.
+
+## Limits (deep analysis only)
+
+| Cap                              | Default | Rationale                                                                        |
+|----------------------------------|---------|----------------------------------------------------------------------------------|
+| `_DEEP_MAX_SAMPLES`              | 20,000  | FIPS-140 ceiling. Beyond this the sample is truncated with a note.                |
+| `_DEEP_MAX_COMMON_LEN`           | 256     | Truncate analysis to the first 256 characters of each token.                      |
+| `_DEEP_MAX_BITS_FOR_CORRELATION` | 256     | Above this, correlation skips (otherwise pair count is `O(bits^2)`).              |
+| `_DEEP_MIN_SAMPLES`              | 8       | Deep analysis reports `n/a` below this; nothing is statistically meaningful.       |
 
 ## Accessibility notes
 
-- `<label for="tokens">Tokens (one per line)</label>` on the textarea.
-- Result heading `<h2 id="result">Result — N sample(s)</h2>`.
-- `<dl>` / `<dt>` / `<dd>` for the metrics; `<table>` with
-  `<th scope="col">` for the per-position grid.
-- Errors render in the global flash region.
+- One landmark per section: `<section aria-labelledby="input-h">`,
+  `aria-labelledby="summary-h"`, `aria-labelledby="positions-h"`,
+  `aria-labelledby="deep-h"`. Each heading is the `<h2>` referenced by
+  the `aria-labelledby` it provides.
+- The form is grouped with `<fieldset><legend>Tokens</legend>` and
+  `<fieldset><legend>Analysis options</legend>`.
+- The textarea is required, with an `aria-hidden="true"` asterisk
+  paired with a `visually-hidden` "required" span. A `tokens-hint`
+  paragraph explains sample-size expectations and is wired in via
+  `aria-describedby`. `spellcheck="false"` and `autocomplete="off"`
+  keep the textarea predictable for SR users.
+- The significance dropdown and deep-analysis checkbox both have a
+  visible hint paragraph connected via `aria-describedby`. Nothing
+  changes on focus or checkbox toggle: the form is only submitted by
+  pressing **Analyse** (WCAG 2.2 Level AAA, SC 3.2.5 "Change on
+  Request").
+- Every table has a `<caption>`. Captions that are present for SR users
+  but visually redundant use `class="visually-hidden"`. All `<th>`
+  cells carry `scope="col"`.
+- The per-bit detail table is wrapped in `<details><summary>` so it
+  collapses by default -- the keyboard order goes Summary -> Transition
+  -> Per-bit summary -> Bit-pair correlation without forcing a SR to
+  step through ~200 bit rows unless the operator opens them.
+- Status text in tables is real text (`pass` / `FAIL (non-random)` /
+  `weak` / `ok` / `yes` / `no`), never colour-only.
+- `<dl>` / `<dt>` / `<dd>` for the summary metrics; the entire result
+  region is keyboard-reachable in document order. Errors render in the
+  global flash region (`Paste at least one token before analysing.`).
 
 ## How it integrates
 
@@ -149,10 +212,33 @@ want to script it from a plugin.
 
 `reqlore/tests/unit/test_sequencer.py`:
 
-- `test_collect_tokens_strips_blank_lines_and_whitespace` — input prep.
-- `test_empty_input_returns_weak` — weak verdict + "No tokens" note.
-- `test_uniform_random_tokens_score_high` — 40 random hex (16-char) → fair/good band.
-- `test_low_entropy_constant_pos_flagged` — constant first char → weak position 0.
-- `test_counter_style_min_hamming_one` — sequential IDs → counter-style hint.
-- `test_overall_bits_per_token_equals_per_char_times_length` — formula sanity.
-- `test_char_classes_count_all_seen_chars` — char-class counting.
+- `test_collect_tokens_strips_blank_lines_and_whitespace` -- input prep.
+- `test_empty_input_returns_weak` -- weak verdict + "No tokens" note.
+- `test_uniform_random_tokens_score_high` -- 40 random hex (16-char) -> fair/good band.
+- `test_low_entropy_constant_pos_flagged` -- constant first char -> weak position 0.
+- `test_counter_style_min_hamming_one` -- sequential IDs -> counter-style hint.
+- `test_overall_bits_per_token_equals_per_char_times_length` -- formula sanity.
+- `test_char_classes_count_all_seen_chars` -- char-class counting.
+
+`reqlore/tests/unit/test_sequencer_deep.py` (deep battery):
+
+- `test_gamma_p_endpoints` / `test_chi2_pvalue_uniform_is_high` /
+  `test_chi2_pvalue_huge_stat_is_zero` -- math kernels.
+- `test_monobit_balanced_passes` / `test_monobit_all_ones_fails_hard`.
+- `test_runs_alternating_fails` -- perfect alternation rejected.
+- `test_poker_uniform_passes` / `test_poker_constant_fails`.
+- `test_encode_to_bits_assigns_log2_alphabet_widths` /
+  `test_encode_to_bits_constant_position_is_zero_bits`.
+- `test_deep_random_urlsafe_is_strong` -- CSPRNG tokens land strong.
+- `test_deep_counter_tokens_are_weak` -- counter-style fails every test.
+- `test_deep_detects_mirrored_bit_correlation` -- when bits at one
+  position equal bits at another, correlation surfaces the exact pair.
+- `test_deep_below_min_samples_returns_na` / `test_deep_empty_input_safe`.
+- `test_deep_invalid_significance_falls_back` -- guards against bad input.
+- `test_deep_correlation_skipped_for_oversize_tokens` -- runtime cap.
+- `test_deep_does_not_break_simple_rating` -- legacy rating preserved.
+- `test_per_bit_includes_compression_ratio`.
+- `test_sequencer_get_renders_significance_dropdown` /
+  `test_sequencer_post_runs_deep_by_default` /
+  `test_sequencer_post_basic_only_skips_deep` /
+  `test_sequencer_post_empty_flashes_warning` -- web surface.

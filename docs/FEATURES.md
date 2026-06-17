@@ -121,6 +121,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | GraphQL workbench (introspection, schema explorer, batch) | ✅ | See [graphql.md](modules/graphql.md). |
 | Param-miner (header / cookie / param brute via length oracle) | ✅ | 200-word built-in list. See [param-miner.md](modules/param-miner.md). |
 | Sequencer (entropy, per-position, Hamming, longest-run) | ✅ | See [sequencer.md](modules/sequencer.md). |
+| Sequencer deep statistical battery (transition / FIPS monobit-runs-poker per bit / Bonferroni-corrected pairwise correlation / zlib compression) | ✅ | Pure-Python, no scipy. See [sequencer.md](modules/sequencer.md#limits-deep-analysis-only). |
 | CSRF PoC generator (form + fetch flavours) | ✅ | See [poc.md](modules/poc.md). |
 | Clickjacking tester | ✅ | |
 | OAST (in-process HTTP receiver, per-token routing) | ✅ | See [oast.md](modules/oast.md). |
