@@ -505,14 +505,12 @@ def cmd_browser(args: argparse.Namespace) -> int:
         from .storage import Project
         project = Project(project_path)
 
-    # Firefox channel to use. Defaults to Dev Edition while iterating
-    # on a new in-tree extension build that has not yet been re-signed
-    # by Mozilla AMO -- only Dev / Nightly / ESR / Unbranded honour
-    # `xpinstall.signatures.required=false`, which the build_xpi() dev
-    # fallback path relies on. Once the in-tree extension version
-    # matches a bundled signed XPI again, this default can flip back
-    # to 'release'.
-    channel = getattr(args, "channel", None) or "devedition"
+    # Firefox channel to use. Defaults to Release: a Mozilla-signed
+    # XPI is bundled under ``extension_signed/`` and loads on every
+    # channel without ``xpinstall.signatures.required=false``. Use
+    # --channel devedition only when iterating on an unsigned in-tree
+    # build that is ahead of the bundled signed XPI.
+    channel = getattr(args, "channel", None) or "release"
 
     try:
         result = fxmod.run_browser(
@@ -1200,10 +1198,10 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Prefer the host Firefox install over the managed cache.")
     pb2.add_argument("--channel", choices=("release", "devedition"), default=None,
                      help="Firefox release channel to download. Defaults to "
-                          "'devedition' while a newer in-tree extension build "
-                          "is being verified (Dev Edition loads the unsigned "
-                          "build_xpi() fallback). Use 'release' once a matching "
-                          "Mozilla-signed XPI is bundled.")
+                          "'release' (a Mozilla-signed XPI is bundled and "
+                          "loads on every channel). Use 'devedition' only "
+                          "when iterating on an unsigned in-tree extension "
+                          "build that is ahead of the bundled signed XPI.")
     pb2.add_argument("--wait", action="store_true",
                      help="Block until Firefox exits (default: spawn and return).")
     pb2.set_defaults(func=cmd_browser)

@@ -755,21 +755,21 @@ def test_cmd_browser_with_project_passes_through_and_closes(
 
     assert rc == 0
     assert captured.get("project") is not None
-    # While we iterate on a newer in-tree extension build that has not
-    # yet been re-signed by Mozilla AMO, --project defaults to Dev
-    # Edition so the unsigned build_xpi() fallback actually loads.
-    assert captured.get("channel") == "devedition"
+    # A Mozilla-signed XPI matching the in-tree extension version is
+    # bundled under ``extension_signed/``, so --project defaults to
+    # the Release channel and still loads the signed XPI cleanly.
+    assert captured.get("channel") == "release"
     # Project must be closed after launch -- otherwise SQLite locks linger.
     proj = captured["project"]
     # Re-opening must work (i.e., the file isn't write-locked by us).
     Project(proj_path).close()
 
 
-def test_cmd_browser_without_project_uses_devedition_channel(
+def test_cmd_browser_without_project_uses_release_channel(
         monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """No --project still defaults to Dev Edition for now: the
-    in-tree extension version is ahead of the bundled signed XPI,
-    so we need a channel that loads the unsigned build_xpi() XPI."""
+    """No --project still defaults to Release: the bundled
+    Mozilla-signed XPI matches the in-tree extension version, so
+    Release loads it without needing the unsigned dev fallback."""
     from reqlore import browser as fxmod
     from reqlore import cli as reqlore_cli
 
@@ -796,7 +796,7 @@ def test_cmd_browser_without_project_uses_devedition_channel(
     )
     rc = reqlore_cli.cmd_browser(args)
     assert rc == 0
-    assert captured.get("channel") == "devedition"
+    assert captured.get("channel") == "release"
 
 
 def test_cached_install_segregates_channels(tmp_path: Path,
