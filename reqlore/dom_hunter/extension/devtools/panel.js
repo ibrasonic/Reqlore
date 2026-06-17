@@ -53,9 +53,9 @@ function describeBridgeFailure(baseUrl, diag) {
   }
   if (diag.kind === "http" && diag.status === 401) {
     return "token mismatch at " + where + " (HTTP 401) -- the extension's bridge token does "
-         + "not match the project currently served. Make sure `reqlore web` and "
-         + "`reqlore browser` use the SAME --project, then relaunch the browser. If you "
-         + "rotated the token in Reqlore -> DOM Hunter -> Settings, you must relaunch too.";
+      + "not match the project currently served. Make sure `reqlore both`/`reqlore ui` "
+      + "and `reqlore browser` use the SAME --project, then reload the target tab. "
+      + "If you recently rotated the token, it should self-heal within a few seconds.";
   }
   if (diag.kind === "http" && diag.status === 404) {
     return "endpoint missing at " + where + " (HTTP 404) -- is this the Reqlore UI port? "

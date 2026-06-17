@@ -82,12 +82,39 @@ async function fetchConfig() {
   const { baseUrl, token } = await getSettings();
   if (!baseUrl || !token) return null;
   try {
-    const r = await fetch(baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/config", {
+    const url = baseUrl.replace(/\/+$/, "") + "/dom-hunter/__bridge/config";
+    let usedToken = token;
+    let r = await fetch(url, {
       method: "GET",
-      headers: { "X-DOMHunter-Token": token, "Accept": "application/json" },
+      headers: { "X-DOMHunter-Token": usedToken, "Accept": "application/json" },
       cache: "no-store",
       credentials: "omit",
     });
+
+    // Project-switch self-heal: if local token is stale and the bridge
+    // rejects it, retry once with managed-policy token (if different).
+    // This fixes the common case where the user changes project/launcher
+    // and local storage still holds an old token.
+    if (r.status === 401) {
+      try {
+        const managed = await browser.storage.managed.get();
+        const managedToken = managed && typeof managed.token === "string"
+          ? managed.token : "";
+        if (managedToken && managedToken !== usedToken) {
+          const rr = await fetch(url, {
+            method: "GET",
+            headers: { "X-DOMHunter-Token": managedToken, "Accept": "application/json" },
+            cache: "no-store",
+            credentials: "omit",
+          });
+          if (rr.ok) {
+            r = rr;
+            usedToken = managedToken;
+          }
+        }
+      } catch (_) {}
+    }
+
     if (!r.ok) return null;
     const cfg = await r.json();
     // Self-healing token rotation: if Reqlore handed us a token that
@@ -95,7 +122,7 @@ async function fetchConfig() {
     // every subsequent request uses the fresh value. The just-used
     // token was the previous one (still accepted under the server's
     // grace window); next call will use the new one.
-    if (cfg && typeof cfg.token === "string" && cfg.token && cfg.token !== token) {
+    if (cfg && typeof cfg.token === "string" && cfg.token && cfg.token !== usedToken) {
       try {
         await browser.storage.local.set({ [STORE_KEYS.token]: cfg.token });
       } catch (_) {}
