@@ -15,6 +15,54 @@
   independence test.
 </p>
 
+<nav class="toolbar" aria-label="Sequencer modes">
+  <a href="{{ url_for('.capture_new') }}" accesskey="n">
+    <u>N</u>ew live capture
+  </a>
+  <span aria-hidden="true">&middot;</span>
+  <a href="#input-h" accesskey="p"><u>P</u>aste tokens below</a>
+</nav>
+
+{% if captures %}
+<section aria-labelledby="captures-h">
+  <h2 id="captures-h">Live captures</h2>
+  <p>
+    A live capture re-fires a stored request in the background and
+    extracts the token from each response. Useful when you want
+    hundreds or thousands of fresh tokens straight from the target,
+    without scripting a curl loop yourself.
+  </p>
+  <table>
+    <caption class="visually-hidden">
+      All live captures stored in this project. Each row links to a
+      detail page with controls and live progress.
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Name</th>
+        <th scope="col">URL</th>
+        <th scope="col">Extractor</th>
+        <th scope="col">Status</th>
+        <th scope="col">Target</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in captures %}
+        <tr>
+          <td>{{ c.id }}</td>
+          <td><a href="{{ url_for('.capture_detail', cid=c.id) }}">{{ c.name }}</a></td>
+          <td class="url">{{ c.url }}</td>
+          <td>{{ c.extractor_kind }}{% if c.extractor_arg %} = <code>{{ c.extractor_arg }}</code>{% endif %}</td>
+          <td>{{ c.status }}</td>
+          <td>{{ c.max_samples }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
 <section aria-labelledby="input-h">
   <h2 id="input-h">Input</h2>
 

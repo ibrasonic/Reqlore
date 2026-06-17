@@ -148,6 +148,8 @@ def send_to(hid: int, slug: str):
         target = url_for("repeater.index", from_history=hid)
     elif slug == "intruder":
         target = url_for("intruder.new", from_history=hid)
+    elif slug == "sequencer":
+        target = url_for("sequencer.capture_new", from_history=hid)
     elif slug == "comparer-a":
         target = url_for("comparer.index", from_a=hid)
     elif slug == "comparer":

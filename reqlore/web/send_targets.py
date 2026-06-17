@@ -30,6 +30,7 @@ from dataclasses import dataclass
 SEND_TARGETS: list[tuple[str, str, str]] = [
     ("repeater", "Repeater",          "r"),
     ("intruder", "Intruder",          "i"),
+    ("sequencer", "Sequencer (live capture)", "q"),
     ("comparer", "Comparer (side A)", "m"),
     ("poc",      "PoC builder",       "b"),
     ("jwt",      "JWT workbench",     "j"),

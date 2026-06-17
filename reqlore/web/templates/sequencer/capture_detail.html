@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Sequencer capture #{{ cap.id }}{% endblock %}
+{% block main %}
+
+<h1>Live capture #{{ cap.id }} — {{ cap.name }}</h1>
+
+<p id="page-help">
+  This page replays the stored request and extracts a token from each
+  response. Press <strong>Start</strong> to begin, <strong>Pause</strong>
+  to stop temporarily, <strong>Resume</strong> to continue,
+  <strong>Cancel</strong> to abort. When you have enough samples, press
+  <strong>Analyse with deep battery</strong> to run the full
+  Burp-Sequencer-style statistical report on the captured tokens.
+</p>
+
+{% if live and auto %}
+  {# AAA-friendly polling: the operator opted in via the "Auto-refresh"
+     checkbox below; refresh interval is 3 s. WCAG 2.2.1 (Timing
+     Adjustable) is satisfied because the operator turned this on
+     themselves and can turn it off again. #}
+  <meta http-equiv="refresh" content="3">
+{% endif %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <ul class="flashes" aria-label="Notifications">
+    {% for cat, msg in messages %}
+      <li class="flash flash-{{ cat }}" role="status">{{ msg }}</li>
+    {% endfor %}
+    </ul>
+  {% endif %}
+{% endwith %}
+
+<nav class="toolbar" aria-label="Sequencer navigation">
+  <a href="{{ url_for('.index') }}" accesskey="b"><u>B</u>ack to Sequencer</a>
+  <span aria-hidden="true">&middot;</span>
+  <a href="{{ url_for('.capture_new') }}" accesskey="n"><u>N</u>ew capture</a>
+</nav>
+
+<section aria-labelledby="status-h">
+  <h2 id="status-h">Status</h2>
+
+  <dl class="kv">
+    <dt>Status</dt>
+    <dd>
+      <strong>{{ cap.status }}</strong>
+      {% if live %} (running){% endif %}
+    </dd>
+
+    <dt>Progress</dt>
+    <dd>
+      {{ runner_collected }} / {{ cap.max_samples }} samples
+      ({{ ((runner_collected / cap.max_samples * 100) | round(1)) if cap.max_samples else 0 }}%)
+    </dd>
+
+    <dt>Errors</dt>
+    <dd>{{ runner_errors }}</dd>
+
+    {% if cap.stop_reason %}
+      <dt>Stop reason</dt>
+      <dd>{{ cap.stop_reason }}</dd>
+    {% endif %}
+
+    <dt>Significance level (alpha)</dt>
+    <dd>{{ cap.significance }}</dd>
+  </dl>
+
+  <progress
+    value="{{ runner_collected }}"
+    max="{{ cap.max_samples }}"
+    aria-label="Capture progress"
+    aria-valuetext="{{ runner_collected }} of {{ cap.max_samples }} samples ({{ ((runner_collected / cap.max_samples * 100) | round(1)) if cap.max_samples else 0 }}%)">
+  </progress>
+</section>
+
+<section aria-labelledby="controls-h">
+  <h2 id="controls-h">Controls</h2>
+
+  <div class="toolbar" role="group" aria-label="Capture controls">
+    {% if not live %}
+      <form method="post" action="{{ url_for('.capture_start', cid=cap.id) }}" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" accesskey="s"><u>S</u>tart</button>
+      </form>
+    {% else %}
+      {% if cap.status == 'paused' %}
+        <form method="post" action="{{ url_for('.capture_resume', cid=cap.id) }}" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit" accesskey="r"><u>R</u>esume</button>
+        </form>
+      {% else %}
+        <form method="post" action="{{ url_for('.capture_pause', cid=cap.id) }}" class="inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+          <button type="submit" accesskey="p"><u>P</u>ause</button>
+        </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('.capture_cancel', cid=cap.id) }}" class="inline">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" accesskey="c"><u>C</u>ancel</button>
+      </form>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('.capture_analyse', cid=cap.id) }}" class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button type="submit" accesskey="a"
+              {% if total == 0 %}disabled aria-disabled="true"{% endif %}>
+        <u>A</u>nalyse with deep battery
+      </button>
+    </form>
+
+    <a href="{{ url_for('.capture_export_txt', cid=cap.id) }}"
+       accesskey="e" {% if total == 0 %}aria-disabled="true"{% endif %}>
+       <u>E</u>xport tokens (.txt)
+    </a>
+
+    {% if not live %}
+      <form method="post" action="{{ url_for('.capture_delete', cid=cap.id) }}"
+            class="inline"
+            onsubmit="return confirm('Delete capture #{{ cap.id }} and all its samples?');">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" accesskey="d"><u>D</u>elete</button>
+      </form>
+    {% endif %}
+  </div>
+
+  <p>
+    <a href="{{ url_for('.capture_detail', cid=cap.id, auto=1) if not auto else url_for('.capture_detail', cid=cap.id) }}"
+       accesskey="t">
+      {% if auto %}Disable au<u>t</u>o-refresh{% else %}Enable au<u>t</u>o-refresh (3 s){% endif %}
+    </a>
+  </p>
+</section>
+
+<section aria-labelledby="config-h">
+  <h2 id="config-h">Configuration</h2>
+
+  <dl class="kv">
+    <dt>Target URL</dt>
+    <dd><code>{{ cap.url }}</code></dd>
+
+    <dt>Engine</dt>
+    <dd>{{ cap.engine }}</dd>
+
+    <dt>Extractor</dt>
+    <dd>
+      {{ extractor_labels.get(cap.extractor_kind, cap.extractor_kind) }}
+      &mdash; <code>{{ cap.extractor_arg }}</code>
+    </dd>
+
+    <dt>Delay</dt>
+    <dd>{{ cap.delay_ms }} ms between requests</dd>
+
+    <dt>Concurrency</dt>
+    <dd>{{ cap.concurrency }}</dd>
+  </dl>
+
+  <details>
+    <summary>Show stored request template</summary>
+    <pre><code>{{ cap.template.decode('latin-1', errors='replace') }}</code></pre>
+  </details>
+</section>
+
+<section aria-labelledby="samples-h">
+  <h2 id="samples-h">Sample preview</h2>
+
+  {% if samples %}
+    <p>
+      First {{ samples | length }} of {{ total }} captured tokens
+      (showing token, HTTP status and request duration).
+    </p>
+    <table>
+      <caption class="visually-hidden">
+        First captured tokens with HTTP status and per-request duration.
+      </caption>
+      <thead>
+        <tr>
+          <th scope="col">Seq</th>
+          <th scope="col">Token</th>
+          <th scope="col">Status</th>
+          <th scope="col">Duration (ms)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in samples %}
+          <tr>
+            <td>{{ s.seq }}</td>
+            <td><code>{{ s.token }}</code></td>
+            <td>{{ s.status }}</td>
+            <td>{{ s.duration_ms }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No tokens captured yet. Press <strong>Start</strong> to begin.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

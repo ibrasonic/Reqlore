@@ -210,6 +210,35 @@ CREATE TABLE IF NOT EXISTS dom_hunter_messages (
     handler_stack TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_dom_hunter_msg_ts ON dom_hunter_messages(ts);
+
+CREATE TABLE IF NOT EXISTS sequencer_captures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    template_blob BLOB NOT NULL,        -- raw HTTP request to replay
+    engine TEXT NOT NULL DEFAULT 'httpx',
+    extractor_kind TEXT NOT NULL,       -- cookie | header | regex | json
+    extractor_arg TEXT NOT NULL DEFAULT '',
+    max_samples INTEGER NOT NULL DEFAULT 200,
+    delay_ms INTEGER NOT NULL DEFAULT 0,
+    concurrency INTEGER NOT NULL DEFAULT 1,
+    significance TEXT NOT NULL DEFAULT '0.01',
+    status TEXT NOT NULL DEFAULT 'idle', -- idle|running|paused|done|cancelled|errored
+    stop_reason TEXT NOT NULL DEFAULT '',
+    error_count INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sequencer_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    capture_id INTEGER NOT NULL,
+    seq INTEGER NOT NULL,
+    token TEXT NOT NULL,
+    status INTEGER NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    captured_at INTEGER NOT NULL,
+    FOREIGN KEY (capture_id) REFERENCES sequencer_captures(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_seqcap_capture ON sequencer_samples(capture_id);
 """
 
 
@@ -798,6 +827,127 @@ class Project:
         with self._cursor() as cur:
             cur.execute("DELETE FROM intruder_results WHERE attack_id=?", (aid,))
             cur.execute("DELETE FROM intruder_attacks WHERE id=?", (aid,))
+
+    # ---- sequencer live captures ----
+    def create_sequencer_capture(
+        self, *, name: str, url: str, template: bytes, engine: str,
+        extractor_kind: str, extractor_arg: str, max_samples: int,
+        delay_ms: int, concurrency: int, significance: str,
+    ) -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO sequencer_captures(name,url,template_blob,engine,"
+                "extractor_kind,extractor_arg,max_samples,delay_ms,concurrency,"
+                "significance,status,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?, 'idle', ?)",
+                (name, url, _compress(template), engine, extractor_kind,
+                 extractor_arg, int(max_samples), int(delay_ms),
+                 int(concurrency), significance, int(time.time())),
+            )
+            return int(cur.lastrowid or 0)
+
+    def list_sequencer_captures(self) -> list[dict]:
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT id,name,url,engine,extractor_kind,extractor_arg,"
+                "max_samples,status,stop_reason,error_count,significance,created_at "
+                "FROM sequencer_captures ORDER BY id DESC"
+            ).fetchall()
+        return [
+            {"id": r[0], "name": r[1], "url": r[2], "engine": r[3],
+             "extractor_kind": r[4], "extractor_arg": r[5],
+             "max_samples": r[6], "status": r[7], "stop_reason": r[8],
+             "error_count": r[9], "significance": r[10], "created_at": r[11]}
+            for r in rows
+        ]
+
+    def get_sequencer_capture(self, cid: int) -> dict | None:
+        with self._cursor() as cur:
+            r = cur.execute(
+                "SELECT id,name,url,template_blob,engine,extractor_kind,"
+                "extractor_arg,max_samples,delay_ms,concurrency,significance,"
+                "status,stop_reason,error_count,created_at "
+                "FROM sequencer_captures WHERE id=?", (cid,),
+            ).fetchone()
+        if not r:
+            return None
+        return {
+            "id": r[0], "name": r[1], "url": r[2],
+            "template": _decompress(r[3]),
+            "engine": r[4], "extractor_kind": r[5], "extractor_arg": r[6],
+            "max_samples": r[7], "delay_ms": r[8], "concurrency": r[9],
+            "significance": r[10], "status": r[11], "stop_reason": r[12],
+            "error_count": r[13], "created_at": r[14],
+        }
+
+    def set_sequencer_capture_status(
+        self, cid: int, status: str, *, stop_reason: str | None = None,
+        error_count: int | None = None,
+    ) -> None:
+        sets = ["status=?"]
+        args: list = [status]
+        if stop_reason is not None:
+            sets.append("stop_reason=?")
+            args.append(stop_reason)
+        if error_count is not None:
+            sets.append("error_count=?")
+            args.append(int(error_count))
+        args.append(cid)
+        with self._cursor() as cur:
+            cur.execute(
+                f"UPDATE sequencer_captures SET {', '.join(sets)} WHERE id=?",
+                args,
+            )
+
+    def add_sequencer_sample(
+        self, *, capture_id: int, seq: int, token: str, status: int,
+        duration_ms: int,
+    ) -> int:
+        with self._cursor() as cur:
+            cur.execute(
+                "INSERT INTO sequencer_samples(capture_id,seq,token,status,"
+                "duration_ms,captured_at) VALUES (?,?,?,?,?,?)",
+                (capture_id, int(seq), token, int(status), int(duration_ms),
+                 int(time.time())),
+            )
+            return int(cur.lastrowid or 0)
+
+    def count_sequencer_samples(self, cid: int) -> int:
+        with self._cursor() as cur:
+            return int(cur.execute(
+                "SELECT COUNT(*) FROM sequencer_samples WHERE capture_id=?",
+                (cid,),
+            ).fetchone()[0])
+
+    def list_sequencer_samples(
+        self, cid: int, *, limit: int | None = None,
+    ) -> list[dict]:
+        sql = ("SELECT id,seq,token,status,duration_ms,captured_at "
+               "FROM sequencer_samples WHERE capture_id=? ORDER BY seq ASC")
+        args: list = [cid]
+        if limit is not None:
+            sql += " LIMIT ?"
+            args.append(int(limit))
+        with self._cursor() as cur:
+            rows = cur.execute(sql, args).fetchall()
+        return [
+            {"id": r[0], "seq": r[1], "token": r[2], "status": r[3],
+             "duration_ms": r[4], "captured_at": r[5]}
+            for r in rows
+        ]
+
+    def list_sequencer_tokens(self, cid: int) -> list[str]:
+        with self._cursor() as cur:
+            rows = cur.execute(
+                "SELECT token FROM sequencer_samples WHERE capture_id=? "
+                "ORDER BY seq ASC", (cid,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def delete_sequencer_capture(self, cid: int) -> None:
+        with self._cursor() as cur:
+            cur.execute("DELETE FROM sequencer_samples WHERE capture_id=?", (cid,))
+            cur.execute("DELETE FROM sequencer_captures WHERE id=?", (cid,))
 
     # ---- findings (scanner output) ----
     SEVERITIES = ("info", "low", "medium", "high", "critical")

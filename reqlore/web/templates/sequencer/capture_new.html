@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — New live capture{% endblock %}
+{% block main %}
+
+<h1>New live capture</h1>
+
+<p id="page-help">
+  Define a request that returns a token (a session cookie, a CSRF
+  field, a JSON value, anything you can point a regex at). Reqlore will
+  re-fire the request in the background, extract the token from each
+  response and store it. You can then analyse the live-collected pile
+  with the same Burp-Sequencer-style deep statistical battery as the
+  paste flow.
+</p>
+
+{% if error %}
+  <p class="flash flash-warn" role="alert">{{ error }}</p>
+{% endif %}
+
+<section aria-labelledby="form-h">
+  <h2 id="form-h">Capture configuration</h2>
+
+  <form method="post" class="stack" aria-describedby="page-help">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+
+    <fieldset>
+      <legend>Identification</legend>
+      <p>
+        <label for="cap-name">Name</label><br>
+        <input id="cap-name" name="name" type="text" size="40"
+               value="{{ form.name }}" required
+               aria-describedby="cap-name-hint">
+        <span aria-hidden="true">*</span>
+        <span class="visually-hidden">(required)</span>
+      </p>
+      <p id="cap-name-hint" class="hint">
+        A short label shown in the captures list. The capture id is
+        assigned by the database.
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Request</legend>
+      <p>
+        <label for="cap-url">Target URL (base)</label><br>
+        <input id="cap-url" name="url" type="url" size="60"
+               value="{{ form.url }}" required
+               aria-describedby="cap-url-hint">
+        <span aria-hidden="true">*</span>
+        <span class="visually-hidden">(required)</span>
+      </p>
+      <p id="cap-url-hint" class="hint">
+        Used as the base URL when the raw request template uses a
+        relative path. Scheme and authority come from this field; the
+        path comes from the request line.
+      </p>
+
+      <p>
+        <label for="cap-engine">Engine</label><br>
+        <select id="cap-engine" name="engine" aria-describedby="cap-engine-hint">
+          {% for value, label in engine_options %}
+            <option value="{{ value }}"{% if value == form.engine %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p id="cap-engine-hint" class="hint">
+        The engine used to send each capture request. Defaults to
+        <code>httpx</code>; <code>raw</code> sends bytes exactly as
+        typed (useful for malformed-header research).
+      </p>
+
+      <p>
+        <label for="cap-template">Raw request</label><br>
+        <textarea id="cap-template" name="template" rows="10" cols="80"
+                  required spellcheck="false" autocomplete="off"
+                  aria-describedby="cap-template-hint">{{ form.template }}</textarea>
+        <span aria-hidden="true">*</span>
+        <span class="visually-hidden">(required)</span>
+      </p>
+      <p id="cap-template-hint" class="hint">
+        Raw HTTP request as it would appear on the wire. The
+        <code>Content-Length</code> and <code>Transfer-Encoding</code>
+        headers are recomputed on send. Newlines are normalised to
+        CRLF automatically.
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Token extractor</legend>
+      <p>
+        <label for="cap-kind">Extractor kind</label><br>
+        <select id="cap-kind" name="extractor_kind" aria-describedby="cap-kind-hint">
+          {% for kind, label in extractor_labels.items() %}
+            <option value="{{ kind }}"{% if kind == form.extractor_kind %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p id="cap-kind-hint" class="hint">
+        <strong>cookie:</strong> name of a cookie set by the response.
+        <strong>header:</strong> name of a response header.
+        <strong>regex:</strong> regular expression with one capture
+        group, applied to the response body.
+        <strong>json:</strong> dot-separated path into a JSON body
+        (list indices are integers).
+      </p>
+
+      <p>
+        <label for="cap-arg">Extractor argument</label><br>
+        <input id="cap-arg" name="extractor_arg" type="text" size="60"
+               value="{{ form.extractor_arg }}" required
+               spellcheck="false" autocomplete="off"
+               aria-describedby="cap-arg-hint">
+        <span aria-hidden="true">*</span>
+        <span class="visually-hidden">(required)</span>
+      </p>
+      <p id="cap-arg-hint" class="hint">
+        Cookie name (e.g. <code>SESSIONID</code>), header name (e.g.
+        <code>X-CSRF-Token</code>), regex (e.g.
+        <code>"token":\s*"([^"]+)"</code>), or JSON path (e.g.
+        <code>data.session.token</code>).
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Run controls</legend>
+      <p>
+        <label for="cap-max">Target sample count</label><br>
+        <input id="cap-max" name="max_samples" type="number" min="8" max="20000"
+               value="{{ form.max_samples }}" required
+               aria-describedby="cap-max-hint">
+        <span aria-hidden="true">*</span>
+        <span class="visually-hidden">(required)</span>
+      </p>
+      <p id="cap-max-hint" class="hint">
+        How many tokens to collect before stopping. Burp defaults to
+        100; FIPS-style confidence wants 1000+. Hard cap is 20000.
+      </p>
+
+      <p>
+        <label for="cap-delay">Delay between requests (ms)</label><br>
+        <input id="cap-delay" name="delay_ms" type="number" min="0" max="60000"
+               value="{{ form.delay_ms }}"
+               aria-describedby="cap-delay-hint">
+      </p>
+      <p id="cap-delay-hint" class="hint">
+        Politeness throttle. Set above zero to avoid tripping rate
+        limits or generating obvious spikes in target logs.
+      </p>
+
+      <p>
+        <label for="cap-conc">Concurrency</label><br>
+        <input id="cap-conc" name="concurrency" type="number" min="1" max="8"
+               value="{{ form.concurrency }}"
+               aria-describedby="cap-conc-hint">
+      </p>
+      <p id="cap-conc-hint" class="hint">
+        Reserved for future use; current capture loop is single-flight
+        to keep ordering deterministic. 1 is recommended.
+      </p>
+
+      <p>
+        <label for="cap-sig">Default significance level (alpha)</label><br>
+        <select id="cap-sig" name="significance"
+                aria-describedby="cap-sig-hint">
+          {% for value, label in significance_options %}
+            <option value="{{ value }}"{% if value == form.significance %} selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </p>
+      <p id="cap-sig-hint" class="hint">
+        Used when you press <em>Analyse captured tokens</em> on the
+        detail page. Can be overridden at analysis time.
+      </p>
+    </fieldset>
+
+    <p>
+      <button type="submit" accesskey="c"><u>C</u>reate capture</button>
+      <a href="{{ url_for('.index') }}">Cancel</a>
+    </p>
+  </form>
+</section>
+
+{% endblock %}

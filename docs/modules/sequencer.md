@@ -8,6 +8,19 @@ for a quick verdict, plus an optional **deep statistical battery**
 per bit / Bonferroni-corrected pairwise bit correlation / zlib
 compression). If the verdict is weak or fair, a finding is recorded.
 
+The Sequencer has **two surfaces** that share the same statistical
+engine:
+
+1. **Paste analyser** -- `/sequencer/`. Bring your own tokens
+   (Intruder scrape, `curl` loop, hand-collected). One per line.
+2. **Live capture** -- `/sequencer/capture/...`. Burp-Sequencer-style.
+   Point at a request, pick the response field that holds the token,
+   press **Start**. Reqlore re-fires the request in a background
+   thread, extracts the token from each response, and persists it. Pause
+   / Resume / Cancel at will. When you have enough samples, press
+   **Analyse with deep battery** to forward the captured pile through
+   the same deep analysis the paste page uses.
+
 ## Where it is
 
 - **URL:** `/sequencer/`
@@ -208,6 +221,112 @@ want to script it from a plugin.
 | `excellent` rating but you think it's weak                 | Thresholds are hard-coded (5.5 / 4.5 / 3.0)                              | Inspect `bits_per_char` directly; cite the threshold in your report if you disagree.              |
 | Finding didn't appear                                    | Verdict was `good` / `excellent` → no-finding path                       | Working as designed. The skipped rule_run still records coverage.                                 |
 
+## Live capture
+
+The live-capture surface mirrors Burp Sequencer: bring a request, point
+at the response field that holds the token, let the tool collect.
+
+### URLs
+
+| Path                                | Method | Purpose                                  |
+|-------------------------------------|--------|------------------------------------------|
+| `/sequencer/`                       | GET    | Lists captures (when any exist).          |
+| `/sequencer/capture/new`            | GET    | Empty form for a brand-new capture.       |
+| `/sequencer/capture/new?from_history=<hid>` | GET | Pre-filled from a History row (used by **Send to Sequencer (live capture)**). |
+| `/sequencer/capture/new`            | POST   | Persist the capture (idle status).        |
+| `/sequencer/capture/<cid>`          | GET    | Detail page: status, controls, samples.   |
+| `/sequencer/capture/<cid>/start`    | POST   | Spawn the runner thread.                  |
+| `/sequencer/capture/<cid>/pause`    | POST   | Pause (in-flight request finishes first). |
+| `/sequencer/capture/<cid>/resume`   | POST   | Resume.                                   |
+| `/sequencer/capture/<cid>/cancel`   | POST   | Cancel.                                   |
+| `/sequencer/capture/<cid>/delete`   | POST   | Drop capture + samples.                   |
+| `/sequencer/capture/<cid>/export.txt` | GET  | One token per line, `attachment`.         |
+| `/sequencer/capture/<cid>/analyse`  | POST   | Forward captured tokens to deep analyse.  |
+| `/sequencer/capture/<cid>/samples.json` | GET | Tiny status JSON for polling.            |
+
+### Workflow
+
+1. From any **History** row, press the *Send to Sequencer (live capture)*
+   button (access key **Q**). Reqlore lifts the raw request, the URL,
+   and -- if the request carries a known session cookie
+   (`SESSIONID`, `JSESSIONID`, `PHPSESSID`, `connect.sid`, ...) --
+   defaults the extractor to `cookie = <name>`. Tweak the extractor,
+   set a sample target, press **Save**.
+2. On the capture detail page, press **Start** (access key **S**).
+   The runner re-fires the stored template through the configured
+   engine, applies the extractor to each response, and stores the
+   token + HTTP status + per-request duration. Pause/Resume/Cancel
+   are always available; the page reconciles automatically if the
+   server restarts mid-capture.
+3. When you have enough samples, press **Analyse with deep battery**
+   (access key **A**). The captured tokens are piped straight into the
+   paste analyser at the configured significance level.
+4. **Export tokens (.txt)** drops the same pile to a file for archival
+   or for sharing with another tool.
+
+### Extractors
+
+| `extractor_kind` | `extractor_arg` | Behaviour                                                                  |
+|------------------|------------------|----------------------------------------------------------------------------|
+| `cookie`         | cookie name      | Returns the value of the first `Set-Cookie: <name>=...` header. Strips `Path`, `HttpOnly`, etc. |
+| `header`         | header name      | Returns the value of the first matching response header (case-insensitive).                      |
+| `regex`          | Python regex     | Returns the first capture group; falls back to the whole match when there are no groups. Invalid regex returns `None`. |
+| `json`           | dotted path      | Walks a JSON body; list indices are integers (`items.0.token`). Non-string values are JSON-encoded for storage.        |
+
+Tokens longer than 4096 bytes are truncated. Bad / missing tokens count
+as errors; once 10 errors arrive with zero successful tokens the
+runner stops itself with a descriptive `stop_reason` (so a misconfigured
+extractor doesn't loop forever).
+
+### Form fields (capture creation)
+
+| Field            | Type     | Default        | Notes                                                                                  |
+|------------------|----------|----------------|----------------------------------------------------------------------------------------|
+| `name`           | text     | `Capture`      | Display label.                                                                          |
+| `url`            | url      | `http://127.0.0.1/` | Used as base URL when the raw template uses a relative path.                       |
+| `engine`         | select   | `httpx`        | `httpx` (default, recomputes `Content-Length`) or `raw` (byte-exact, no rewriting).      |
+| `template`       | textarea | `GET / HTTP/1.1` | Raw HTTP request as it appears on the wire. Newlines normalised to CRLF on send.       |
+| `extractor_kind` | select   | `cookie`       | `cookie` / `header` / `regex` / `json`.                                                  |
+| `extractor_arg`  | text     | (varies)       | Required. Cookie name, header name, regex, or JSON path.                                 |
+| `max_samples`    | number   | `200`          | 8 .. 20000 (matches deep-analysis cap).                                                  |
+| `delay_ms`       | number   | `0`            | Politeness throttle.                                                                     |
+| `concurrency`    | number   | `1`            | Reserved; current loop is single-flight to keep ordering deterministic.                  |
+| `significance`   | select   | `0.01`         | Default alpha for the post-capture deep analysis.                                        |
+
+### Storage footprint (live capture)
+
+Two new tables, both project-scoped:
+
+- `sequencer_captures(id, name, url, template_blob, engine,
+  extractor_kind, extractor_arg, max_samples, delay_ms, concurrency,
+  significance, status, stop_reason, error_count, created_at)` --
+  status is one of `idle | running | paused | done | cancelled |
+  errored`.
+- `sequencer_samples(id, capture_id, seq, token, status, duration_ms,
+  captured_at)` -- ON DELETE CASCADE from the parent capture.
+
+`template_blob` is zstd-compressed (same path as History blobs).
+
+### Accessibility notes (live capture)
+
+- Capture-list table on `/sequencer/` has a hidden `<caption>`, scoped
+  column headers, and uses real text status (`idle`, `running`,
+  `done`, ...) -- never colour-only.
+- Capture-detail page is split into landmark sections: **Status**,
+  **Controls**, **Configuration**, **Sample preview**.
+- The progress indicator is a real `<progress>` element with
+  `aria-valuetext` so screen readers announce *"42 of 200 samples
+  (21%)"* rather than just the percentage. Phase-3 reliability tests
+  enforce this on every page that exposes a `<progress>`.
+- Auto-refresh is **opt-in**: the *Enable auto-refresh (3 s)* link
+  toggles a `<meta http-equiv="refresh">`. WCAG 2.2.1 (Timing
+  Adjustable) is satisfied because nothing refreshes until the operator
+  asks for it, and the same link disables it again.
+- Stale state is reconciled on render: a `running` / `paused` row with
+  no in-process runner (server restart) is silently flipped to `idle`
+  with a `stop_reason` set, so the controls and the announced status
+  always agree.
+
 ## Test contract
 
 `reqlore/tests/unit/test_sequencer.py`:
@@ -242,3 +361,26 @@ want to script it from a plugin.
   `test_sequencer_post_runs_deep_by_default` /
   `test_sequencer_post_basic_only_skips_deep` /
   `test_sequencer_post_empty_flashes_warning` -- web surface.
+
+`reqlore/tests/unit/test_sequencer_capture.py` (live capture, 33 tests):
+
+- **Extractors (16 tests)** -- cookie / header / regex / json positive
+  + negative paths, attribute stripping, multi-cookie selection,
+  regex fallback to whole match on no-group, invalid-regex safety,
+  list-index walk for JSON, `unknown kind` returns `None`, 4 KiB
+  truncation, `EXTRACTOR_KINDS` constant frozen.
+- **History hint (2 tests)** -- known session cookie auto-detected,
+  unknown request defaults to empty arg.
+- **Storage (5 tests)** -- create + list, round-trip the request
+  blob, status + error-count updates, sample insertion + count +
+  ordered listing, cascading delete.
+- **Blueprint (5 tests)** -- `GET /capture/new` renders, missing
+  extractor arg re-renders the form with the error, valid POST
+  redirects to detail, 404 on missing capture, stale `running` state
+  is auto-reconciled to `idle` after a simulated server restart.
+- **Runner (3 tests, end-to-end against a local HTTP server)** --
+  collects N unique session cookies and lands `done`; aborts with
+  `errored` and a descriptive `stop_reason` when 10 responses lack
+  the configured token; `cancel()` stops the loop within milliseconds
+  with `cancelled` status.
+
