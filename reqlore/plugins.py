@@ -88,8 +88,21 @@ class PluginRegistry:
             for d in self.dirs:
                 if not d.exists():
                     continue
+                d_resolved = d.resolve()
                 for path in sorted(d.glob("*.py")):
                     if path.name.startswith("_"):
+                        continue
+                    # M-9: refuse to load through a symlink, and refuse
+                    # any path that resolves outside the configured
+                    # plugin directory. Prevents an attacker who can
+                    # write to the plugins folder (or trick a user)
+                    # from pointing at arbitrary files on disk.
+                    try:
+                        if path.is_symlink():
+                            continue
+                        if path.resolve().parent != d_resolved:
+                            continue
+                    except OSError:
                         continue
                     rec = self._load_one(path)
                     if rec.name in old:

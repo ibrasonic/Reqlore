@@ -137,7 +137,9 @@ def _capture(response: Response, capture: dict[str, dict]) -> dict[str, str]:
                 hay = response.header(hname) or ""
             else:
                 hay = response.body.decode("utf-8", errors="replace")
-            m = re.search(pattern, hay) if pattern else None
+            # H-4: bounded-time regex against attacker-influenced body.
+            from . import _safe_regex
+            m = _safe_regex.safe_search(pattern, hay) if pattern else None
             value = m.group(1) if (m and m.groups()) else (m.group(0) if m else "")
         elif src == "json":
             path = spec.get("path", "")

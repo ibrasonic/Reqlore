@@ -30,7 +30,23 @@ def _check_token() -> None:
     token within ``TOKEN_ROTATION_GRACE_SECONDS`` of a rotation, so a
     running extension can self-heal after the user clicks "Rotate
     bridge token" without needing a browser relaunch.
+
+    M-11: the bridge ships a per-project secret token, which is enough
+    on a loopback bind. When the operator deliberately exposes the UI
+    on a non-loopback interface (``--unsafe-bind``) we additionally
+    refuse plain HTTP for this endpoint -- a bearer token over
+    cleartext is one passive observer away from compromise.
     """
+    import ipaddress as _ip
+    addr = request.remote_addr or ""
+    is_loopback = False
+    if addr:
+        try:
+            is_loopback = _ip.ip_address(addr).is_loopback
+        except ValueError:
+            is_loopback = False
+    if not is_loopback and request.scheme != "https":
+        abort(403, description="DOM Hunter bridge requires loopback or HTTPS.")
     got = request.headers.get("X-DOMHunter-Token", "")
     if not S.is_valid_token(g.project, got):
         abort(401, description="Bad or missing DOM Hunter token.")
@@ -193,8 +209,12 @@ def bridge_config():
 def bridge_report():
     """Extension POSTs JSON {kind, ...fields}."""
     _check_token()
+    # L-4: parse JSON strictly via the request's Content-Type. ``force=True``
+    # would coerce arbitrary text bodies through the JSON parser, which
+    # widens the attack surface for no real benefit -- the extension
+    # always sets ``Content-Type: application/json``.
     try:
-        body = request.get_json(force=True, silent=False) or {}
+        body = request.get_json(silent=False) or {}
     except Exception:
         abort(400, description="Invalid JSON.")
     if not isinstance(body, dict):

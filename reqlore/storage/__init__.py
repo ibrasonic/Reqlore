@@ -277,6 +277,11 @@ class Project:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        # M-4: overwrite freed pages so deleted history / findings
+        # cannot be carved out of the database file by a forensic
+        # analysis after the fact. Cheap on the small write volumes
+        # Reqlore generates.
+        self._conn.execute("PRAGMA secure_delete=ON")
         self._conn.executescript(_SCHEMA)
         self._migrate()
         if first_open or self._conn.execute("SELECT COUNT(*) FROM project").fetchone()[0] == 0:
@@ -355,6 +360,16 @@ class Project:
 
     def close(self) -> None:
         with self._lock:
+            # M-4: roll the WAL into the main DB and switch back to a
+            # rollback journal before closing, so leftover ``-wal`` /
+            # ``-shm`` sidecars do not retain plaintext copies of
+            # rows that ``secure_delete`` has already overwritten in
+            # the main file.
+            try:
+                self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                self._conn.execute("PRAGMA journal_mode=DELETE")
+            except sqlite3.OperationalError:
+                pass
             self._conn.close()
 
     # ---- project meta ----
@@ -465,8 +480,20 @@ class Project:
         return n
 
     # ---- intercept queue ----
+    # M-3: hard cap on the intercept queue depth. Without this a runaway
+    # "hold everything" rule can grow the table without bound until the
+    # SQLite file fills the disk. 5000 entries is well above any normal
+    # operator workflow but keeps total worst-case storage bounded.
+    INTERCEPT_QUEUE_MAX = 5000
+
     def enqueue_intercept(self, kind: str, raw: bytes, reason: str) -> int:
         with self._cursor() as cur:
+            depth = int(cur.execute(
+                "SELECT COUNT(*) FROM intercept_q").fetchone()[0])
+            if depth >= self.INTERCEPT_QUEUE_MAX:
+                # Drop the new entry instead of unbounded growth. The
+                # caller treats id=0 as "not enqueued".
+                return 0
             cur.execute(
                 "INSERT INTO intercept_q(kind,req_blob,hold_reason,created_at) VALUES (?,?,?,?)",
                 (kind, _compress(raw), reason, int(time.time())),

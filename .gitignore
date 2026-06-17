@@ -84,3 +84,6 @@ reqlore/dom_hunter/extension/.amo-upload-uuid
 pytest_*.txt
 
 XSS-EXPLAINED.txt
+
+# ---------- Local-only security notes ----------
+docs/SECURITY-ASSESSMENT.md

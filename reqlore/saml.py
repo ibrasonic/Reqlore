@@ -18,7 +18,9 @@ import re
 import zlib
 from dataclasses import dataclass, field
 
-import xml.etree.ElementTree as ET
+# M-5: parse untrusted SAML XML through the defused shim, which kills
+# DTD / external-entity processing and entity-expansion bombs.
+from . import _safe_xml
 
 
 @dataclass
@@ -89,8 +91,8 @@ def inspect(blob: str) -> SAMLInspection:
     insp = SAMLInspection(xml=xml, binding=binding)
     insp.pretty = _pretty(xml)
     try:
-        root = ET.fromstring(xml)
-    except ET.ParseError as exc:
+        root = _safe_xml.fromstring(xml)
+    except (_safe_xml.ParseError, ValueError) as exc:
         insp.error = f"XML parse error: {exc}"
         return insp
     insp.issuer = _ltext(root, "Issuer")
@@ -127,12 +129,9 @@ def _local(tag: str) -> str:
 
 
 def _pretty(xml: str) -> str:
-    # Naive pretty-print to avoid pulling in lxml just for this.
-    try:
-        import xml.dom.minidom as md
-        return md.parseString(xml).toprettyxml(indent="  ")
-    except Exception:
-        return xml
+    # Defused parse + serialise through the safe-xml shim avoids minidom's
+    # default external-entity resolution.
+    return _safe_xml.pretty(xml)
 
 
 _WEAK_DIGEST_NEEDLES = ("sha1", "ripemd160", "md5")

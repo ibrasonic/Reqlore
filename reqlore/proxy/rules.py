@@ -1,9 +1,10 @@
 """Intercept rules engine. Pure data; no I/O."""
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from typing import Iterable
+
+from .. import _safe_regex
 
 
 # Default exclude regex: Firefox / Mozilla background traffic (telemetry,
@@ -51,25 +52,27 @@ class Rule:
     def matches_request(self, host: str, method: str, path: str = "") -> bool:
         if not self.enabled:
             return False
-        if self.exclude_host_regex and re.search(
+        if self.exclude_host_regex and _safe_regex.safe_search(
                 self.exclude_host_regex, host or ""):
             return False
-        if self.exclude_path_regex and re.search(
+        if self.exclude_path_regex and _safe_regex.safe_search(
                 self.exclude_path_regex, path or ""):
             return False
-        if self.host_regex and not re.search(self.host_regex, host or ""):
+        if self.host_regex and not _safe_regex.safe_search(
+                self.host_regex, host or ""):
             return False
         if self.method_in and method.upper() not in (
                 m.upper() for m in self.method_in):
             return False
-        if self.path_regex and not re.search(self.path_regex, path or ""):
+        if self.path_regex and not _safe_regex.safe_search(
+                self.path_regex, path or ""):
             return False
         return True
 
     def matches_response(self, status: int, content_type: str) -> bool:
         if not self.enabled:
             return False
-        # A rule with no response criteria is request-only — never hold
+        # A rule with no response criteria is request-only -- never hold
         # the response. Without this guard, a plain "hold POSTs" rule
         # would also hold every single response that flows through,
         # including the Reqlore UI's own redirects, which loops forever.
@@ -77,7 +80,7 @@ class Rule:
             return False
         if self.status_in is not None and status not in self.status_in:
             return False
-        if self.content_type_regex and not re.search(
+        if self.content_type_regex and not _safe_regex.safe_search(
                 self.content_type_regex, content_type or ""):
             return False
         return True

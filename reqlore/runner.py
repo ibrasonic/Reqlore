@@ -252,7 +252,11 @@ def _dispatch(i: int, kind: str, step: dict[str, Any], vars_: dict[str, Any],
                 last_response, vars_)
 
     if kind == "assert":
-        # Restricted eval: only ``vars`` and ``status`` / ``body_text`` exposed.
+        # H-3: AST-whitelisted boolean evaluator. ``eval`` with empty
+        # builtins is *not* a sandbox -- attackers controlling the job
+        # file could otherwise reach ``().__class__.__bases__`` and
+        # escape. ``safe_eval_bool`` parses, validates, then evaluates.
+        from ._safe_eval import safe_eval_bool
         expr = str(step.get("expr", "True"))
         status = getattr(last_response, "status", 0)
         body_text = ""
@@ -260,7 +264,7 @@ def _dispatch(i: int, kind: str, step: dict[str, Any], vars_: dict[str, Any],
             body_text = last_response.body.decode("utf-8", "replace")
         env = {"vars": dict(vars_), "status": status, "body_text": body_text}
         try:
-            ok = bool(eval(expr, {"__builtins__": {}}, env))  # noqa: S307
+            ok = safe_eval_bool(expr, env)
         except Exception as exc:
             return (StepResult(index=i, type=kind, ok=False, elapsed_ms=0,
                                  summary=f"assert raised: {exc}",

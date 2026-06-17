@@ -64,6 +64,26 @@ def _hdr_pairs(items: list[dict] | None) -> list[tuple[str, str]]:
     return out
 
 
+# M-6: cap HAR base64 body decoding to 50 MiB so a hostile HAR cannot
+# trigger an unbounded allocation when imported.
+_MAX_HAR_BODY_BYTES = 50 * 1024 * 1024
+
+
+def _decode_b64_capped(text: str) -> bytes:
+    """Base64-decode ``text`` but refuse outputs larger than the cap."""
+    # Each 4 base64 characters yields 3 bytes; this lets us short-circuit
+    # without ever materialising a giant payload in memory.
+    if len(text) // 4 * 3 > _MAX_HAR_BODY_BYTES:
+        return text[:_MAX_HAR_BODY_BYTES].encode("utf-8", errors="replace")
+    try:
+        out = base64.b64decode(text)
+    except Exception:
+        return text.encode("utf-8", errors="replace")
+    if len(out) > _MAX_HAR_BODY_BYTES:
+        return out[:_MAX_HAR_BODY_BYTES]
+    return out
+
+
 def _body_bytes(post: dict | None) -> bytes:
     if not post:
         return b""
@@ -71,10 +91,7 @@ def _body_bytes(post: dict | None) -> bytes:
     if isinstance(text, str):
         # Some HAR exporters base64-encode binary bodies; respect ``encoding``.
         if post.get("encoding") == "base64":
-            try:
-                return base64.b64decode(text)
-            except Exception:
-                return text.encode("utf-8", errors="replace")
+            return _decode_b64_capped(text)
         return text.encode("utf-8", errors="replace")
     return b""
 
@@ -85,10 +102,7 @@ def _resp_body_bytes(content: dict | None) -> bytes:
     text = content.get("text") or ""
     if isinstance(text, str):
         if content.get("encoding") == "base64":
-            try:
-                return base64.b64decode(text)
-            except Exception:
-                return text.encode("utf-8", errors="replace")
+            return _decode_b64_capped(text)
         return text.encode("utf-8", errors="replace")
     return b""
 

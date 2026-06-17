@@ -40,6 +40,13 @@ def find_signed_xpi() -> Path | None:
     The returned XPI carries Mozilla's signature (``META-INF/cose.sig``,
     ``META-INF/mozilla.rsa``) and loads on stock Firefox Release without
     requiring any signature-enforcement override.
+
+    M-13: we additionally peek inside the candidate ZIP and refuse any
+    XPI that does not actually carry ``META-INF/mozilla.rsa``. This
+    catches a maintainer mistake (or a tampered drop-in) where an
+    *unsigned* XPI was placed in the signed directory; sideloading
+    that on stock Firefox would silently disable the extension and
+    leave the user without DOM Hunter coverage.
     """
     here = Path(__file__).resolve().parent
     signed_dir = here / "extension_signed"
@@ -48,9 +55,23 @@ def find_signed_xpi() -> Path | None:
     candidates = sorted(signed_dir.glob("*.xpi"))
     if not candidates:
         return None
+    # Verify Mozilla-signature presence in each candidate before
+    # picking the newest. Reject anything that is missing the AMO
+    # signature artefact.
+    signed: list[Path] = []
+    for c in candidates:
+        try:
+            with zipfile.ZipFile(c) as zf:
+                names = set(zf.namelist())
+        except (zipfile.BadZipFile, OSError):
+            continue
+        if "META-INF/mozilla.rsa" in names:
+            signed.append(c)
+    if not signed:
+        return None
     # Newest by mtime so a freshly-shipped update wins over an older one
     # if both happen to be on disk.
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    return max(signed, key=lambda p: p.stat().st_mtime)
 
 
 def find_extension_source() -> Path | None:

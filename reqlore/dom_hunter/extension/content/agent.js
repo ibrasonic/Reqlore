@@ -94,7 +94,12 @@
 
   function postRelay(payload) {
     try {
-      window.postMessage({ __rqdomh: RELAY_TAG, payload: payload }, "*");
+      // L-5: target same-origin only. Using "*" would let any frame on
+      // the page snoop on the canary value the agent relays back to its
+      // own world. Same-origin is sufficient because the bridge listener
+      // lives in the content-script world that injected this code.
+      window.postMessage({ __rqdomh: RELAY_TAG, payload: payload },
+                         window.location.origin);
     } catch (_) { /* page may have frozen postMessage; nothing we can do */ }
   }
 

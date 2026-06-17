@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import threading
 import time
 import uuid
@@ -399,11 +400,19 @@ class ProxyController:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
+        # H-1: validate upstream TLS certificates by default. Operators
+        # working against staging targets that legitimately use self-signed
+        # certs can opt back in by exporting ``REQLORE_PROXY_SSL_INSECURE=1``
+        # in their environment. The default of ``False`` means an attacker
+        # can no longer transparently MITM Reqlore's own upstream
+        # connections from a hostile network.
+        ssl_insecure = os.environ.get(
+            "REQLORE_PROXY_SSL_INSECURE", "").strip() in ("1", "true", "yes")
         opts = Options(
             listen_host=self.host,
             listen_port=self.port,
             confdir=str(self.ca_dir),
-            ssl_insecure=True,
+            ssl_insecure=ssl_insecure,
         )
         try:
             self._master = DumpMaster(

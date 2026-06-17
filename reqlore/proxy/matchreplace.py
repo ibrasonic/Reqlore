@@ -8,8 +8,19 @@ Rules live in storage (`match_replace` table). Each rule:
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
+
+from .. import _safe_regex
+
+
+# H-5: hard cap on match-replace output size to neutralise rules whose
+# replacement explodes the body (deliberate or accidental). 100 MiB is
+# more than any sane HTTP message; if a rule produces more, we drop the
+# rewrite and forward the original payload untouched.
+_MAX_OUTPUT_BYTES = 100 * 1024 * 1024
+# Per-rule expansion ratio cap: a rewrite that grows the input by more
+# than 10x is almost certainly a mis-authored backreference.
+_MAX_EXPANSION_RATIO = 10
 
 
 @dataclass
@@ -34,21 +45,23 @@ def from_row(row: dict) -> MRRule:
 def _host_matches(rule: MRRule, host: str) -> bool:
     if not rule.host_regex:
         return True
-    try:
-        return bool(re.search(rule.host_regex, host or ""))
-    except re.error:
-        return False
+    return _safe_regex.safe_search(rule.host_regex, host or "") is not None
 
 
 def _apply_text(rule: MRRule, text: str) -> str:
     if not rule.enabled:
         return text
-    try:
-        if rule.is_regex:
-            return re.sub(rule.pattern, rule.replacement, text)
-        return text.replace(rule.pattern, rule.replacement)
-    except re.error:
+    if rule.is_regex:
+        new = _safe_regex.safe_sub(rule.pattern, rule.replacement, text)
+    else:
+        new = text.replace(rule.pattern, rule.replacement)
+    # Reject pathological growth: keep the original payload so a
+    # mis-authored rule cannot exhaust memory or saturate the proxy.
+    if len(new) > _MAX_OUTPUT_BYTES:
         return text
+    if text and len(new) > _MAX_EXPANSION_RATIO * len(text):
+        return text
+    return new
 
 
 def apply_request(rules: list[MRRule], host: str,

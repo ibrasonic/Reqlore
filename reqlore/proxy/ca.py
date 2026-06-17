@@ -15,6 +15,8 @@ from pathlib import Path
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 
+from .._secret_file import secret_write_bytes
+
 
 def _harden_perms(path: Path) -> None:
     try:
@@ -32,13 +34,23 @@ def ensure_ca(ca_dir: Path) -> tuple[Path, Path]:
     if cert_path.exists() and key_path.exists():
         return cert_path, key_path
 
-    # Lazy import so people who never start the proxy don't pay the cost.
-    from cryptography.hazmat.primitives.asymmetric import rsa
+    # M-1: new CAs use ECDSA-P256 with a 13-month validity window.
+    # ECDSA matches modern CAB Forum guidance and reduces the blast
+    # radius if the key ever leaks; 13 months matches public-CA
+    # leaf-certificate lifetimes so an old leaked key cannot keep
+    # serving for years. Existing on-disk CAs are short-circuited
+    # at the top of this function, so users who already imported a
+    # 5-year RSA root keep working without surprise re-imports.
+    from cryptography.hazmat.primitives.asymmetric import ec
     from datetime import datetime, timedelta, timezone
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    key = ec.generate_private_key(ec.SECP256R1())
+    # M-2: allow operators to override the CA Common Name (e.g. when
+    # multiple Reqlore installations co-exist on a shared lab box).
+    common_name = (os.environ.get("REQLORE_CA_CN") or "").strip() \
+        or "Reqlore Local Root CA"
     name = x509.Name([
-        x509.NameAttribute(x509.NameOID.COMMON_NAME, "Reqlore Local Root CA"),
+        x509.NameAttribute(x509.NameOID.COMMON_NAME, common_name),
         x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, "Reqlore"),
     ])
     now = datetime.now(timezone.utc)
@@ -48,7 +60,7 @@ def ensure_ca(ca_dir: Path) -> tuple[Path, Path]:
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(now - timedelta(days=1))
-        .not_valid_after(now + timedelta(days=365 * 5))
+        .not_valid_after(now + timedelta(days=397))  # 13 months
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .add_extension(x509.KeyUsage(
             digital_signature=True, content_commitment=False,
@@ -60,7 +72,12 @@ def ensure_ca(ca_dir: Path) -> tuple[Path, Path]:
     )
 
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(key.private_bytes(
+    # H-2: the CA private key must never exist on disk world-readable,
+    # not even for a single scheduler tick. ``secret_write_bytes`` opens
+    # the file with mode 0o600 atomically (no TOCTOU between the write
+    # and a follow-up chmod). ``_harden_perms`` is kept as a final
+    # belt-and-braces guard.
+    secret_write_bytes(key_path, key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),

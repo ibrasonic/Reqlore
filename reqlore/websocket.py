@@ -23,6 +23,11 @@ try:
 except ImportError:
     WS_AVAILABLE = False
 
+# M-7: hard caps on per-frame and per-transcript byte volume, so a
+# malicious server cannot exhaust memory through a streaming flood.
+_MAX_WS_FRAME_BYTES = 4 * 1024 * 1024        # 4 MiB / message
+_MAX_WS_TRANSCRIPT_BYTES = 64 * 1024 * 1024  # 64 MiB / transcript
+
 
 @dataclass
 class WSMessage:
@@ -84,9 +89,11 @@ def send_messages(url: str, messages: list[tuple[str, str]], *,
         )
     transcript = WSTranscript(url=url)
     extra_headers = list(headers or [])
+    transcript_bytes = 0
     try:
         with _ws_connect(url, additional_headers=extra_headers,
-                          open_timeout=timeout_s, close_timeout=2) as ws:
+                          open_timeout=timeout_s, close_timeout=2,
+                          max_size=_MAX_WS_FRAME_BYTES) as ws:
             for kind, data in messages:
                 if kind == "binary":
                     payload = bytes.fromhex(data)
@@ -112,15 +119,23 @@ def send_messages(url: str, messages: list[tuple[str, str]], *,
                 except TimeoutError:
                     break
                 if isinstance(frame, str):
+                    fsize = len(frame.encode("utf-8"))
                     transcript.messages.append(WSMessage(
-                        "recv", int(time.time()), "text", frame,
-                        len(frame.encode("utf-8")),
+                        "recv", int(time.time()), "text", frame, fsize,
                     ))
                 else:
+                    fsize = len(frame)
                     transcript.messages.append(WSMessage(
                         "recv", int(time.time()), "binary",
-                        base64.b64encode(frame).decode(), len(frame),
+                        base64.b64encode(frame).decode(), fsize,
                     ))
+                transcript_bytes += fsize
+                if transcript_bytes >= _MAX_WS_TRANSCRIPT_BYTES:
+                    transcript.notes = (
+                        "recv stopped: transcript exceeded "
+                        f"{_MAX_WS_TRANSCRIPT_BYTES} bytes"
+                    )
+                    break
     except Exception as exc:
         transcript.messages.append(WSMessage(
             "recv", int(time.time()), "text", f"[error] {exc}", 0,

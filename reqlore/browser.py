@@ -191,6 +191,46 @@ def profile_root() -> Path:
     return cache_root().parent / "firefox-profile"
 
 
+# L-7: list of environment variables the Firefox child is allowed to
+# inherit. Anything outside this list (LD_PRELOAD, LD_LIBRARY_PATH,
+# PYTHONPATH, NSS_*, MOZ_* tracing knobs, locale forcing, ...) is
+# stripped before ``subprocess.Popen`` so a hostile parent environment
+# cannot redirect Firefox into a tampered library or a debug build.
+_FIREFOX_ENV_ALLOWLIST = frozenset({
+    # POSIX core
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP",
+    # Locale (Firefox refuses to render correctly without these)
+    "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME",
+    "LC_NUMERIC", "LC_COLLATE", "LC_MONETARY",
+    # Display servers
+    "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE",
+    "XDG_CURRENT_DESKTOP", "DBUS_SESSION_BUS_ADDRESS",
+    "XAUTHORITY", "XCURSOR_SIZE", "XCURSOR_THEME",
+    # Windows core
+    "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    "PROGRAMFILES", "PROGRAMFILES(X86)", "SYSTEMROOT", "WINDIR",
+    "COMSPEC", "PATHEXT", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+    "USERNAME", "USERDOMAIN", "COMPUTERNAME", "HOMEDRIVE", "HOMEPATH",
+    "PUBLIC", "ALLUSERSPROFILE",
+})
+
+
+def _clean_env() -> dict[str, str]:
+    """Return a sanitised copy of ``os.environ`` for Firefox subprocesses.
+
+    Only variables on :data:`_FIREFOX_ENV_ALLOWLIST` are propagated. The
+    allowlist comparison is case-insensitive on Windows (where env-var
+    names are case-insensitive in the OS) but case-sensitive on POSIX.
+    """
+    is_windows = os.name == "nt"
+    out: dict[str, str] = {}
+    for key, value in os.environ.items():
+        canonical = key.upper() if is_windows else key
+        if canonical in _FIREFOX_ENV_ALLOWLIST:
+            out[key] = value
+    return out
+
+
 def cached_install(version: str, *, channel: str = DEFAULT_CHANNEL) -> Path:
     """Path to the per-version extracted Firefox tree.
 
@@ -607,6 +647,15 @@ def ensure_profile(profile_dir: Path | None = None) -> Path:
     """Create the dedicated profile directory if it doesn't exist."""
     p = profile_dir or profile_root()
     p.mkdir(parents=True, exist_ok=True)
+    # L-6: tighten POSIX permissions on the profile directory. The
+    # profile holds cookies, saved logins, session state, and the
+    # DOM Hunter bridge token; making it owner-only stops other local
+    # users from reading them through stock /home traversal. On
+    # Windows the chmod is a no-op and ACLs handle isolation.
+    try:
+        os.chmod(p, 0o700)
+    except OSError:
+        pass
     # Seed a tiny user.js so Firefox doesn't show 'first-run' nags even
     # when policies.json hasn't been applied yet (first cold boot).
     user_js = p / "user.js"
@@ -1072,7 +1121,7 @@ def launch(*, exe: Path, profile_dir: Path, url: str,
     log.info("launching: %s", " ".join(args))
 
     if wait:
-        proc = subprocess.run(args, check=False)  # noqa: S603
+        proc = subprocess.run(args, check=False, env=_clean_env())  # noqa: S603
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Firefox exited with code {proc.returncode}."
@@ -1092,7 +1141,7 @@ def launch(*, exe: Path, profile_dir: Path, url: str,
     log_file = Path(log_path)
     try:
         with log_file.open("wb") as ferr:
-            proc = subprocess.Popen(args, stderr=ferr)  # noqa: S603
+            proc = subprocess.Popen(args, stderr=ferr, env=_clean_env())  # noqa: S603
 
         deadline = time.monotonic() + max(0.1, warmup_seconds)
         while time.monotonic() < deadline:

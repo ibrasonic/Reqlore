@@ -279,14 +279,38 @@ def set_intercept_config():
         abort(503, description="Proxy controller not configured.")
     methods = [m for m in request.form.getlist("method")
                if m in SUPPORTED_METHODS]
+    host_regex = request.form.get("host_regex", "").strip()
+    path_regex = request.form.get("path_regex", "").strip()
+    exclude_host_regex = (request.form.get(
+        "exclude_host_regex", "").strip() or DEFAULT_NOISE_HOST_REGEX)
+    exclude_path_regex = (request.form.get(
+        "exclude_path_regex", "").strip() or DEFAULT_NOISE_PATH_REGEX)
+    # L-12: validate every operator-supplied regex at save time.
+    # Falling through to the runtime would only suppress the bad
+    # pattern silently (safe_search returns None on regex.error), so
+    # the user would never know their filter was inert.
+    from ... import _safe_regex
+    for label, pat in (("host_regex", host_regex),
+                        ("path_regex", path_regex),
+                        ("exclude_host_regex", exclude_host_regex),
+                        ("exclude_path_regex", exclude_path_regex)):
+        if pat and not _safe_regex.is_valid_pattern(pat):
+            flash(f"{label} is not a valid regular expression.", "err")
+            return redirect(url_for(".index"))
+    # M-14: warn on un-anchored host filter (non-blocking).
+    if host_regex and not (host_regex.startswith("^") or "$" in host_regex):
+        flash(
+            "Heads up: host filter is not anchored. Add ^ at the start "
+            "and $ at the end to avoid matching attacker-controlled "
+            "subdomains like evil-example.com.attacker.tld.",
+            "warn",
+        )
     cfg = InterceptConfig(
         methods=methods,
-        host_regex=request.form.get("host_regex", "").strip(),
-        path_regex=request.form.get("path_regex", "").strip(),
-        exclude_host_regex=(request.form.get(
-            "exclude_host_regex", "").strip() or DEFAULT_NOISE_HOST_REGEX),
-        exclude_path_regex=(request.form.get(
-            "exclude_path_regex", "").strip() or DEFAULT_NOISE_PATH_REGEX),
+        host_regex=host_regex,
+        path_regex=path_regex,
+        exclude_host_regex=exclude_host_regex,
+        exclude_path_regex=exclude_path_regex,
     )
     g.proxy.set_intercept_config(cfg)
     g.project.set_state("intercept_config", json.dumps(cfg.to_dict()))

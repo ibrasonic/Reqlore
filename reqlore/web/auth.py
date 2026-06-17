@@ -192,8 +192,17 @@ def init_auth(app: Flask, settings: Settings) -> None:
                     session["csrf"] = secrets.token_urlsafe(32)
                     session.permanent = True
                     target = request.args.get("next") or url_for("dashboard.index")
-                    # Open-redirect guard: only allow same-origin paths.
-                    if not target.startswith("/") or target.startswith("//"):
+                    # L-2: open-redirect guard. urlsplit() rejects any
+                    # ``next`` value carrying a scheme or netloc (
+                    # ``//evil.tld/path``, ``https://evil.tld``,
+                    # ``http:evil.tld``); only same-origin paths are
+                    # honoured, anything else falls back to the
+                    # dashboard.
+                    from urllib.parse import urlsplit
+                    parts = urlsplit(target)
+                    if parts.scheme or parts.netloc \
+                            or not target.startswith("/") \
+                            or target.startswith("//"):
                         target = url_for("dashboard.index")
                     flash("Signed in.", "info")
                     return redirect(target)

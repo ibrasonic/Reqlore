@@ -1,7 +1,13 @@
 # --- Build stage ---------------------------------------------------------------
 # Builds the wheel in an isolated layer so the runtime image stays small and
 # does not contain build toolchain or .git history.
-FROM python:3.12-slim AS build
+#
+# L-11: pin to a specific image digest instead of the floating ``3.12-slim``
+# tag so a compromised or maliciously re-pushed base image cannot replace
+# the build root we resolved at audit time. Bump this digest with every
+# Debian / CPython security release; ``docker buildx imagetools inspect
+# python:3.12-slim`` prints the current value.
+FROM python:3.12-slim@sha256:c2d8472b831337ab296a8ce652e1ba786e9e3034fc445dc58b50a7f5251f0003 AS build
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -25,7 +31,8 @@ RUN pip install --upgrade pip build \
 
 
 # --- Runtime stage -------------------------------------------------------------
-FROM python:3.12-slim AS runtime
+# Same digest pin as the build stage -- see L-11 note above.
+FROM python:3.12-slim@sha256:c2d8472b831337ab296a8ce652e1ba786e9e3034fc445dc58b50a7f5251f0003 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

@@ -20,8 +20,8 @@ PREVIOUS_TOKEN_AT_KEY = "dom_hunter_previous_token_at"
 # Grace window during which the previous token is still accepted.
 # Long enough for an extension polling at CFG_TTL_MS=3s to roll over
 # multiple times, short enough that a leaked old token is not
-# indefinitely useful.
-TOKEN_ROTATION_GRACE_SECONDS = 300
+# usable for more than half a minute. M-12: tightened from 300s.
+TOKEN_ROTATION_GRACE_SECONDS = 30
 CANARY_KEY = "dom_hunter_canary"
 ENABLED_KEY = "dom_hunter_enabled"
 SCOPE_KEY = "dom_hunter_scope"
