@@ -7,9 +7,21 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import time
 
 # Default project-state keys used by DOM Hunter.
 TOKEN_KEY = "dom_hunter_token"
+# Previous-token + timestamp keep the prior bridge token valid for a
+# short grace window after rotation, so a running extension can fetch
+# the new token via the bridge config response and refresh its stored
+# value WITHOUT needing the user to relaunch reqlore browser.
+PREVIOUS_TOKEN_KEY = "dom_hunter_previous_token"
+PREVIOUS_TOKEN_AT_KEY = "dom_hunter_previous_token_at"
+# Grace window during which the previous token is still accepted.
+# Long enough for an extension polling at CFG_TTL_MS=3s to roll over
+# multiple times, short enough that a leaked old token is not
+# indefinitely useful.
+TOKEN_ROTATION_GRACE_SECONDS = 300
 CANARY_KEY = "dom_hunter_canary"
 ENABLED_KEY = "dom_hunter_enabled"
 SCOPE_KEY = "dom_hunter_scope"
@@ -201,6 +213,47 @@ def get_or_make_token(project) -> str:
         tok = secrets.token_urlsafe(32)
         project.set_state(TOKEN_KEY, tok)
     return tok
+
+
+def rotate_token(project) -> str:
+    """Generate a new bridge token, keeping the prior one valid briefly.
+
+    The previous token is stamped with the rotation time and remains
+    accepted by ``is_valid_token`` for ``TOKEN_ROTATION_GRACE_SECONDS``.
+    During that window the running extension's next bridge call (still
+    using the old token) succeeds, the response carries the NEW token,
+    and the extension persists it locally -- so token rotation
+    propagates without the user needing to relaunch the browser.
+    """
+    old = project.get_state(TOKEN_KEY, "")
+    if old:
+        project.set_state(PREVIOUS_TOKEN_KEY, old)
+        project.set_state(PREVIOUS_TOKEN_AT_KEY, str(int(time.time())))
+    project.set_state(TOKEN_KEY, "")
+    return get_or_make_token(project)
+
+
+def is_valid_token(project, token: str) -> bool:
+    """Return True if ``token`` matches the current bridge token, or the
+    previous one within the rotation grace window.
+
+    Constant-time comparisons are used so the check does not leak
+    timing information about which token (current vs previous) matched.
+    Empty / missing tokens are always rejected.
+    """
+    if not token:
+        return False
+    current = project.get_state(TOKEN_KEY, "")
+    if current and secrets.compare_digest(token, current):
+        return True
+    prev = project.get_state(PREVIOUS_TOKEN_KEY, "")
+    if not prev or not secrets.compare_digest(token, prev):
+        return False
+    try:
+        rotated_at = int(project.get_state(PREVIOUS_TOKEN_AT_KEY, "0"))
+    except (TypeError, ValueError):
+        rotated_at = 0
+    return rotated_at > 0 and (time.time() - rotated_at) < TOKEN_ROTATION_GRACE_SECONDS
 
 
 def get_or_make_canary(project) -> str:

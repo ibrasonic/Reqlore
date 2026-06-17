@@ -24,10 +24,15 @@ bp = Blueprint("dom_hunter", __name__)
 # ---------------------------------------------------------------------------
 
 def _check_token() -> None:
-    """Validate the X-DOMHunter-Token header for bridge requests. 401 on fail."""
-    expected = S.get_or_make_token(g.project)
+    """Validate the X-DOMHunter-Token header for bridge requests. 401 on fail.
+
+    Accepts the project's CURRENT token, or the immediately-previous
+    token within ``TOKEN_ROTATION_GRACE_SECONDS`` of a rotation, so a
+    running extension can self-heal after the user clicks "Rotate
+    bridge token" without needing a browser relaunch.
+    """
     got = request.headers.get("X-DOMHunter-Token", "")
-    if not got or not _ct_equal(got, expected):
+    if not S.is_valid_token(g.project, got):
         abort(401, description="Bad or missing DOM Hunter token.")
 
 
@@ -127,13 +132,19 @@ def settings():
         elif action == "rotate_canary":
             g.project.set_state(S.CANARY_KEY, "")
             S.get_or_make_canary(g.project)
-            flash("Canary rotated. Existing findings remain; new ones will use "
-                  "the new canary.", "ok")
+            flash(
+                "Canary rotated. Reload any open target tabs to pick"
+                " up the new value; existing findings remain.",
+                "ok",
+            )
         elif action == "rotate_token":
-            g.project.set_state(S.TOKEN_KEY, "")
-            S.get_or_make_token(g.project)
-            flash("Bridge token rotated. Reinstall the DOM Hunter extension "
-                  "configuration to pick up the new value.", "ok")
+            S.rotate_token(g.project)
+            flash(
+                "Bridge token rotated. The running extension will"
+                " pick up the new token within a few seconds via the"
+                " bridge config response -- no browser relaunch needed.",
+                "ok",
+            )
         return redirect(url_for(".settings"))
 
     return render_template(
@@ -159,6 +170,12 @@ def bridge_config():
     return jsonify({
         "enabled": S.is_enabled(g.project),
         "canary": canary,
+        # The current bridge token. The extension stores this locally on
+        # every successful fetch so a token rotation propagates to the
+        # running extension within a few seconds (the request that
+        # carried the now-previous token is still accepted under the
+        # rotation grace window; the response hands back the NEW one).
+        "token": S.get_or_make_token(g.project),
         # Per-source tagged canary variants. The agent uses these to
         # stamp a uniquely-identifiable string into each enabled
         # auto-inject source, so source attribution at sink-fire time

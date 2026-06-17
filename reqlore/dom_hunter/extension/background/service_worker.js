@@ -30,18 +30,27 @@ const CFG_TTL_MS = 3_000;
 // -------------------- settings storage --------------------
 
 async function getSettings() {
-  // Enterprise-managed values (set by Reqlore via the Firefox policy
-  // `3rdparty.Extensions`) take precedence over anything the user typed
-  // into the options page. This is what makes `reqlore browser` "just
-  // work" with zero manual configuration.
+  // Bootstrap order:
+  //   1. browser.storage.local  -- the most recently-known-good token,
+  //      kept up-to-date by fetchConfig() persisting whatever the
+  //      bridge response carries. This wins so a token rotated in the
+  //      Reqlore UI propagates within a few seconds (the prior token
+  //      is still accepted under the server's rotation grace window;
+  //      the response hands back the new one, we save it locally).
+  //   2. browser.storage.managed -- enterprise-managed seed values
+  //      shipped via Firefox policy `3rdparty.Extensions`. Used for
+  //      first-install bootstrap and for the baseUrl, which never
+  //      rotates. This is what makes `reqlore browser` "just work"
+  //      with zero manual configuration.
+  //   3. DEFAULT_BASE_URL fallback.
   let managed = {};
   try { managed = await browser.storage.managed.get(); } catch (_) {}
   const r = await browser.storage.local.get([STORE_KEYS.baseUrl, STORE_KEYS.token]);
   return {
-    baseUrl: (managed && managed.baseUrl)
-             || r[STORE_KEYS.baseUrl] || DEFAULT_BASE_URL,
-    token:   (managed && managed.token)
-             || r[STORE_KEYS.token]   || "",
+    baseUrl: r[STORE_KEYS.baseUrl]
+             || (managed && managed.baseUrl) || DEFAULT_BASE_URL,
+    token:   r[STORE_KEYS.token]
+             || (managed && managed.token)   || "",
     managed: !!(managed && (managed.baseUrl || managed.token)),
   };
 }
@@ -80,7 +89,18 @@ async function fetchConfig() {
       credentials: "omit",
     });
     if (!r.ok) return null;
-    cachedCfg = await r.json();
+    const cfg = await r.json();
+    // Self-healing token rotation: if Reqlore handed us a token that
+    // differs from what we just used to authenticate, persist it so
+    // every subsequent request uses the fresh value. The just-used
+    // token was the previous one (still accepted under the server's
+    // grace window); next call will use the new one.
+    if (cfg && typeof cfg.token === "string" && cfg.token && cfg.token !== token) {
+      try {
+        await browser.storage.local.set({ [STORE_KEYS.token]: cfg.token });
+      } catch (_) {}
+    }
+    cachedCfg = cfg;
     cachedAt = now;
     return cachedCfg;
   } catch (_) {
@@ -207,6 +227,20 @@ async function configForTab(tabId, url) {
 }
 
 // -------------------- message dispatch --------------------
+
+// Watch for policies.json changes (Firefox refreshes managed storage
+// when distribution/policies.json is rewritten). On a `reqlore browser`
+// relaunch the bridge baseUrl / bootstrap token may both change; drop
+// the cached config so the next request picks up the new values
+// immediately instead of waiting for CFG_TTL_MS to expire.
+try {
+  browser.storage.onChanged.addListener((_changes, area) => {
+    if (area === "managed" || area === "local") {
+      cachedCfg = null;
+      cachedAt = 0;
+    }
+  });
+} catch (_) { /* older browsers without storage.onChanged */ }
 
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (!msg || typeof msg !== "object") return;

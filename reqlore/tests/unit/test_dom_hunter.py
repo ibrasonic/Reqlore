@@ -238,6 +238,95 @@ def test_bridge_config_with_correct_token(app_and_client):
     for src, tag in [("location.hash", "h"), ("location.search", "s"),
                      ("window.name", "n"), ("document.referrer", "r")]:
         assert tagged[src] == f"{canary}-{tag}", tagged
+    # Bridge config must echo the current token so the extension can
+    # self-heal after a token rotation: the response carries the new
+    # token, the request that prompted it was authenticated under the
+    # rotation grace window with the now-previous token.
+    assert body.get("token") == token
+
+
+def test_rotate_token_keeps_previous_token_valid_in_grace_window(
+        app_and_client):
+    """Rotating the bridge token must NOT immediately invalidate a
+    running extension. The previous token stays accepted for a short
+    grace window so the extension's next bridge call still succeeds and
+    receives the new token in the response, then persists it locally.
+
+    Failure mode: rotating the token in the UI breaks the extension
+    until the user manually relaunches `reqlore browser`.
+    """
+    app, c = app_and_client
+    proj = app.extensions["reqlore_project"]
+    old_token = S.get_or_make_token(proj)
+
+    # Rotate via the helper (mirrors what the settings page does).
+    new_token = S.rotate_token(proj)
+    assert new_token != old_token
+    assert S.get_or_make_token(proj) == new_token
+
+    # The old token still authenticates within the grace window.
+    r = c.get("/dom-hunter/__bridge/config",
+              headers={"X-DOMHunter-Token": old_token})
+    assert r.status_code == 200
+    body = r.get_json()
+    # The response carries the NEW token so the extension can persist
+    # it and use it for subsequent requests.
+    assert body["token"] == new_token
+
+    # The new token also works.
+    r = c.get("/dom-hunter/__bridge/config",
+              headers={"X-DOMHunter-Token": new_token})
+    assert r.status_code == 200
+
+    # An unrelated random token is rejected.
+    r = c.get("/dom-hunter/__bridge/config",
+              headers={"X-DOMHunter-Token": "not-a-real-token-xxxxxxxxxx"})
+    assert r.status_code == 401
+
+
+def test_rotate_token_grace_window_expires(app_and_client, monkeypatch):
+    """Once the rotation grace window expires the previous token MUST
+    stop authenticating. This bounds the blast radius of a leaked old
+    token after a rotation."""
+    app, c = app_and_client
+    proj = app.extensions["reqlore_project"]
+    old_token = S.get_or_make_token(proj)
+    new_token = S.rotate_token(proj)
+
+    # Fast-forward: pretend the rotation happened well outside the grace.
+    import time as _t
+    fake_now = _t.time() + S.TOKEN_ROTATION_GRACE_SECONDS + 60
+    monkeypatch.setattr(S.time, "time", lambda: fake_now)
+
+    r = c.get("/dom-hunter/__bridge/config",
+              headers={"X-DOMHunter-Token": old_token})
+    assert r.status_code == 401
+    # New token still works -- it's the "current" token, not subject
+    # to the grace window check.
+    r = c.get("/dom-hunter/__bridge/config",
+              headers={"X-DOMHunter-Token": new_token})
+    assert r.status_code == 200
+
+
+def test_is_valid_token_rejects_empty_and_unrelated(tmp_path: Path) -> None:
+    """The token validator must never accept an empty string, even when
+    the project has never had a token set (defensive: a buggy caller
+    should not be able to bypass auth by sending no header)."""
+    from reqlore.storage import Project
+    proj_path = tmp_path / "v.rlr"
+    Project(proj_path).close()
+    proj = Project(proj_path)
+    try:
+        # No token set yet.
+        assert S.is_valid_token(proj, "") is False
+        assert S.is_valid_token(proj, "anything") is False
+        # Now establish a token and verify only it is accepted.
+        tok = S.get_or_make_token(proj)
+        assert S.is_valid_token(proj, tok) is True
+        assert S.is_valid_token(proj, tok + "x") is False
+        assert S.is_valid_token(proj, "") is False
+    finally:
+        proj.close()
 
 
 def test_bridge_report_finding_inserts_and_dedupes(app_and_client):
