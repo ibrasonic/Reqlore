@@ -92,6 +92,7 @@
             <li><a href="{{ url_for('history.show', hid=r.id) }}">View</a></li>
             <li><a href="{{ url_for('repeater.index', from_history=r.id) }}">Send to Repeater</a></li>
             <li><a href="{{ url_for('intruder.new', from_history=r.id) }}">Send to Intruder</a></li>
+            <li><a href="{{ url_for('sequencer.capture_new', from_history=r.id) }}">Send to Sequencer</a></li>
             <li><a href="{{ url_for('comparer.index', from_a=r.id) }}"
                    class="cmp-pick"
                    data-hid="{{ r.id }}"
