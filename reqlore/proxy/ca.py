@@ -26,12 +26,33 @@ def _harden_perms(path: Path) -> None:
         pass
 
 
+def _ensure_mitmproxy_ca_link(ca_dir: Path,
+                              cert_path: Path, key_path: Path) -> Path:
+    # mitmproxy reads ``<confdir>/mitmproxy-ca.pem`` (PKCS8 key + cert in
+    # one PEM) at startup and silently auto-generates its own CA when the
+    # file is absent. That stray CA then signs every forged leaf, but
+    # Firefox only trusts the Reqlore CA installed via policies.json, so
+    # HSTS sites refuse to load. Mirror our CA into mitmproxy's expected
+    # path so the chain validates without manual cert imports.
+    combined = ca_dir / "mitmproxy-ca.pem"
+    desired = key_path.read_bytes() + cert_path.read_bytes()
+    try:
+        if combined.exists() and combined.read_bytes() == desired:
+            return combined
+    except OSError:
+        pass
+    secret_write_bytes(combined, desired)
+    _harden_perms(combined)
+    return combined
+
+
 def ensure_ca(ca_dir: Path) -> tuple[Path, Path]:
     """Make sure a CA exists in `ca_dir`. Returns (cert_pem_path, key_pem_path)."""
     ca_dir.mkdir(parents=True, exist_ok=True)
     cert_path = ca_dir / "reqlore-ca.pem"
     key_path = ca_dir / "reqlore-ca.key"
     if cert_path.exists() and key_path.exists():
+        _ensure_mitmproxy_ca_link(ca_dir, cert_path, key_path)
         return cert_path, key_path
 
     # M-1: new CAs use ECDSA-P256 with a 13-month validity window.
@@ -83,4 +104,5 @@ def ensure_ca(ca_dir: Path) -> tuple[Path, Path]:
         encryption_algorithm=serialization.NoEncryption(),
     ))
     _harden_perms(key_path)
+    _ensure_mitmproxy_ca_link(ca_dir, cert_path, key_path)
     return cert_path, key_path
