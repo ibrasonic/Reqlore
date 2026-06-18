@@ -122,6 +122,32 @@ lose their place. The only ways out are:
 - **Esc** or **Cancel** (closes, restores focus to the column summary), or
 - **Enter** or **Apply** (commits — page reloads to the filtered table).
 
+#### Screen-reader virtual-cursor trap (dialog upgrade)
+
+A focus trap stops the *keyboard* from leaving an open menu, but
+screen readers (NVDA, JAWS, VoiceOver) read pages with a *virtual
+cursor* that walks the DOM independently of focus — arrow keys in
+browse mode bypass JS handlers entirely. To constrain the SR's
+virtual cursor we **upgrade the panel to a modal dialog on open**:
+
+| Element  | Closed                                         | Open (JS-enhanced)                                                                 |
+|----------|------------------------------------------------|------------------------------------------------------------------------------------|
+| `<summary>` | `aria-haspopup="dialog"`, `aria-expanded="false"` | `aria-haspopup="dialog"`, `aria-expanded="true"`                                  |
+| `.hist-col-filter-panel` | `role="group"`, `aria-label`     | `role="dialog"`, `aria-modal="true"`, `aria-labelledby="<summary id>"`, `tabindex="-1"` |
+
+`aria-modal="true"` is the part SRs honour to constrain the virtual
+cursor — they switch into focus / forms mode automatically when entering
+a modal dialog. This is exactly the same pattern as the row Actions
+menu's `role="menu"` upgrade (a menu is also a "you cannot read past
+me" container); we use `dialog` rather than `menu` because the panel
+contains form controls (checkboxes, inputs, radios), not menuitems.
+
+On close, the panel reverts to `role="group"` and the summary's
+`aria-expanded` flips back to `"false"`. The id attributes
+(`hist-filter-toggle-<col>` on the summary and
+`hist-filter-panel-<col>` on the panel) are rendered server-side so the
+labelledby reference is resolvable the instant the dialog opens.
+
 In addition to Tab, **ArrowDown / ArrowUp / Home / End** rove focus
 inside the panel when the currently focused control does not own arrow
 behaviour itself. The rules:
@@ -139,12 +165,14 @@ This means a checkbox-heavy panel feels like a menu, but typing into
 the URL filter or stepping the Bytes / ms numeric range still works
 the way the browser would normally let it.
 
-> **Caveat: screen-reader browse mode.** NVDA and JAWS in *browse*
-> mode handle arrow keys at the virtual-cursor level — those keys
-> never reach the page's keydown handler and we cannot trap them.
-> Committing the filter still requires Enter / Apply / Esc, all of
-> which work in any SR mode, so the menu remains usable; the
-> virtual cursor just walks normally.
+> **Note on screen-reader browse mode.** Without the dialog upgrade
+> NVDA and JAWS in *browse* mode would let their virtual cursor walk
+> out of the panel — arrow keys at that layer never reach a page
+> keydown handler. Wrapping the open panel in `role="dialog"
+> aria-modal="true"` is what fixes that: SRs switch into focus / forms
+> mode when entering a modal dialog, so the virtual cursor stays
+> inside. Committing the filter still uses Enter / Apply / Esc, which
+> work in any SR mode.
 
 This is a deliberate departure from a plain disclosure: the open menu
 behaves more like a popup. We picked it because the user-research

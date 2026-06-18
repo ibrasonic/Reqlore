@@ -488,16 +488,23 @@
   // browser doesn't:
   //   * Opening one column's menu closes any other open menu (so
   //     users don't end up with three overlapping panels).
+  //   * On open the panel is upgraded to role="dialog"
+  //     aria-modal="true" aria-labelledby="<summary id>" and the
+  //     summary gets aria-haspopup="dialog" aria-expanded="true" —
+  //     this is the same pattern as the row Actions menu's
+  //     role="menu" upgrade and forces NVDA / JAWS / VoiceOver
+  //     into focus mode, constraining their virtual cursor inside
+  //     the panel. The role/attrs are stripped on close.
   //   * Escape inside an open menu closes it AND returns focus to
   //     its <summary> trigger (SC 2.4.3 Focus Order).
   //   * Clicking outside any menu closes them all.
   //   * On open, focus moves to the first input/checkbox/radio in
   //     the panel (SC 2.4.3 / 3.2.2).
   //   * Tab / Shift+Tab cycle inside the open panel — the menu
-  //     behaves like a popup: keyboard + screen-reader users never
-  //     accidentally walk past the menu into the next column header
-  //     or row while the menu is open. Escape (or Cancel) is the
-  //     only way out without committing.
+  //     behaves like a modal popup: keyboard + screen-reader users
+  //     never accidentally walk past the menu into the next column
+  //     header or row while the menu is open. Escape (or Cancel)
+  //     is the only way out without committing.
   //   * ArrowDown / ArrowUp / Home / End rove between focusable
   //     panel items when the focused control doesn't already use
   //     arrows (so checkboxes + buttons get menu-style nav, while
@@ -541,11 +548,59 @@
     function closeMenu(d, restoreFocus) {
       if (!d.open) return;
       d.open = false;
+      // upgradeForOpen() runs via the toggle handler when d.open
+      // flips back to false, which restores role="group" and
+      // strips dialog/modal/labelledby/tabindex. We don't have to
+      // mirror that here.
       if (restoreFocus) {
         var summary = d.querySelector('summary');
         if (summary) summary.focus();
       }
     }
+
+    // Upgrade the panel to a modal dialog on open / downgrade on
+    // close. This is the equivalent of the row Actions menu's
+    // role="menu" upgrade — both put screen readers into focus
+    // mode so the virtual cursor stays inside the popup. We use
+    // role="dialog" + aria-modal="true" (rather than role="menu")
+    // because the popup contains form controls, not menuitems;
+    // dialog is the APG-correct container for that. On close we
+    // restore role="group" so the closed (still-rendered) markup
+    // remains semantically correct for any AT that ignores
+    // hidden/closed <details> bodies.
+    function upgradeForOpen(d) {
+      var panel = d.querySelector('.hist-col-filter-panel');
+      var summary = d.querySelector('summary');
+      if (!panel || !summary) return;
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-modal', 'true');
+      panel.setAttribute('aria-labelledby', summary.id);
+      panel.setAttribute('tabindex', '-1');
+      summary.setAttribute('aria-haspopup', 'dialog');
+      summary.setAttribute('aria-expanded', 'true');
+    }
+    function downgradeForClose(d) {
+      var panel = d.querySelector('.hist-col-filter-panel');
+      var summary = d.querySelector('summary');
+      if (!panel || !summary) return;
+      panel.setAttribute('role', 'group');
+      panel.removeAttribute('aria-modal');
+      panel.removeAttribute('aria-labelledby');
+      panel.removeAttribute('tabindex');
+      summary.setAttribute('aria-haspopup', 'dialog');
+      summary.setAttribute('aria-expanded', 'false');
+    }
+
+    // Announce the haspopup contract on every summary up-front, so
+    // SR users hear "<column> filter, collapsed, has popup, dialog"
+    // even before they open one.
+    menus.forEach(function (d) {
+      var summary = d.querySelector('summary');
+      if (summary) {
+        summary.setAttribute('aria-haspopup', 'dialog');
+        summary.setAttribute('aria-expanded', d.open ? 'true' : 'false');
+      }
+    });
 
     menus.forEach(function (d) {
       var summary = d.querySelector('summary');
@@ -553,6 +608,7 @@
       d.addEventListener('toggle', function () {
         if (d.open) {
           closeOthers(d);
+          upgradeForOpen(d);
           var first = panelFocusables(d)[0];
           if (first) {
             // Defer until after the browser has painted the panel
@@ -560,6 +616,8 @@
             // visibility, not its hidden state.
             setTimeout(function () { first.focus(); }, 0);
           }
+        } else {
+          downgradeForClose(d);
         }
       });
 

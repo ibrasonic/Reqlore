@@ -52,23 +52,34 @@
 {%- endmacro %}
 
 {% macro hist_th_filter(col_id, header, summary_label, summary_text, active=False) -%}
-  {# A column header with a built-in filter disclosure.
+  {# A column header with a built-in filter popup.
 
-     The open panel is treated as a tab-trapped popup: while open the
-     JS layer cycles Tab/Shift+Tab between the controls *inside*
-     `.hist-col-filter-panel` (the Apply button is the last stop), so
-     keyboard + screen-reader users never lose their place in the
-     table by tabbing past the menu. Escape closes the menu and
-     restores focus to the <summary>.
+     With JavaScript enabled, the panel is upgraded at open time to
+     a modal dialog (role="dialog" aria-modal="true") so screen
+     readers (NVDA / JAWS / VoiceOver) switch into focus mode and
+     constrain their virtual cursor inside the panel — matching the
+     row Actions menu's "you cannot read past me" semantics. The JS
+     layer also traps Tab / Shift+Tab and roves arrows between
+     panel controls. Escape (or the Cancel button) closes the
+     dialog and restores focus to the column summary.
+
+     With JavaScript disabled, the markup degrades to a native
+     <details> disclosure with the controls grouped under
+     role="group"; SC 2.4.3 (Focus Order) is still met by the
+     browser's own tab order.
   #}
   <th scope="col" class="hist-th hist-th--filter">
     <details class="hist-col-filter" data-hist-col-filter id="hist-filter-{{ col_id }}">
       <summary class="hist-col-filter-toggle"
+               id="hist-filter-toggle-{{ col_id }}"
                aria-label="{{ summary_label }}{% if active %}; active: {{ summary_text }}{% endif %}">
         <span class="hist-col-name">{{ header }}</span>
         <span class="hist-col-filter-marker" aria-hidden="true">{% if active %}●{% else %}▾{% endif %}</span>
       </summary>
-      <div class="hist-col-filter-panel" role="group" aria-label="{{ header }} filter">
+      <div class="hist-col-filter-panel"
+           id="hist-filter-panel-{{ col_id }}"
+           role="group"
+           aria-label="{{ header }} filter">
         {{ caller() }}
         <div class="hist-filter-actions">
           <button type="submit" class="hist-filter-apply">Apply</button>

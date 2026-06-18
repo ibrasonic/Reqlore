@@ -101,17 +101,28 @@ a single top-of-page form, with these AAA-aligned commitments:
   committing) or Enter / Apply (commits and reloads). With JS off
   the menus remain plain `<details>` and Tab walks normally — the
   trap is a JS-only enhancement on top of working baseline.
+- **Screen-reader virtual cursor trap (modal dialog upgrade).** On
+  open the panel becomes `role="dialog" aria-modal="true"
+  aria-labelledby="<summary id>" tabindex="-1"` and the summary
+  gets `aria-haspopup="dialog" aria-expanded="true"`. NVDA, JAWS and
+  VoiceOver honour `aria-modal` by switching into focus / forms
+  mode when entering the dialog, so the virtual cursor stays inside
+  — the same "you cannot read past me" semantics the row Actions
+  menu gets from its `role="menu"` upgrade. We use `dialog` rather
+  than `menu` because the panel contains form controls (checkboxes,
+  text inputs, radios, numeric ranges), and `menu` / `menuitem`
+  would be the wrong semantics for those. On close the panel
+  reverts to `role="group"` and `aria-expanded` flips back.
 - **Arrow-key roving inside the panel.** ArrowDown / ArrowUp / Home
   / End move focus between the panel's focusable items (checkboxes,
   buttons, links) with wrap. Controls whose own arrow keys carry
   meaning are explicitly excluded so they keep their native
   behaviour: text and number inputs (caret / increment), `<select>`
   / `<textarea>` (caret / value), and radio groups (native group
-  navigation). ArrowLeft / ArrowRight are never intercepted.
-  Screen-reader *browse* mode arrows operate on the virtual cursor
-  and bypass the handler altogether — committing still requires
-  Enter / Apply / Esc, which work in any SR mode, so usability is
-  preserved.
+  navigation). ArrowLeft / ArrowRight are never intercepted. The
+  modal-dialog upgrade above ensures the SR virtual cursor cannot
+  drift past the panel, so arrow-key roving works consistently in
+  both focus and browse modes.
 
 Verified by [`test_history_filters.py`](../reqlore/tests/unit/test_history_filters.py).
 

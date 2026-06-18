@@ -273,3 +273,10 @@ def test_each_filter_menu_renders_apply_and_cancel(client):
     # Arrow-key roving inside the open panel is also documented in
     # the hint so sighted users know it exists.
     assert body.count("<kbd>↑</kbd> <kbd>↓</kbd>") == 7
+    # Every <summary> carries a stable id so the JS layer can wire
+    # aria-labelledby on the panel when it upgrades the panel to
+    # role="dialog" on open. The id MUST be present in the HTML so
+    # AT can resolve the reference the moment open happens.
+    for col in ("method", "status", "host", "url", "bytes", "ms", "engine"):
+        assert f'id="hist-filter-toggle-{col}"' in body
+        assert f'id="hist-filter-panel-{col}"' in body
