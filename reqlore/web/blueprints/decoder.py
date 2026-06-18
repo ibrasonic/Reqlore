@@ -78,11 +78,11 @@ def _encode(op: str, s: str) -> tuple[str, str | None]:
         if op == "b64_encode":
             return base64.b64encode(b).decode("ascii"), None
         if op == "b64_decode":
-            return _b64_decode_strict(s, urlsafe=False), None
+            return _b64_decode_strict(s, urlsafe=False)
         if op == "b64url_encode":
             return base64.urlsafe_b64encode(b).decode("ascii").rstrip("="), None
         if op == "b64url_decode":
-            return _b64_decode_strict(s, urlsafe=True), None
+            return _b64_decode_strict(s, urlsafe=True)
         if op == "hex_encode":
             return b.hex(), None
         if op == "hex_decode":
@@ -91,7 +91,17 @@ def _encode(op: str, s: str) -> tuple[str, str | None]:
             cleaned = re.sub(r"[\s:_\-]", "", s)
             if cleaned.lower().startswith("0x"):
                 cleaned = cleaned[2:]
-            return bytes.fromhex(cleaned).decode("utf-8", errors="replace"), None
+            if not cleaned:
+                return "", "Hex decode: no hex characters in input."
+            if len(cleaned) % 2 != 0:
+                return "", (f"Hex decode: odd number of hex digits "
+                             f"({len(cleaned)}). Each byte needs 2 digits.")
+            if not re.fullmatch(r"[0-9A-Fa-f]+", cleaned):
+                bad = next((c for c in cleaned if c not in
+                            "0123456789abcdefABCDEF"), "?")
+                return "", f"Hex decode: non-hex character {bad!r} in input."
+            raw = bytes.fromhex(cleaned)
+            return _bytes_to_text_with_note(raw)
         if op == "gzip_encode":
             return base64.b64encode(gzip.compress(b)).decode("ascii"), None
         if op == "gzip_decode":
@@ -137,23 +147,18 @@ def _encode(op: str, s: str) -> tuple[str, str | None]:
         if op in ("md5", "sha1", "sha256", "sha512"):
             return hashlib.new(op, b).hexdigest(), None
         if op == "jwt_decode":
-            parts = s.strip().split(".")
-            if len(parts) < 2:
-                return "", "Not a JWT (need at least 2 dots)."
-            header = pyjwt.get_unverified_header(s.strip())
-            payload = pyjwt.decode(s.strip(), options={"verify_signature": False})
-            return json.dumps({"header": header, "payload": payload}, indent=2), None
+            return _jwt_decode_safe(s)
         if op == "json_pretty":
-            return json.dumps(json.loads(s), indent=2, sort_keys=False), None
+            return json.dumps(_json_load_lenient(s), indent=2, sort_keys=False), None
         if op == "json_minify":
-            return json.dumps(json.loads(s), separators=(",", ":")), None
+            return json.dumps(_json_load_lenient(s), separators=(",", ":")), None
         if op == "smart_decode":
             return _smart(s), None
         return "", f"Unknown operation: {op}"
-    except (binascii.Error, ValueError, UnicodeDecodeError, OSError) as e:
-        return "", f"{type(e).__name__}: {e}"
-    except Exception as e:  # noqa: BLE001
-        return "", f"{type(e).__name__}: {e}"
+    except (binascii.Error, ValueError, UnicodeDecodeError, OSError, zlib.error) as e:
+        return "", _friendly_error(op, e)
+    except Exception as e:  # noqa: BLE001 — any unexpected lib error surfaces as text rather than 500
+        return "", _friendly_error(op, e)
 
 
 _ROT13 = str.maketrans(
@@ -179,16 +184,104 @@ def _form_recode(s: str, *, encode: bool) -> str:
     return "&".join(out_pairs)
 
 
-def _b64_bytes_strict(s: str) -> bytes:
-    """Decode a base64 string to bytes with strict validation.
-    Strips whitespace then re-pads, but rejects any character outside
-    the standard base64 alphabet. Returning raw bytes lets binary
-    payloads (gzip/deflate) be decompressed without an intermediate
-    UTF-8 round-trip that would have corrupted them.
+def _b64_decode_strict(s: str, *, urlsafe: bool) -> tuple[str, str | None]:
+    """Decode a base64 (or url-safe base64) string to UTF-8 text.
+    Returns (text, error_or_None). Strict alphabet validation up front
+    keeps the error "this isn't valid base64" distinct from "this
+    base64 decodes to non-text bytes" — the latter is surfaced as a
+    status note via ``_bytes_to_text_with_note`` so the operator can
+    spot it and pick gzip / hex / etc. instead.
     """
     cleaned = re.sub(r"\s+", "", s)
+    if not cleaned:
+        return "", "Base64 decode: no input."
+    alphabet = r"[A-Za-z0-9\-_]" if urlsafe else r"[A-Za-z0-9+/]"
+    if not re.fullmatch(rf"{alphabet}+=*", cleaned):
+        return "", ("Base64 URL-safe decode: input has characters "
+                    "outside [A-Z a-z 0-9 - _].") if urlsafe else (
+                    "Base64 decode: input has characters outside "
+                    "[A-Z a-z 0-9 + /].")
+    if urlsafe:
+        cleaned = cleaned.replace("-", "+").replace("_", "/")
     cleaned += "=" * (-len(cleaned) % 4)
-    return base64.b64decode(cleaned.encode("ascii"), validate=True)
+    try:
+        raw = base64.b64decode(cleaned.encode("ascii"), validate=True)
+    except binascii.Error as exc:
+        return "", f"Base64 decode: {exc}."
+    return _bytes_to_text_with_note(raw)
+
+
+def _bytes_to_text_with_note(raw: bytes) -> tuple[str, str | None]:
+    """Decode bytes as UTF-8 and surface a status when the result is
+    really binary. Without this signal the operator gets a string full
+    of "\\ufffd" replacement chars and no hint that they should have
+    picked Gzip / Hex / etc."""
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+        return text, (f"Decoded {len(raw)} bytes are not UTF-8 text "
+                       f"(showing replacement chars). Try Gzip / Hex / "
+                       f"Brotli / Zstd if the body is compressed.")
+
+
+def _json_load_lenient(s: str):
+    """json.loads with a couple of forgiveness fixes that the stdlib
+    refuses out of the box but virtually every other JSON tool accepts:
+    strip a leading UTF-8 BOM, then re-raise any real ValueError so
+    the broad handler can surface it with line/col context.
+    """
+    stripped = s.lstrip("\ufeff").strip()
+    if not stripped:
+        raise ValueError("empty input")
+    return json.loads(stripped)
+
+
+def _jwt_decode_safe(s: str) -> tuple[str, str | None]:
+    """Decode a JWT *without* checking the signature, expiry, audience
+    or issuer. The Decoder panel is for inspection, not validation —
+    refusing to show an expired or wrong-aud token's claims would
+    defeat the only reason a tester pastes one in here. Returns a
+    friendly error for anything that isn't shaped like a JWT.
+    """
+    tok = s.strip()
+    parts = tok.split(".")
+    if len(parts) < 2:
+        return "", "JWT decode: token needs at least 2 dots (header.payload[.sig])."
+    try:
+        header = pyjwt.get_unverified_header(tok)
+        payload = pyjwt.decode(tok, options={
+            "verify_signature": False,
+            "verify_exp": False,
+            "verify_nbf": False,
+            "verify_iat": False,
+            "verify_aud": False,
+            "verify_iss": False,
+        })
+    except pyjwt.exceptions.PyJWTError as exc:
+        return "", f"JWT decode: {exc}."
+    return json.dumps({"header": header, "payload": payload}, indent=2), None
+
+
+_FRIENDLY_OP_NAMES = {
+    "b64_decode": "Base64 decode",
+    "b64url_decode": "Base64 URL-safe decode",
+    "hex_decode": "Hex decode",
+    "gzip_decode": "Gzip decompress",
+    "deflate_decode": "Deflate decompress",
+    "br_decode": "Brotli decompress",
+    "zstd_decode": "Zstd decompress",
+    "json_pretty": "JSON pretty-print",
+    "json_minify": "JSON minify",
+}
+
+
+def _friendly_error(op: str, exc: Exception) -> str:
+    """Render an exception as a single-line message tagged with the op
+    name so the panel's role=alert tells the operator both *what* went
+    wrong and *which* op produced it."""
+    label = _FRIENDLY_OP_NAMES.get(op, op)
+    return f"{label}: {type(exc).__name__}: {exc}"
 
 
 def _compressed_candidates(s: str) -> list[bytes]:
@@ -248,22 +341,6 @@ def _try_decompress(s: str, decompress):
     if last_err is not None:
         raise last_err
     raise ValueError("empty input")
-
-
-def _b64_decode_strict(s: str, *, urlsafe: bool) -> str:
-    """Decode a base64 (or url-safe base64) string to UTF-8 text.
-    Strict: silently accepting garbage made it impossible to tell
-    "this isn't base64" from "this base64 decodes to non-text bytes",
-    so we validate the alphabet up front. Non-text decoded bytes still
-    use replacement chars rather than raising \u2014 the operator can see
-    that and switch to gzip/hex/etc. if needed.
-    """
-    cleaned = re.sub(r"\s+", "", s)
-    if urlsafe:
-        cleaned = cleaned.replace("-", "+").replace("_", "/")
-    cleaned += "=" * (-len(cleaned) % 4)
-    raw = base64.b64decode(cleaned.encode("ascii"), validate=True)
-    return raw.decode("utf-8", errors="replace")
 
 
 def _smart(s: str) -> str:

@@ -135,14 +135,13 @@ class TestBase64:
         assert e2 is None and dec == "hi?"
 
     def test_b64url_decode_rejects_standard_alphabet(self):
-        # If input came from b64_encode (uses '+' '/') we still want
-        # url-safe decode to surface the error, not silently produce
-        # different bytes.
+        # url-safe mode must reject '+' and '/' rather than silently
+        # translating: ambiguous input \u2014 was the producer encoding
+        # with the wrong alphabet, or did the operator paste the wrong
+        # blob? Surface the mismatch instead of guessing.
         out, err = _encode("b64url_decode", "aGVsbG8+d29ybGQ/")
-        # The '+' and '/' will be translated, so this actually decodes
-        # fine. Assert it round-trips to itself instead.
-        assert err is None
-        assert out == "hello>world?"
+        assert out == ""
+        assert err and "URL-safe" in err
 
 
 class TestHex:
@@ -299,6 +298,122 @@ class TestSmartDecode:
         # should pass through unchanged instead of being mis-"decoded".
         out, err = _encode("smart_decode", "Hello, World!")
         assert err is None and out == "Hello, World!"
+
+
+class TestErrorMessages:
+    """Every decode op must surface bad-input errors as a single text
+    line (never a 500), tagged with the op name so the operator can
+    tell which step in a chain failed."""
+
+    def test_b64_decode_bad_alphabet_tagged(self):
+        out, err = _encode("b64_decode", "not base 64 !!")
+        assert out == ""
+        assert err and err.startswith("Base64 decode:")
+
+    def test_b64url_decode_rejects_plus_slash(self):
+        # Standard-alphabet chars in url-safe mode \u2014 explicit error
+        # beats silent translation.
+        out, err = _encode("b64url_decode", "aaa+/bbb")
+        assert out == ""
+        assert err and "URL-safe" in err
+
+    def test_b64_decode_binary_returns_note_not_silent_replacement(self):
+        # Base64 of raw gzip header bytes: decodes successfully but is
+        # not UTF-8 text. Should surface a note so the operator knows
+        # to switch to a binary op.
+        import base64 as _b64
+        enc = _b64.b64encode(b"\x1f\x8b\x08\x00\x00\x00\x00\x00").decode()
+        out, err = _encode("b64_decode", enc)
+        assert err and "not UTF-8" in err
+        # Output still present (with replacement chars) so the operator
+        # can eyeball the partial decode.
+        assert out
+
+    def test_hex_decode_odd_length_clear_error(self):
+        out, err = _encode("hex_decode", "414")
+        assert out == ""
+        assert err and "odd" in err.lower()
+
+    def test_hex_decode_non_hex_char(self):
+        out, err = _encode("hex_decode", "41GG43")
+        assert out == ""
+        assert err and "non-hex" in err.lower()
+
+    def test_hex_decode_binary_returns_note(self):
+        # Hex of \x80\x81 \u2014 not valid UTF-8 on its own.
+        out, err = _encode("hex_decode", "8081")
+        assert err and "not UTF-8" in err
+        assert out  # replacement-char string
+
+    def test_gzip_decode_error_tagged_with_op(self):
+        out, err = _encode("gzip_decode", "Zm9v")  # valid b64, not gzip
+        assert out == ""
+        assert err and err.startswith("Gzip decompress:")
+
+    def test_deflate_decode_error_tagged_with_op(self):
+        # 16 random bytes \u2014 won't decompress as zlib or raw deflate.
+        out, err = _encode("deflate_decode", "00" * 16)
+        assert out == ""
+        assert err and err.startswith("Deflate decompress:")
+
+    def test_json_pretty_invalid_includes_position(self):
+        out, err = _encode("json_pretty", "{not json}")
+        assert out == ""
+        # stdlib's JSONDecodeError message has "line N column M".
+        assert err and err.startswith("JSON pretty-print:") and "line" in err
+
+    def test_json_minify_strips_bom(self):
+        # Real-world JSON files saved on Windows often have a UTF-8 BOM.
+        out, err = _encode("json_minify", "\ufeff{\"a\":1}")
+        assert err is None and out == '{"a":1}'
+
+    def test_json_pretty_empty_input(self):
+        out, err = _encode("json_pretty", "   ")
+        assert out == ""
+        assert err and "empty" in err.lower()
+
+    def test_jwt_decode_bad_token_tagged(self):
+        out, err = _encode("jwt_decode", "abc.def.ghi")
+        assert out == ""
+        assert err and err.startswith("JWT decode:")
+
+    def test_jwt_decode_short_token_clear_error(self):
+        out, err = _encode("jwt_decode", "abc")
+        assert out == ""
+        assert err and "2 dots" in err
+
+    def test_jwt_decode_expired_token_still_shows_claims(self):
+        # exp=1 (1970) \u2014 long expired. The decoder must NOT refuse to
+        # show the claims; that would defeat the only reason to paste
+        # an expired token into the panel.
+        import json as _json
+        import base64 as _b64
+        def _b64u(d):
+            return _b64.urlsafe_b64encode(d).rstrip(b"=").decode()
+        header = _b64u(_json.dumps({"alg": "none", "typ": "JWT"}).encode())
+        payload = _b64u(_json.dumps({"sub": "alice", "exp": 1}).encode())
+        tok = f"{header}.{payload}."
+        out, err = _encode("jwt_decode", tok)
+        assert err is None
+        assert '"sub": "alice"' in out and '"exp": 1' in out
+
+    def test_brotli_decode_garbage_tagged(self):
+        try:
+            import brotli  # noqa: F401
+        except ImportError:
+            pytest.skip("brotli not installed")
+        out, err = _encode("br_decode", "not-brotli-data")
+        assert out == ""
+        assert err and err.startswith("Brotli decompress:")
+
+    def test_zstd_decode_garbage_tagged(self):
+        try:
+            import zstandard  # noqa: F401
+        except ImportError:
+            pytest.skip("zstandard not installed")
+        out, err = _encode("zstd_decode", "not-zstd-data")
+        assert out == ""
+        assert err and err.startswith("Zstd decompress:")
 
 
 # ---------------------------------------------------------------------------
