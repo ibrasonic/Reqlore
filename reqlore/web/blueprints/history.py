@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import zlib
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for, Response
@@ -16,11 +17,107 @@ from ..send_targets import (available_targets, bearer_token,
 bp = Blueprint("history", __name__)
 
 
+# Whitelists for the per-column filter menus. Keeps a stray hand-edited
+# query-string value from getting forwarded straight into the WHERE
+# clause (defence in depth — the storage layer already binds with ?).
+_KNOWN_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
+_STATUS_BUCKETS = ("1xx", "2xx", "3xx", "4xx", "5xx")
+_STATUS_TOKEN_RE = re.compile(r"^[1-5]xx$|^[1-9]\d{2}$")
+
+
+def _csv_param(name: str) -> list[str]:
+    """Read a query-string value that may appear once-CSV (``?m=GET,POST``)
+    or repeated (``?m=GET&m=POST``). Trim, drop empties, dedupe while
+    preserving order."""
+    seen: list[str] = []
+    raw_values: list[str] = []
+    for v in request.args.getlist(name):
+        raw_values.extend(v.split(","))
+    for v in raw_values:
+        v = v.strip()
+        if v and v not in seen:
+            seen.append(v)
+    return seen
+
+
+def _int_param(name: str) -> int | None:
+    raw = request.args.get(name, "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _read_filters() -> dict:
+    """Parse + validate every history filter from the query string into
+    a single dict the template, blueprint and storage layer all consume.
+    Unknown / malformed values are silently dropped — the URL is the
+    user's UI, so we degrade gracefully rather than 400."""
+    methods_csv = _csv_param("method")
+    methods = [m.upper() for m in methods_csv if m.upper() in _KNOWN_METHODS]
+    statuses = [s.lower() for s in _csv_param("status")
+                if _STATUS_TOKEN_RE.match(s.strip().lower())]
+    engines = _csv_param("engine")
+    host = request.args.get("host", "").strip() or None
+    host_mode = request.args.get("host_mode", "exact").strip().lower()
+    if host_mode not in ("exact", "contains"):
+        host_mode = "exact"
+    q = request.args.get("q", "").strip() or None
+    q_regex = request.args.get("q_re") == "1"
+    return {
+        "host": host,
+        "host_mode": host_mode,
+        "q": q,
+        "q_regex": q_regex,
+        "methods": methods,
+        "statuses": statuses,
+        "engines": engines,
+        "len_min": _int_param("len_min"),
+        "len_max": _int_param("len_max"),
+        "dur_min": _int_param("dur_min"),
+        "dur_max": _int_param("dur_max"),
+    }
+
+
+def _filter_kwargs_for_storage(f: dict) -> dict:
+    """Storage filter kwargs derived from the parsed filter dict. Only
+    the keys the storage methods accept — no ``host_mode`` / ``q_regex``
+    leak when the storage layer doesn't use them."""
+    return {
+        "host": f["host"],
+        "host_mode": f["host_mode"],
+        "q": f["q"],
+        "q_regex": f["q_regex"],
+        "methods": f["methods"] or None,
+        "statuses": f["statuses"] or None,
+        "engines": f["engines"] or None,
+        "len_min": f["len_min"],
+        "len_max": f["len_max"],
+        "dur_min": f["dur_min"],
+        "dur_max": f["dur_max"],
+    }
+
+
+def _engines_seen(project) -> list[str]:
+    """List of distinct engine values currently in the table — used by
+    the Engine column's filter menu so the choices reflect what the
+    operator has actually captured (rather than every engine Reqlore
+    *can* drive)."""
+    try:
+        with project._cursor() as cur:  # noqa: SLF001 — internal helper, fine here
+            rows = cur.execute(
+                "SELECT engine, COUNT(*) c FROM http_history "
+                "GROUP BY engine ORDER BY c DESC, engine ASC").fetchall()
+        return [r[0] for r in rows]
+    except Exception:  # noqa: BLE001 — never let the side menu 500 the page
+        return []
+
+
 @bp.route("/")
 def index():
-    q = request.args.get("q", "").strip() or None
-    host = request.args.get("host", "").strip() or None
-    method = request.args.get("method", "").strip().upper() or None
+    f = _read_filters()
     try:
         page = max(1, int(request.args.get("page", "1")))
     except ValueError:
@@ -28,19 +125,28 @@ def index():
     per_page = 100
     rows = g.project.list_history(
         limit=per_page, offset=(page - 1) * per_page,
-        host=host, q=q, method=method,
+        **_filter_kwargs_for_storage(f),
     )
     flagged = [(r, _flags(r.req_blob, r.resp_blob)) for r in rows]
     total = g.project.history_count()
     # Highest row id matching the current filters — used by the page's live
     # poll (latest.json) as the "since" cursor for new-request detection.
     max_id = max((r.id for r in rows), default=0)
-    methods = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
-    return render_template("history/index.html",
-                           rows=flagged, q=q or "", host=host or "",
-                           method=method or "", methods=methods,
-                           page=page, per_page=per_page, total=total,
-                           max_id=max_id)
+    return render_template(
+        "history/index.html",
+        rows=flagged,
+        f=f,
+        methods_all=_KNOWN_METHODS,
+        statuses_all=_STATUS_BUCKETS,
+        engines_all=_engines_seen(g.project),
+        page=page, per_page=per_page, total=total,
+        max_id=max_id,
+        any_filter_active=any([
+            f["host"], f["q"], f["methods"], f["statuses"], f["engines"],
+            f["len_min"] is not None, f["len_max"] is not None,
+            f["dur_min"] is not None, f["dur_max"] is not None,
+        ]),
+    )
 
 
 @bp.route("/latest.json")
@@ -51,15 +157,13 @@ def latest():
     what the user is actually viewing. `since` is the highest row id the
     client already knows about.
     """
-    q = request.args.get("q", "").strip() or None
-    host = request.args.get("host", "").strip() or None
-    method = request.args.get("method", "").strip().upper() or None
+    f = _read_filters()
     try:
         since = max(0, int(request.args.get("since", "0")))
     except ValueError:
         since = 0
     new_count, max_id = g.project.count_history_after(
-        since, host=host, q=q, method=method,
+        since, **_filter_kwargs_for_storage(f),
     )
     return Response(
         json.dumps({"new": new_count, "max_id": max_id, "since": since}),

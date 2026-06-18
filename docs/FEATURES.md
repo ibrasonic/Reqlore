@@ -43,7 +43,8 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | Feature | Status | Notes |
 |---|---|---|
 | HTTP history (search, filter, export) | ✅ | JSONL export. See [history.md](modules/history.md). |
-| Live new-row indicator (`/history/latest.json`) | ✅ | Server-driven poll, no JS routing. |
+| Per-column header filter menus (Method · Status · Host · URL · Bytes · ms · Engine) | ✅ | WCAG AAA-aligned `<details>` disclosures with ARIA-labelled summaries; multi-select methods/engines, status buckets (`2xx`…) and exact codes, host `exact`/`contains`, URL substring **or** regex, numeric ranges for bytes and ms. See [history.md § Filter menus (per column)](modules/history.md#filter-menus-per-column). |
+| Live new-row indicator (`/history/latest.json`) | ✅ | Server-driven poll, no JS routing. Off by default (SC 3.2.5 AAA). Live region announces only on count change (SC 2.2.4 AAA). |
 | Sitemap (host tree, in / out scope) | ✅ | See [sitemap.md](modules/sitemap.md). |
 | Extended columns (auth / csrf / cors / csp / cookie / redirect flags) | ✅ | |
 | Project-wide search (URL · request · response) | ✅ | |

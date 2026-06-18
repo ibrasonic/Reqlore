@@ -962,3 +962,218 @@ mark:target {
   outline-offset: 2px;
 }
 
+/* ===========================================================
+   History per-column filter menus (WCAG AAA-aligned)
+   ===========================================================
+   Each filterable <th> wraps a <details> whose <summary> is the
+   visible column header AND the disclosure trigger. The panel
+   below is a positioned absolute dropdown. Touch targets meet
+   SC 2.5.5 (44 x 44 px) and focus rings meet SC 2.4.7 / 2.4.13.
+*/
+
+/* Toolbar above the table holds Clear-all link + Export +
+   destructive Clear-history button. Wraps cleanly on narrow VPs. */
+.hist-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.4rem 0 0.6rem 0;
+}
+.hist-toolbar-link,
+.hist-clear-link {
+  display: inline-block;
+  min-height: 44px;       /* AAA target size */
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--fg);
+  background: var(--code-bg);
+}
+.hist-toolbar-link:focus-visible,
+.hist-clear-link:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.hist-filter-summary {
+  margin: 0;
+  flex: 1 1 14rem;
+  font-weight: 600;
+}
+.hist-clear-link {
+  margin-left: 0.5rem;
+  font-weight: 400;
+  background: transparent;
+}
+
+/* Live-region row: status text and the Refresh-now link are
+   siblings, NOT nested. The role="status" element holds only the
+   plain count — assistive tech then re-reads the count on change
+   without ever speaking the link's label. */
+.hist-live-refresh {
+  display: inline-block;
+  min-height: 44px;
+  padding: 0.55rem 0.9rem;
+  margin-left: 0.4rem;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  text-decoration: none;
+  font-weight: 600;
+}
+.hist-live-refresh:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.hist-live-refresh[hidden] { display: none; }
+
+/* The whole table is wrapped by <form id="hist-filters">. */
+.hist-filter-form { margin: 0; }
+
+.hist-apply-fallback {
+  font: inherit;
+  min-height: 44px;
+  padding: 0.55rem 0.9rem;
+  border: 2px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.hist-apply-fallback:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Column-header filter disclosure. */
+.hist-th--filter { position: relative; }
+
+.hist-col-filter {
+  /* The <details> itself is a block in the cell. */
+  position: static;
+}
+
+.hist-col-filter-toggle {
+  /* <summary> styled as a button. We strip the default disclosure
+     marker because we paint our own (▾ / ●) and supply a meaningful
+     aria-label that names the column AND any active filter. */
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 44px;       /* SC 2.5.5 (AAA) */
+  padding: 0.4rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-weight: 600;
+  user-select: none;
+}
+.hist-col-filter-toggle::-webkit-details-marker { display: none; }
+.hist-col-filter-toggle::marker { content: ""; }
+.hist-col-filter-toggle:hover { background: var(--code-bg); }
+.hist-col-filter-toggle:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-color: var(--focus);
+}
+/* Active state: a filled dot AND the cell gets a left border, so
+   colour is never the sole signal (SC 1.4.1 Use of Colour). */
+.hist-col-filter[open] > .hist-col-filter-toggle,
+.hist-col-filter:not([open])[data-hist-col-filter] > .hist-col-filter-toggle {
+  /* keep readable when open */
+}
+.hist-th--filter:has(.hist-col-filter[data-active]) {
+  border-left: 3px solid var(--accent);
+}
+.hist-col-filter-marker {
+  font-size: 0.85em;
+}
+
+/* The dropdown panel. Absolute-positioned so it floats over the
+   next row of the table without disrupting layout. */
+.hist-col-filter-panel {
+  position: absolute;
+  z-index: 50;
+  top: 100%;
+  left: 0;
+  min-width: 16rem;
+  max-width: min(28rem, 90vw);
+  margin-top: 0.25rem;
+  padding: 0.75rem;
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  text-align: left;
+  font-weight: 400;
+}
+.hist-col-filter[open] > .hist-col-filter-panel {
+  /* visible by virtue of details being open */
+}
+
+.hist-filter-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+}
+.hist-filter-label > span { font-size: 0.9rem; }
+.hist-filter-label input {
+  font: inherit;
+  min-height: 44px;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+}
+.hist-filter-label input:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.hist-filter-group {
+  margin: 0 0 0.6rem 0;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.hist-filter-group legend {
+  padding: 0 0.3rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.hist-filter-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 36px;       /* sub-44 OK because checkbox + label is
+                              composite; the input itself meets size */
+  margin: 0.15rem 0.6rem 0.15rem 0;
+  font-weight: 400;
+  cursor: pointer;
+}
+.hist-filter-check input { width: 18px; height: 18px; }
+.hist-filter-radios .hist-filter-check { display: flex; }
+.hist-filter-help {
+  margin: 0.4rem 0 0 0;
+  font-size: 0.85rem;
+  color: var(--muted, #888);
+}
+.hist-filter-help code {
+  background: var(--code-bg);
+  padding: 0 0.25rem;
+  border-radius: 3px;
+}
+
+/* When user prefers reduced motion, no dropdown animation
+   (we don't have one, but document intent). */
+@media (prefers-reduced-motion: reduce) {
+  .hist-col-filter-panel { transition: none; }
+}
+
+

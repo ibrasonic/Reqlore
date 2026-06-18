@@ -366,6 +366,11 @@
     var timer = null;
     var reloadTimer = null;
     var stopped = false;
+    // Tracks the last value spoken by the live region so we only
+    // repaint (and therefore re-announce) on actual change. Sentinel
+    // -1 means "nothing has been announced yet" so the first 0 from
+    // the server still settles the UI without speaking.
+    var lastAnnouncedCount = -1;
 
     var STORAGE_KEY = "reqloreHistoryAutoRefresh";
     try {
@@ -419,22 +424,31 @@
 
     function paint(newCount) {
       if (!status) return;
+      // SC 4.1.3 / 2.2.4: only update the live region when the count
+      // actually CHANGES. Re-painting an unchanged value would cause
+      // some screen readers to re-announce on every poll, which
+      // hammers the user with a repeating chatter.
+      if (newCount === lastAnnouncedCount) return;
+      lastAnnouncedCount = newCount;
+
+      // The Refresh link is a SIBLING of the role="status" element
+      // (see template). The status text holds only the prose count;
+      // the link's label never enters the live region, so AT speak
+      // the count change cleanly.
+      var refresh = document.getElementById("hist-live-refresh");
       if (newCount > 0) {
         var noun = newCount === 1 ? "request" : "requests";
-        // Build a Refresh link the user can click even if auto-reload is off.
         status.classList.add("has-new");
-        status.textContent = "";
-        var label = document.createElement("span");
-        label.textContent = newCount + " new " + noun + " \u2014 ";
-        var a = document.createElement("a");
-        a.href = window.location.href;
-        a.textContent = "Refresh";
-        status.appendChild(label);
-        status.appendChild(a);
+        status.textContent = newCount + " new " + noun + ".";
+        if (refresh) {
+          refresh.hidden = false;
+          refresh.href = window.location.href;
+        }
         if (cb && cb.checked) scheduleReload();
       } else {
         status.classList.remove("has-new");
         status.textContent = "";
+        if (refresh) refresh.hidden = true;
       }
     }
 
@@ -466,5 +480,78 @@
     });
 
     schedule();
+  })();
+
+  // History per-column filter menus (the <details> dropdowns under
+  // each filterable <th>). Native <details> already gives us toggle
+  // behaviour and keyboard activation; this wires the bits the
+  // browser doesn't:
+  //   * Opening one column's menu closes any other open menu (so
+  //     users don't end up with three overlapping panels).
+  //   * Escape inside an open menu closes it AND returns focus to
+  //     its <summary> trigger (SC 2.4.3 Focus Order).
+  //   * Clicking outside any menu closes them all.
+  //   * On open, focus moves to the first input/checkbox/radio in
+  //     the panel (SC 2.4.3 / 3.2.2).
+  // Pressing Enter inside any field still submits the wrapping
+  // <form id="hist-filters"> normally — that's how the filters
+  // commit. Auto-submit on every checkbox change is intentionally
+  // NOT done: SC 3.2.5 (Change on Request, AAA) requires the user
+  // to explicitly trigger context changes.
+  (function () {
+    var menus = document.querySelectorAll('[data-hist-col-filter]');
+    if (!menus.length) return;
+
+    function closeOthers(except) {
+      menus.forEach(function (d) {
+        if (d !== except && d.open) d.open = false;
+      });
+    }
+
+    menus.forEach(function (d) {
+      var summary = d.querySelector('summary');
+      d.addEventListener('toggle', function () {
+        if (d.open) {
+          closeOthers(d);
+          // Focus the first form control in the just-opened panel.
+          var first = d.querySelector(
+            '.hist-col-filter-panel input, .hist-col-filter-panel select, .hist-col-filter-panel textarea, .hist-col-filter-panel button'
+          );
+          if (first) {
+            // Defer until after the browser has painted the panel
+            // so screen readers detect the focused control's new
+            // visibility, not its hidden state.
+            setTimeout(function () { first.focus(); }, 0);
+          }
+        }
+      });
+      // Escape inside the panel: close and restore focus to the
+      // <summary> so keyboard users don't get dumped at the top
+      // of the document.
+      d.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && d.open) {
+          ev.preventDefault();
+          d.open = false;
+          if (summary) summary.focus();
+        }
+      });
+    });
+
+    // Click outside any menu = close them all. Use mousedown so the
+    // close happens BEFORE focus moves into the new click target,
+    // which is what most native menu widgets do.
+    document.addEventListener('mousedown', function (ev) {
+      var any = false;
+      menus.forEach(function (d) { if (d.open) any = true; });
+      if (!any) return;
+      // If the click originated inside ANY of our menus or their
+      // toggles, leave it alone — the toggle handler will manage it.
+      var t = ev.target;
+      while (t && t.nodeType === 1) {
+        if (t.matches && t.matches('[data-hist-col-filter]')) return;
+        t = t.parentNode;
+      }
+      menus.forEach(function (d) { if (d.open) d.open = false; });
+    });
   })();
 })();

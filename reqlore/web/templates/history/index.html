@@ -3,66 +3,200 @@
 {% block main %}
 <h1>HTTP history</h1>
 
-<form method="get" class="filter-form" role="search" aria-label="Filter history">
-  <div>
-    <label for="f-q">Search URL</label>
-    <input id="f-q" name="q" value="{{ q }}" type="search" autocomplete="off">
-  </div>
-  <div>
-    <label for="f-host">Host</label>
-    <input id="f-host" name="host" value="{{ host }}" type="search" autocomplete="off">
-  </div>
-  <div>
-    <label for="f-method">Method</label>
-    <select id="f-method" name="method">
-      <option value="">(any)</option>
-      {% for m in methods %}
-        <option value="{{ m }}"{% if method == m %} selected{% endif %}>{{ m }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div>
-    <button type="submit">Apply</button>
-    <a href="{{ url_for('history.index') }}">Reset</a>
-    <a href="{{ url_for('history.export_jsonl') }}">Export JSONL</a>
-  </div>
-</form>
+{#
+  Per-column filter design — accessibility-first.
 
-<form method="post" action="{{ url_for('history.clear') }}" class="inline-form"
-      onsubmit="return confirm('Delete ALL {{ total }} history record(s)? This cannot be undone.');">
-  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-  <button type="submit"{% if total == 0 %} disabled{% endif %}>Clear all history</button>
-</form>
+  Each filterable <th> contains a column-header <button> that toggles
+  the column's filter menu. The menu is a <details> wrapping a <form>:
+  this gives us a built-in disclosure pattern that works without
+  JavaScript (the browser handles open/close + keyboard), and we
+  layer on JS only for nice-to-haves (Escape, click-outside, focus
+  management).
+
+  AAA notes:
+  * Each toggle is a real <button> with aria-expanded sync, NOT a
+    clickable <th> (which screen readers treat as a cell, not a
+    control).
+  * Each menu is a <form> with explicit <label>s; multi-selects use
+    <fieldset>/<legend> so the SR announces the group name.
+  * Active-filter status is conveyed in the button's aria-label
+    ("Method filter active: GET, POST"), so colour is never the sole
+    signal — meets SC 1.4.1 Use of Colour.
+  * Touch targets are >= 44x44 px (SC 2.5.5 Target Size, AAA).
+  * The single global <form> means submitting any column's Apply
+    button (or pressing Enter inside any field) commits every
+    column's draft state in one navigation, so no filters are
+    silently dropped between menus.
+#}
+
+{% macro hist_filter_input(label, name, value, type="search", placeholder="") -%}
+  <label class="hist-filter-label">
+    <span>{{ label }}</span>
+    <input type="{{ type }}" name="{{ name }}" value="{{ value if value is not none else '' }}"
+           {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+           autocomplete="off" inputmode="{% if type == 'number' %}numeric{% else %}text{% endif %}">
+  </label>
+{%- endmacro %}
+
+{% macro hist_filter_checkboxes(legend, name, options, selected) -%}
+  <fieldset class="hist-filter-group">
+    <legend>{{ legend }}</legend>
+    {% for opt in options %}
+      <label class="hist-filter-check">
+        <input type="checkbox" name="{{ name }}" value="{{ opt }}"
+               {% if opt in selected %}checked{% endif %}>
+        <span>{{ opt }}</span>
+      </label>
+    {% endfor %}
+  </fieldset>
+{%- endmacro %}
+
+{% macro hist_th_filter(col_id, header, summary_label, summary_text, active=False) -%}
+  {# A column header with a built-in filter disclosure. #}
+  <th scope="col" class="hist-th hist-th--filter">
+    <details class="hist-col-filter" data-hist-col-filter id="hist-filter-{{ col_id }}">
+      <summary class="hist-col-filter-toggle"
+               aria-label="{{ summary_label }}{% if active %}; active: {{ summary_text }}{% endif %}">
+        <span class="hist-col-name">{{ header }}</span>
+        <span class="hist-col-filter-marker" aria-hidden="true">{% if active %}●{% else %}▾{% endif %}</span>
+      </summary>
+      <div class="hist-col-filter-panel" role="group" aria-label="{{ header }} filter">
+        {{ caller() }}
+      </div>
+    </details>
+  </th>
+{%- endmacro %}
+
+<div class="hist-toolbar">
+  {% if any_filter_active %}
+    <p class="hist-filter-summary" id="hist-filter-summary">
+      <span class="visually-hidden">Filters active.</span>
+      <span aria-hidden="true">Filters active.</span>
+      <a href="{{ url_for('history.index') }}" class="hist-clear-link">Clear all filters</a>
+    </p>
+  {% endif %}
+  <a href="{{ url_for('history.export_jsonl') }}" class="hist-toolbar-link">Export JSONL</a>
+
+  <form method="post" action="{{ url_for('history.clear') }}" class="inline-form"
+        onsubmit="return confirm('Delete ALL {{ total }} history record(s)? This cannot be undone.');">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit"{% if total == 0 %} disabled{% endif %}>Clear all history</button>
+  </form>
+</div>
 
 <p>{{ total }} total records. Showing page {{ page }} ({{ rows|length }} item{{ '' if rows|length == 1 else 's' }}).</p>
 
 <div class="hist-live"
      data-history-live
-     data-latest-url="{{ url_for('history.latest', q=q, host=host, method=method) }}"
+     data-latest-url="{{ url_for('history.latest') }}{{ '?' ~ request.query_string.decode() if request.query_string else '' }}"
      data-since="{{ max_id }}">
   <label class="hist-live-toggle">
     <input type="checkbox" id="hist-live-cb">
     Auto-refresh when new requests arrive
   </label>
-  <span id="hist-live-status" class="hist-live-status" role="status" aria-live="polite"></span>
+  {# The status text and the user-actionable "Refresh" link live in
+     SEPARATE elements: only the count text lives inside the
+     role="status" live region, so screen readers announce the count
+     change but never re-read the link's label. The link itself is
+     keyboard-focusable as a sibling. SC 4.1.3 Status Messages. #}
+  <span id="hist-live-status" class="hist-live-status" role="status" aria-live="polite" aria-atomic="true"></span>
+  <a id="hist-live-refresh" class="hist-live-refresh" href="" hidden>Refresh now</a>
   <noscript><em>(JavaScript disabled — press F5 to see new requests.)</em></noscript>
 </div>
+
+<form method="get" id="hist-filters" class="hist-filter-form" role="search"
+      aria-label="History filters" action="{{ url_for('history.index') }}">
+
+  <noscript>
+    {# Native <details> still opens/closes without scripting; this
+       fallback gives a single Apply button so the form can be
+       committed without auto-submit. #}
+    <p><button type="submit" class="hist-apply-fallback">Apply filters</button></p>
+  </noscript>
 
 {% if rows %}
 <p id="cmp-status" class="cmp-status" hidden aria-live="polite"></p>
 <table id="hist-table"
        data-comparer-url="{{ url_for('comparer.index') }}">
-  <caption class="visually-hidden">HTTP history, newest first.</caption>
+  <caption class="visually-hidden">
+    HTTP history, newest first. Each column header with a triangle
+    marker opens a filter menu — press Enter or Space to toggle.
+  </caption>
   <thead>
     <tr>
       <th scope="col">#</th>
-      <th scope="col">Method</th>
-      <th scope="col">Status</th>
-      <th scope="col">Host</th>
-      <th scope="col">URL</th>
-      <th scope="col">Bytes</th>
-      <th scope="col">ms</th>
+
+      {% call hist_th_filter('method', 'Method',
+                             'Method filter',
+                             f.methods|join(', '),
+                             active=(f.methods|length > 0)) %}
+        {{ hist_filter_checkboxes('Match any of', 'method', methods_all, f.methods) }}
+      {% endcall %}
+
+      {% call hist_th_filter('status', 'Status',
+                             'Status filter',
+                             f.statuses|join(', '),
+                             active=(f.statuses|length > 0)) %}
+        {{ hist_filter_checkboxes('Match any of', 'status', statuses_all, f.statuses) }}
+        <p class="hist-filter-help">Buckets above. To target an exact code, type it in the URL bar (e.g. <code>?status=401,403</code>).</p>
+      {% endcall %}
+
+      {% call hist_th_filter('host', 'Host',
+                             'Host filter',
+                             (f.host or '') ~ (' (' ~ f.host_mode ~ ')' if f.host else ''),
+                             active=(f.host is not none)) %}
+        {{ hist_filter_input('Host name', 'host', f.host, type='search', placeholder='example.com') }}
+        <fieldset class="hist-filter-group hist-filter-radios">
+          <legend>Match mode</legend>
+          <label class="hist-filter-check">
+            <input type="radio" name="host_mode" value="exact" {% if f.host_mode == 'exact' %}checked{% endif %}>
+            <span>Exact</span>
+          </label>
+          <label class="hist-filter-check">
+            <input type="radio" name="host_mode" value="contains" {% if f.host_mode == 'contains' %}checked{% endif %}>
+            <span>Contains</span>
+          </label>
+        </fieldset>
+      {% endcall %}
+
+      {% call hist_th_filter('url', 'URL',
+                             'URL filter',
+                             (f.q or '') ~ (' (regex)' if f.q_regex else ''),
+                             active=(f.q is not none)) %}
+        {{ hist_filter_input('Search URL (substring or regex)', 'q', f.q, type='search') }}
+        <label class="hist-filter-check">
+          <input type="checkbox" name="q_re" value="1" {% if f.q_regex %}checked{% endif %}>
+          <span>Treat as regular expression</span>
+        </label>
+      {% endcall %}
+
+      {% call hist_th_filter('bytes', 'Bytes',
+                             'Response bytes filter',
+                             (('≥' ~ f.len_min) if f.len_min is not none else '') ~ ((' ≤' ~ f.len_max) if f.len_max is not none else ''),
+                             active=(f.len_min is not none or f.len_max is not none)) %}
+        {{ hist_filter_input('Min bytes', 'len_min', f.len_min, type='number') }}
+        {{ hist_filter_input('Max bytes', 'len_max', f.len_max, type='number') }}
+      {% endcall %}
+
+      {% call hist_th_filter('ms', 'ms',
+                             'Duration (ms) filter',
+                             (('≥' ~ f.dur_min) if f.dur_min is not none else '') ~ ((' ≤' ~ f.dur_max) if f.dur_max is not none else ''),
+                             active=(f.dur_min is not none or f.dur_max is not none)) %}
+        {{ hist_filter_input('Min ms', 'dur_min', f.dur_min, type='number') }}
+        {{ hist_filter_input('Max ms', 'dur_max', f.dur_max, type='number') }}
+      {% endcall %}
+
+      {% if engines_all %}
+      {% call hist_th_filter('engine', 'Engine',
+                             'Engine filter',
+                             f.engines|join(', '),
+                             active=(f.engines|length > 0)) %}
+        {{ hist_filter_checkboxes('Match any of', 'engine', engines_all, f.engines) }}
+      {% endcall %}
+      {% else %}
       <th scope="col">Engine</th>
+      {% endif %}
+
       <th scope="col">Flags</th>
       <th scope="col">Actions</th>
     </tr>
@@ -109,12 +243,16 @@
 <p>No history yet. Start the proxy, route a browser through it, or use the Repeater.</p>
 {% endif %}
 
+</form> {# /hist-filters #}
+
 <nav aria-label="Pagination">
+  {% set qs = request.query_string.decode() %}
+  {% set qs_no_page = qs|replace('page=' ~ page, '') %}
   {% if page > 1 %}
-    <a href="?q={{ q }}&host={{ host }}&method={{ method }}&page={{ page - 1 }}">Previous</a>
+    <a href="?{{ qs_no_page }}&amp;page={{ page - 1 }}">Previous</a>
   {% endif %}
   {% if rows|length == per_page %}
-    <a href="?q={{ q }}&host={{ host }}&method={{ method }}&page={{ page + 1 }}">Next</a>
+    <a href="?{{ qs_no_page }}&amp;page={{ page + 1 }}">Next</a>
   {% endif %}
 </nav>
 {% endblock %}

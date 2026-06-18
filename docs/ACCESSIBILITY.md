@@ -47,6 +47,46 @@ Reqlore targets **WCAG 2.2 Level AA** as a minimum and intentionally exceeds it 
 - Sortable columns: header contains a `<button>` (not a click handler on `<th>`); the button has `aria-sort="ascending|descending|none"` and the table caption announces "Sorted by ..." via the live region after a sort.
 - "Read as list" toggle: re-renders the same data as `<dl>` per row inside `<section>` with row headings (some SRs handle this better than tables).
 
+### Per-column filter menus (History)
+
+The `/history/` table is the most data-dense surface in Reqlore — seven
+filterable columns plus row actions plus a poll-driven live region.
+The filter UI is rebuilt as **per-column disclosure menus** rather than
+a single top-of-page form, with these AAA-aligned commitments:
+
+- **Single interactive control per `<th>`.** Each filterable header
+  contains exactly one `<details><summary>` button. The summary
+  carries an `aria-label` like *"Method filter; active: GET, POST"*
+  so screen readers always announce both the column and the current
+  state — colour and the `●` glyph are redundant signals (SC 1.4.1
+  *Use of Colour*).
+- **Native `<details>` first; JS only enhances.** Native disclosure
+  works without JavaScript: keyboard activation, toggle, and focus
+  order all come from the browser. The JS layer adds *only*
+  Escape-to-close (with focus restoration to the summary),
+  click-outside-to-close, "open one closes the others", and
+  auto-focus the first input on open. With JS off, the menus still
+  open / close and a fallback **Apply filters** button submits.
+- **No auto-submit on change.** Toggling a checkbox / typing into a
+  text input never changes the URL implicitly; commit is explicit
+  (Enter, the fallback Apply button) — required by SC 3.2.5
+  *Change on Request*.
+- **Single wrapping `<form>`.** The `<table>` lives inside one
+  `<form method="get" role="search" aria-label="History filters">`,
+  so pressing Enter from any column commits *every* column's draft
+  state in a single navigation — no silent loss of intent.
+- **44 × 44 px target sizes** on every summary toggle, input,
+  toolbar link, and the fallback Apply button (SC 2.5.5 AAA).
+- **Multi-select groups** are wrapped in `<fieldset><legend>Match any
+  of</legend>` so the group name is announced once with each option.
+- **Defence-in-depth validation.** The blueprint clamps `method` to
+  a fixed whitelist, validates `status` tokens against
+  `^[1-5]xx$|^[1-9]\d{2}$`, coerces numeric ranges through `int()`,
+  and rejects unknown `host_mode` values — even though the storage
+  layer already binds with `?` placeholders.
+
+Verified by [`test_history_filters.py`](../reqlore/tests/unit/test_history_filters.py).
+
 ### Tabs / panels
 
 - We avoid ARIA tabs widget except where it genuinely helps. Default: separate pages or a `<details>` per panel.
@@ -172,6 +212,14 @@ patterns below.
 
 - Interruptions (audio cues, status updates) are user-suppressible
   in [Settings](modules/settings.md).
+- **History live region** (`/history/` "*N new requests*" indicator)
+  only updates when the count *changes*. The poll runs every 2.5 s but
+  the live region is repainted exclusively when `newCount` differs
+  from the previously announced value (`lastAnnouncedCount` guard);
+  identical-count polls are silent. The user-actionable **Refresh now**
+  link is rendered as a *sibling* of the `role="status"` element, not
+  inside it, so the link's label never enters the live region. See
+  [history.md § Live auto-refresh](modules/history.md#live-auto-refresh).
 
 ### 2.3.3 Animation from Interactions
 
@@ -209,6 +257,15 @@ patterns below.
 
 - No automatic context changes. Forms submit POST → 303 redirect (PRG
   pattern); the user always presses a button.
+- **History per-column filter menus** never auto-submit on change.
+  Toggling a checkbox / typing into a text input mutates the form's
+  draft state in the page; the URL only changes when the user presses
+  Enter, clicks **Apply filters**, or activates one of the column
+  controls that submits via `<input type="submit">`. The whole table
+  is wrapped in a single `<form id="hist-filters" role="search">` so
+  pressing Enter inside any column's menu commits *every* column's
+  draft state in one navigation. The auto-refresh toggle on the same
+  page is OFF by default for the same SC.
 
 ### 3.3.5 Help (Context-Sensitive)
 

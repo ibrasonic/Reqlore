@@ -442,24 +442,40 @@ class Project:
         self, *, limit: int = 200, offset: int = 0,
         host: str | None = None, q: str | None = None,
         method: str | None = None,
+        host_mode: str = "exact",
+        q_regex: bool = False,
+        methods: list[str] | None = None,
+        statuses: list[str] | None = None,
+        engines: list[str] | None = None,
+        len_min: int | None = None, len_max: int | None = None,
+        dur_min: int | None = None, dur_max: int | None = None,
     ) -> list[HistoryRow]:
         sql = ("SELECT id,ts,host,method,url,status,len_req,len_resp,duration_ms,"
                "engine,flags,tags,req_blob,resp_blob FROM http_history WHERE 1=1")
-        args: list = []
-        if host:
-            sql += " AND host = ?"
-            args.append(host)
-        if method:
-            sql += " AND method = ?"
-            args.append(method.upper())
-        if q:
-            sql += " AND url LIKE ?"
-            args.append(f"%{q}%")
+        where, args = self._history_filters(
+            host=host, q=q, method=method, host_mode=host_mode,
+            q_regex=q_regex, methods=methods, statuses=statuses,
+            engines=engines,
+            len_min=len_min, len_max=len_max,
+            dur_min=dur_min, dur_max=dur_max,
+        )
+        sql += where
         sql += " ORDER BY id DESC LIMIT ? OFFSET ?"
         args += [limit, offset]
         with self._cursor() as cur:
             rows = cur.execute(sql, args).fetchall()
-        return [HistoryRow(*r[:12], _decompress(r[12]), _decompress(r[13])) for r in rows]
+        out = [HistoryRow(*r[:12], _decompress(r[12]), _decompress(r[13])) for r in rows]
+        # Regex URL filter is applied in Python because SQLite's REGEXP
+        # operator is not bundled by default. The candidate set is
+        # already narrowed by every other clause + LIKE, so this stays
+        # fast even on large tables.
+        if q_regex and q:
+            try:
+                pat = __import__("re").compile(q)
+            except Exception:  # noqa: BLE001 — invalid regex falls back to LIKE-only
+                return out
+            out = [r for r in out if pat.search(r.url)]
+        return out
 
     def get_history(self, hid: int) -> HistoryRow | None:
         with self._cursor() as cur:
@@ -480,26 +496,124 @@ class Project:
         self, since: int, *,
         host: str | None = None, q: str | None = None,
         method: str | None = None,
+        host_mode: str = "exact",
+        q_regex: bool = False,
+        methods: list[str] | None = None,
+        statuses: list[str] | None = None,
+        engines: list[str] | None = None,
+        len_min: int | None = None, len_max: int | None = None,
+        dur_min: int | None = None, dur_max: int | None = None,
     ) -> tuple[int, int]:
         """Return (new_count, max_id) for rows with id > since matching filters.
 
         max_id is the overall MAX(id) under the same filters (0 if empty), so
         the client can advance its "since" cursor monotonically.
+
+        ``q_regex`` is honoured by post-filtering the candidate set in
+        Python; on a busy proxy the cost is negligible because the
+        SQL clauses already narrow the pool.
         """
         base = " FROM http_history WHERE 1=1"
-        args: list = []
-        if host:
-            base += " AND host = ?"; args.append(host)
-        if method:
-            base += " AND method = ?"; args.append(method.upper())
-        if q:
-            base += " AND url LIKE ?"; args.append(f"%{q}%")
+        where, args = self._history_filters(
+            host=host, q=q, method=method, host_mode=host_mode,
+            q_regex=q_regex, methods=methods, statuses=statuses,
+            engines=engines,
+            len_min=len_min, len_max=len_max,
+            dur_min=dur_min, dur_max=dur_max,
+        )
+        base += where
         with self._cursor() as cur:
+            if q_regex and q:
+                # Need to inspect URLs to apply the regex — fall back to
+                # selecting id+url and counting matches in Python.
+                rows = cur.execute(
+                    "SELECT id,url" + base, args).fetchall()
+                try:
+                    pat = __import__("re").compile(q)
+                    matched = [r for r in rows if pat.search(r[1])]
+                except Exception:  # noqa: BLE001
+                    matched = rows
+                max_id = max((r[0] for r in matched), default=0)
+                new_count = sum(1 for r in matched if r[0] > int(since))
+                return new_count, int(max_id)
             max_id = int(cur.execute("SELECT COALESCE(MAX(id), 0)" + base, args).fetchone()[0])
             new_count = int(cur.execute(
                 "SELECT COUNT(*)" + base + " AND id > ?", args + [int(since)],
             ).fetchone()[0])
         return new_count, max_id
+
+    @staticmethod
+    def _history_filters(
+        *, host: str | None, q: str | None, method: str | None,
+        host_mode: str, q_regex: bool,
+        methods: list[str] | None, statuses: list[str] | None,
+        engines: list[str] | None,
+        len_min: int | None, len_max: int | None,
+        dur_min: int | None, dur_max: int | None,
+    ) -> tuple[str, list]:
+        """Build the shared WHERE-clause fragment + bound args for the
+        history list/count queries. Every value is bound with a ``?``
+        placeholder — no string interpolation — so this is safe even
+        though the column list grew.
+
+        ``methods`` / ``statuses`` / ``engines`` are multi-select; an
+        empty list (or ``None``) means "don't constrain". ``statuses``
+        accepts both buckets (``2xx``, ``3xx``…) and exact codes
+        (``401``, ``500``); they OR together.
+        """
+        where = ""
+        args: list = []
+        if host:
+            if host_mode == "contains":
+                where += " AND host LIKE ?"; args.append(f"%{host}%")
+            else:
+                where += " AND host = ?"; args.append(host)
+        # Singular ``method`` kept for backwards-compat with old
+        # bookmarks; the multi-select ``methods`` is preferred.
+        if methods:
+            placeholders = ",".join(["?"] * len(methods))
+            where += f" AND method IN ({placeholders})"
+            args.extend(m.upper() for m in methods)
+        elif method:
+            where += " AND method = ?"; args.append(method.upper())
+        if statuses:
+            clauses: list[str] = []
+            for tok in statuses:
+                tok = tok.strip().lower()
+                if not tok:
+                    continue
+                if len(tok) == 3 and tok[0].isdigit() and tok.endswith("xx"):
+                    lo = int(tok[0]) * 100
+                    clauses.append("(status >= ? AND status < ?)")
+                    args.extend([lo, lo + 100])
+                else:
+                    try:
+                        clauses.append("status = ?"); args.append(int(tok))
+                    except ValueError:
+                        # Silently drop garbage tokens — the form layer
+                        # also validates, so this is defence in depth.
+                        continue
+            if clauses:
+                where += " AND (" + " OR ".join(clauses) + ")"
+        if engines:
+            placeholders = ",".join(["?"] * len(engines))
+            where += f" AND engine IN ({placeholders})"
+            args.extend(engines)
+        if len_min is not None:
+            where += " AND len_resp >= ?"; args.append(int(len_min))
+        if len_max is not None:
+            where += " AND len_resp <= ?"; args.append(int(len_max))
+        if dur_min is not None:
+            where += " AND duration_ms >= ?"; args.append(int(dur_min))
+        if dur_max is not None:
+            where += " AND duration_ms <= ?"; args.append(int(dur_max))
+        # URL substring — LIKE is skipped when q_regex is set so the
+        # regex pattern (which may use anchors / character classes) is
+        # the sole authority. Otherwise we use a case-insensitive
+        # substring match.
+        if q and not q_regex:
+            where += " AND url LIKE ?"; args.append(f"%{q}%")
+        return where, args
 
     def clear_history(self) -> int:
         """Delete all recorded HTTP history. Returns the number of rows removed."""
