@@ -87,8 +87,12 @@ a single top-of-page form, with these AAA-aligned commitments:
 - **Visible Apply / Cancel buttons + keyboard hint.** Every open
   menu renders an in-panel **Apply** submit button (commits all
   columns) and a **Cancel** button (closes, restores focus), plus a
-  `<p>` reading *"Press Enter or Apply to update the table. Esc
-  cancels and closes this menu."* The commit mechanism is therefore
+  screen-reader-only `<p class="visually-hidden">` reading *"Press
+  Enter or Apply to update the table. Escape cancels and closes
+  this menu. Arrow up and arrow down move between options."* The
+  hint is `visually-hidden` because the same contract is already
+  visible to sighted users via the labelled buttons — repeating it
+  on screen would be noise. The commit mechanism is therefore
   never hidden behind invisible keystrokes — sighted, mouse,
   keyboard, and screen-reader users all see / hear the same contract
   (SC 3.2.4 *Consistent Identification*, SC 3.3.2 *Labels or
@@ -123,6 +127,25 @@ a single top-of-page form, with these AAA-aligned commitments:
   modal-dialog upgrade above ensures the SR virtual cursor cannot
   drift past the panel, so arrow-key roving works consistently in
   both focus and browse modes.
+- **Filter UI persists across reload.** The `<table>` and its
+  filter `<thead>` always render — even when the active filters
+  match zero rows. An empty result set shows a "No requests match
+  the current filters. Clear all filters to see every request."
+  message inside the otherwise-empty `<tbody>`, with a link back to
+  `/history/`. Without this, a too-strict filter would hide the
+  very controls the user needs to recover, leaving them no
+  keyboard-only escape (SC 3.3.3 *Error Suggestion*, SC 3.3.4
+  *Error Prevention*). URL parameters round-trip into every input's
+  `value` / `checked` attribute, so manual reload, the auto-refresh
+  poller, and the "Refresh now" link all preserve filters until the
+  user explicitly clears them.
+- **SR position preserved across commits.** The wrapping form opts
+  into the global focus-restore baton via
+  `data-focus-after-submit="#hist-table"` (see "Focus restoration
+  after navigation" below), so applying a filter, pressing Enter
+  inside a numeric range, or letting auto-refresh fire all return
+  the SR virtual cursor to the data table rather than the page
+  masthead.
 
 Verified by [`test_history_filters.py`](../reqlore/tests/unit/test_history_filters.py).
 
@@ -152,6 +175,49 @@ Verified by [`test_history_filters.py`](../reqlore/tests/unit/test_history_filte
 - Visible focus ring on every interactive element: 3px outline, `outline-offset: 2px`, contrast ≥ 3:1.
 - Focus is never trapped (except modal dialogs).
 - Focus order matches reading order (no `tabindex > 0`).
+
+### Focus restoration after navigation
+
+Most Reqlore screens are server-rendered: filtering, paginating,
+sorting, and committing edits all submit a `GET` form that triggers
+a full page reload. Browsers default to parking focus on `<body>`
+after any navigation, which means screen-reader users hear the page
+title, the skip-link, the masthead, and the module nav re-spoken
+**every** time they apply a filter — a 10–20 second tax on what
+should be an instant action. Reqlore's global focus-restore baton
+collapses that to zero.
+
+How it works:
+
+- Any `<form>` may opt in by declaring
+  `data-focus-after-submit="<css-selector>"`. On submit the global
+  handler in [`reqlore.js`](../reqlore/web/static/reqlore.js)
+  serialises `{path, sel, ts: Date.now()}` into `sessionStorage`
+  under the key `reqloreFocusAfterNav`.
+- After the new page loads, an IIFE reads-and-clears the entry. If
+  the path matches and the timestamp is fresh (≤ 30 s), it locates
+  the target via `querySelector`, adds `tabindex="-1"` if the
+  element isn't natively focusable, and calls
+  `target.focus({preventScroll: true})` inside `requestAnimationFrame`.
+- The 30 s freshness window prevents stale entries from hijacking
+  focus on unrelated subsequent navigations (back button, bookmark,
+  copy-pasted URL).
+- Programmatic reloads (auto-refresh, "Refresh now" links) call
+  `window.Reqlore.stashFocusTarget(selector)` directly to opt into
+  the same flow.
+
+This is **opt-in per form, not global** — pages that genuinely want
+focus at `<main>` (e.g. submitting a "create new" form that lands
+on a fresh detail screen) simply omit `data-focus-after-submit` and
+inherit the original `<main>`-focus behaviour. The History filter
+form opts in for `#hist-table` so applying any filter, hitting Enter
+in a numeric range, or letting auto-refresh fire all return the SR
+virtual cursor to the table — preserving the user's place across
+the entire data-exploration loop.
+
+Verified by `test_filter_form_opts_into_focus_restoration` and the
+auto-refresh / Refresh-now wiring tests in
+[`test_history_filters.py`](../reqlore/tests/unit/test_history_filters.py).
 
 ### Motion & timing
 

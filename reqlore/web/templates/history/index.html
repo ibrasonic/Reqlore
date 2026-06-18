@@ -85,10 +85,12 @@
           <button type="submit" class="hist-filter-apply">Apply</button>
           <button type="button" class="hist-filter-close" data-hist-filter-close>Cancel</button>
         </div>
-        <p class="hist-filter-hint">
-          Press <kbd>Enter</kbd> or <strong>Apply</strong> to update the table.
-          <kbd>Esc</kbd> cancels and closes this menu.
-          <kbd>↑</kbd> <kbd>↓</kbd> move between options.
+        {# Visually hidden: sighted users see the Apply / Cancel
+           buttons; the kbd hint is purely a screen-reader aid. #}
+        <p class="visually-hidden">
+          Press Enter or Apply to update the table.
+          Escape cancels and closes this menu.
+          Arrow up and arrow down move between options.
         </p>
       </div>
     </details>
@@ -133,7 +135,8 @@
 </div>
 
 <form method="get" id="hist-filters" class="hist-filter-form" role="search"
-      aria-label="History filters" action="{{ url_for('history.index') }}">
+      aria-label="History filters" action="{{ url_for('history.index') }}"
+      data-focus-after-submit="#hist-table">
 
   <noscript>
     {# Native <details> still opens/closes without scripting; this
@@ -144,7 +147,9 @@
 
 {% if rows %}
 <p id="cmp-status" class="cmp-status" hidden aria-live="polite"></p>
+{% endif %}
 <table id="hist-table"
+       tabindex="-1"
        data-comparer-url="{{ url_for('comparer.index') }}">
   <caption class="visually-hidden">
     HTTP history, newest first. Each column header with a triangle
@@ -267,8 +272,15 @@
     {% endfor %}
   </tbody>
 </table>
-{% else %}
-<p>No history yet. Start the proxy, route a browser through it, or use the Repeater.</p>
+{% if not rows %}
+<p class="hist-empty">
+  {% if any_filter_active %}
+    No requests match the current filters.
+    <a href="{{ url_for('history.index') }}">Clear all filters</a> to see every request.
+  {% else %}
+    No history yet. Start the proxy, route a browser through it, or use the Repeater.
+  {% endif %}
+</p>
 {% endif %}
 
 </form> {# /hist-filters #}

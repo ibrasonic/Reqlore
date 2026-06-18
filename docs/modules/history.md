@@ -347,6 +347,25 @@ Helpers used by this page:
   `aria-expanded`, `aria-controls`, `aria-label="Actions for request #<id>"`.
   Menu items get `role="menuitem"` and `tabindex="-1"` (roving focus).
 - Live region (`role="status" aria-live="polite" aria-atomic="true"`) on the auto-refresh status span. The **Refresh now** link is a sibling, not a child, so the link's label never enters the live region. The region only fires when the count *changes* — required by SC 2.2.4 *Interruptions* (AAA).
+- **Filter UI persists across reload.** The filter `<thead>` (and
+  the wrapping `<form>`) always renders, even when the active
+  filters match zero rows. An empty result set shows
+  *"No requests match the current filters. Clear all filters to
+  see every request."* with a link back to `/history/`. URL
+  parameters round-trip into every control's `value` / `checked`
+  attribute, so manual reload (F5), the auto-refresh poller, and
+  the "Refresh now" link all preserve filters until the user
+  explicitly clears them. Without this, a too-strict filter would
+  hide the controls needed to recover.
+- **SR position preserved across commits.** The wrapping form
+  declares `data-focus-after-submit="#hist-table"` so the global
+  focus-restore baton in `reqlore.js` returns the SR virtual cursor
+  to the table after Apply / Enter / auto-refresh / Refresh-now —
+  rather than parking focus on `<body>` and forcing the screen
+  reader to re-read the page from the masthead. The `<table>`
+  carries `tabindex="-1"` so it is programmatically focusable but
+  stays out of the natural Tab order. See `docs/ACCESSIBILITY.md`
+  → "Focus restoration after navigation".
 - AAA SC 3.2.5 *Change on Request* — auto-refresh defaults OFF; `?q_re=1`,
   multi-checkbox toggling and any other filter change require an explicit
   Apply / Enter to commit (no auto-submit on change).

@@ -22,13 +22,96 @@
     }
   });
 
-  // After form submit, move focus to <main> so SR users land somewhere predictable.
-  document.querySelectorAll("form").forEach(function (f) {
-    f.addEventListener("submit", function () {
-      var m = document.getElementById("main");
-      if (m) requestAnimationFrame(function () { m.focus(); });
-    });
+  // Focus restoration after a form submit / page navigation.
+  //
+  // The default browser behaviour after a GET / POST form submit is
+  // to load the response document with focus parked on <body> — so a
+  // screen reader starts re-reading from the top of the page, and a
+  // sighted-keyboard user has to tab back into the data they were
+  // editing. To preserve position across the whole tool we use
+  // sessionStorage as a one-shot baton:
+  //
+  //   * On submit of any <form>, stash {path, selector, ts} keyed
+  //     under a single well-known storage entry. The selector comes
+  //     from the form's `data-focus-after-submit` attribute when
+  //     present; otherwise we default to "#main" (every page has
+  //     <main id="main" tabindex="-1">), which still keeps the SR
+  //     inside the page region instead of at <body>.
+  //   * On every page load, read the entry. If it matches the
+  //     current pathname AND is fresh (under 30 s), find the target,
+  //     give it tabindex="-1" if it has no natural focus, and
+  //     focus({preventScroll: true}) — preserving the browser's own
+  //     restored scroll position so we don't yank the viewport.
+  //   * The entry is cleared after one consumption so a later
+  //     unrelated navigation isn't hijacked.
+  //
+  // To opt a specific form's landing target in, add
+  //   <form ... data-focus-after-submit="#some-id">
+  // (or any CSS selector). Existing forms without the attribute
+  // continue to land on <main> as before.
+  var FOCUS_KEY = "reqloreFocusAfterNav";
+  function stashFocusTarget(selector) {
+    try {
+      sessionStorage.setItem(FOCUS_KEY, JSON.stringify({
+        path: window.location.pathname,
+        sel: selector || "#main",
+        ts: Date.now()
+      }));
+    } catch (_) { /* sessionStorage unavailable: best-effort, drop */ }
+  }
+  // Expose for the auto-refresh / Refresh-now paths below.
+  window.Reqlore = window.Reqlore || {};
+  window.Reqlore.stashFocusTarget = stashFocusTarget;
+
+  document.addEventListener("submit", function (ev) {
+    var f = ev.target;
+    if (!f || f.tagName !== "FORM") return;
+    var sel = f.getAttribute("data-focus-after-submit") || "#main";
+    // For GET forms the post-submit URL changes (filters appended);
+    // for POST forms the action's pathname is what we'll land on.
+    // Either way pathname == the form's action pathname when we get
+    // there, so we use that for the matching key.
+    var path;
+    try {
+      path = new URL(f.action || window.location.href, window.location.origin).pathname;
+    } catch (_) {
+      path = window.location.pathname;
+    }
+    try {
+      sessionStorage.setItem(FOCUS_KEY, JSON.stringify({
+        path: path, sel: sel, ts: Date.now()
+      }));
+    } catch (_) { /* ignore */ }
   });
+
+  // On load: consume the stashed target if it's for this page.
+  (function () {
+    var raw;
+    try { raw = sessionStorage.getItem(FOCUS_KEY); } catch (_) { return; }
+    if (!raw) return;
+    var data;
+    try { data = JSON.parse(raw); } catch (_) {
+      try { sessionStorage.removeItem(FOCUS_KEY); } catch (_) {}
+      return;
+    }
+    try { sessionStorage.removeItem(FOCUS_KEY); } catch (_) {}
+    if (!data || data.path !== window.location.pathname) return;
+    if (typeof data.ts === "number" && Date.now() - data.ts > 30000) return;
+    var target = null;
+    try { target = document.querySelector(data.sel); } catch (_) { return; }
+    if (!target) return;
+    if (!target.hasAttribute("tabindex") &&
+        !/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(target.tagName)) {
+      target.setAttribute("tabindex", "-1");
+    }
+    // requestAnimationFrame so the focus call lands after the browser
+    // has settled the layout — without this, some browsers ignore the
+    // focus on a freshly-parsed <table>.
+    requestAnimationFrame(function () {
+      try { target.focus({ preventScroll: true }); }
+      catch (_) { target.focus(); }
+    });
+  })();
 
   // Audio cues from flash messages (only when ul.flashes has data-cues="1").
   var flashes = document.querySelector("ul.flashes[data-cues='1']");
@@ -47,7 +130,8 @@
   }
 
   // Expose for inline-template hooks if ever needed
-  window.Reqlore = { announce: announce };
+  window.Reqlore = window.Reqlore || {};
+  window.Reqlore.announce = announce;
 
   // Repeater: single toggle that flips the response (headers + body)
   // between Raw and URL-decoded views. Both versions are rendered
@@ -417,7 +501,13 @@
           // the user's escape hatch in the meantime.
           return;
         }
-        // Preserve the user's current URL (filters, page, hash) on reload.
+        // Preserve the user's current URL (filters, page, hash) AND
+        // SR position on reload — after the new HTML lands, focus is
+        // restored inside #hist-table so the screen reader resumes
+        // reading the data, not from the top of the page.
+        if (window.Reqlore && window.Reqlore.stashFocusTarget) {
+          window.Reqlore.stashFocusTarget("#hist-table");
+        }
         window.location.reload();
       }, RELOAD_DELAY_MS);
     }
@@ -443,6 +533,17 @@
         if (refresh) {
           refresh.hidden = false;
           refresh.href = window.location.href;
+          // Refresh-now click also stashes a focus target so the
+          // screen reader lands inside #hist-table after navigation
+          // instead of jumping back to <body>.
+          if (!refresh._reqloreFocusWired) {
+            refresh._reqloreFocusWired = true;
+            refresh.addEventListener("click", function () {
+              if (window.Reqlore && window.Reqlore.stashFocusTarget) {
+                window.Reqlore.stashFocusTarget("#hist-table");
+              }
+            });
+          }
         }
         if (cb && cb.checked) scheduleReload();
       } else {

@@ -1207,18 +1207,6 @@ mark:target {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
-.hist-filter-hint {
-  margin: 0.4rem 0 0 0;
-  font-size: 0.8rem;
-  color: var(--muted, #888);
-}
-.hist-filter-hint kbd {
-  font: inherit;
-  background: var(--code-bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 0 0.3rem;
-}
 
 /* When user prefers reduced motion, no dropdown animation
    (we don't have one, but document intent). */

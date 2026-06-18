@@ -266,13 +266,13 @@ def test_each_filter_menu_renders_apply_and_cancel(client):
     # multiple engines so Engine always renders -> 7 menus.
     assert body.count('class="hist-filter-apply">Apply</button>') == 7
     assert body.count('data-hist-filter-close') == 7
-    # The keyboard hint mentions both Enter and Esc so the contract
-    # is documented in the page itself.
-    assert body.count("Press <kbd>Enter</kbd>") == 7
-    assert body.count("<kbd>Esc</kbd>") == 7
-    # Arrow-key roving inside the open panel is also documented in
-    # the hint so sighted users know it exists.
-    assert body.count("<kbd>↑</kbd> <kbd>↓</kbd>") == 7
+    # The keyboard hint is now SR-only (visually hidden) so it does
+    # not clutter the UI for sighted users. We still want exactly
+    # one hint per column, and the prose must mention Enter / Apply
+    # (commit) and Escape (cancel) and the arrow keys (rove).
+    assert body.count("Press Enter or Apply to update the table.") == 7
+    assert body.count("Escape cancels and closes this menu.") == 7
+    assert body.count("Arrow up and arrow down move between options.") == 7
     # Every <summary> carries a stable id so the JS layer can wire
     # aria-labelledby on the panel when it upgrades the panel to
     # role="dialog" on open. The id MUST be present in the HTML so
@@ -280,3 +280,85 @@ def test_each_filter_menu_renders_apply_and_cancel(client):
     for col in ("method", "status", "host", "url", "bytes", "ms", "engine"):
         assert f'id="hist-filter-toggle-{col}"' in body
         assert f'id="hist-filter-panel-{col}"' in body
+
+
+def test_filter_form_opts_into_focus_restoration(client):
+    """The wrapping filter form declares
+    ``data-focus-after-submit="#hist-table"`` so the global focus-
+    restore IIFE in reqlore.js stashes the table as the landing
+    target after Apply / Enter. Without this, GET-form submission
+    parks focus on <body> and the screen reader re-reads from the
+    top of the page — defeating the whole point of preserving SR
+    position across filter commits.
+
+    The corresponding ``<table id="hist-table" tabindex="-1">`` must
+    therefore be programmatically focusable so the JS can call
+    ``.focus({preventScroll: true})`` on it.
+    """
+    r = client.get("/history/")
+    body = r.get_data(as_text=True)
+    assert 'data-focus-after-submit="#hist-table"' in body
+    # The hist-table is rendered with tabindex="-1" so it is
+    # programmatically focusable but not in the natural Tab order.
+    assert 'id="hist-table"' in body
+    # Allow flexible whitespace between the id and tabindex
+    # attributes; just confirm both are present on the same opening
+    # <table> tag.
+    import re
+    m = re.search(r'<table[^>]*id="hist-table"[^>]*tabindex="-1"', body) \
+        or re.search(r'<table[^>]*tabindex="-1"[^>]*id="hist-table"', body)
+    assert m is not None, "hist-table must carry tabindex=-1"
+
+
+def test_filters_persist_through_apply_submit(client):
+    """Submitting the filter form re-renders the page with the same
+    filters serialised back into every control's ``value`` /
+    ``checked`` attribute, so a subsequent reload (manual F5,
+    auto-refresh, or the Refresh-now link) preserves the filters
+    until the user explicitly clears them. We verify by submitting
+    a representative subset and asserting each input round-trips.
+    """
+    r = client.get(
+        "/history/?method=GET&method=POST&status=4xx&host=example.com"
+        "&host_mode=contains&q=/admin&q_re=1&len_min=100&len_max=900"
+        "&dur_min=10&dur_max=2000&engine=httpx"
+    )
+    body = r.get_data(as_text=True)
+    # Method checkboxes round-trip as checked. Jinja renders the
+    # checkbox tag with the `checked` attribute on its own continued
+    # line: `<input ... value="GET"\n               checked>`.
+    assert 'name="method" value="GET"\n               checked>' in body
+    assert 'name="method" value="POST"\n               checked>' in body
+    # Status bucket round-trips.
+    assert 'name="status" value="4xx"\n               checked>' in body
+    # Host text input + host_mode radio.
+    assert 'name="host" value="example.com"' in body
+    assert 'name="host_mode" value="contains" checked>' in body
+    # URL filter text + regex checkbox.
+    assert 'name="q" value="/admin"' in body
+    assert 'name="q_re" value="1" checked>' in body
+    # Numeric ranges (bytes + ms).
+    assert 'name="len_min" value="100"' in body
+    assert 'name="len_max" value="900"' in body
+    assert 'name="dur_min" value="10"' in body
+    assert 'name="dur_max" value="2000"' in body
+    # Engine multi-select.
+    assert 'name="engine" value="httpx"\n               checked>' in body
+
+
+def test_filter_ui_persists_when_no_rows_match(client):
+    """If the active filters match zero rows, the filter form and
+    its per-column menus MUST still render — otherwise the user has
+    no way to untick a filter to recover. The empty state offers a
+    ``Clear all filters`` link as the affordance.
+    """
+    # Filter that no seed row can match (status code 999 is
+    # syntactically valid as a bucket-or-exact token, won't match).
+    r = client.get("/history/?method=GET&status=999")
+    assert r.status_code == 200
+    body = r.get_data(as_text=True)
+    # The filter menus still render (one per filterable column).
+    assert body.count('class="hist-filter-apply">Apply</button>') == 7
+    # And the empty state appears with the recovery link.
+    assert "No requests match the current filters" in body
+    assert 'href="/history/"' in body
