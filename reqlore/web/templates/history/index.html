@@ -52,7 +52,15 @@
 {%- endmacro %}
 
 {% macro hist_th_filter(col_id, header, summary_label, summary_text, active=False) -%}
-  {# A column header with a built-in filter disclosure. #}
+  {# A column header with a built-in filter disclosure.
+
+     The open panel is treated as a tab-trapped popup: while open the
+     JS layer cycles Tab/Shift+Tab between the controls *inside*
+     `.hist-col-filter-panel` (the Apply button is the last stop), so
+     keyboard + screen-reader users never lose their place in the
+     table by tabbing past the menu. Escape closes the menu and
+     restores focus to the <summary>.
+  #}
   <th scope="col" class="hist-th hist-th--filter">
     <details class="hist-col-filter" data-hist-col-filter id="hist-filter-{{ col_id }}">
       <summary class="hist-col-filter-toggle"
@@ -62,6 +70,14 @@
       </summary>
       <div class="hist-col-filter-panel" role="group" aria-label="{{ header }} filter">
         {{ caller() }}
+        <div class="hist-filter-actions">
+          <button type="submit" class="hist-filter-apply">Apply</button>
+          <button type="button" class="hist-filter-close" data-hist-filter-close>Cancel</button>
+        </div>
+        <p class="hist-filter-hint">
+          Press <kbd>Enter</kbd> or <strong>Apply</strong> to update the table.
+          <kbd>Esc</kbd> cancels and closes this menu.
+        </p>
       </div>
     </details>
   </th>

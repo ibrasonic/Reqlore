@@ -248,3 +248,25 @@ def test_live_region_holds_count_only_in_template(client):
     # Refresh link is a sibling with its own id, hidden by default.
     assert 'id="hist-live-refresh"' in body
     assert 'hidden>Refresh now</a>' in body
+
+
+def test_each_filter_menu_renders_apply_and_cancel(client):
+    """Every per-column filter menu must render an in-panel **Apply**
+    submit button and a **Cancel** button so the commit / dismiss
+    affordances are discoverable for sighted users (keyboard users
+    additionally get Enter and Escape). The Cancel button carries
+    ``data-hist-filter-close`` so the JS layer can wire it without
+    accidentally catching the wrong button.
+    """
+    r = client.get("/history/")
+    body = r.get_data(as_text=True)
+    # Count once per filterable column. We have 6 mandatory columns
+    # (method, status, host, url, bytes, ms) plus Engine when the
+    # table has at least one engine value — the test fixture seeds
+    # multiple engines so Engine always renders -> 7 menus.
+    assert body.count('class="hist-filter-apply">Apply</button>') == 7
+    assert body.count('data-hist-filter-close') == 7
+    # The keyboard hint mentions both Enter and Esc so the contract
+    # is documented in the page itself.
+    assert body.count("Press <kbd>Enter</kbd>") == 7
+    assert body.count("<kbd>Esc</kbd>") == 7

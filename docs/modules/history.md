@@ -97,6 +97,38 @@ A **Clear all filters** link appears in the toolbar above the table when
 any filter is active. **Export JSONL** and **Clear all history** stay
 in that toolbar.
 
+#### Apply, Cancel, focus trap (popup behaviour, JS on)
+
+Every open menu renders a footer row with two buttons plus a keyboard hint:
+
+- **Apply** — `<button type="submit" class="hist-filter-apply">`. It is
+  inside the wrapping `<form id="hist-filters">`, so clicking it
+  commits every column's draft state in a single GET navigation —
+  identical to pressing Enter inside any field. This is the
+  discoverable affordance for sighted mouse users; keyboard users
+  additionally get Enter.
+- **Cancel** — `<button type="button" data-hist-filter-close>`. Closes
+  the menu and restores focus to its `<summary>` without submitting.
+  Mirrors what **Esc** does from the keyboard.
+- A `<p class="hist-filter-hint">` tells the user verbatim which keys
+  apply and which cancel.
+
+While a menu is open the JS layer **traps Tab / Shift+Tab inside the
+panel** — focus cycles through the panel's form controls + Apply +
+Cancel, then wraps. Screen-reader users therefore cannot accidentally
+tab past the open menu into the next column header or table row and
+lose their place. The only ways out are:
+
+- **Esc** or **Cancel** (closes, restores focus to the column summary), or
+- **Enter** or **Apply** (commits — page reloads to the filtered table).
+
+This is a deliberate departure from a plain disclosure: the open menu
+behaves more like a popup. We picked it because the user-research
+report specifically asked for "cannot go out of [the menu] if it is
+open" for screen-reader certainty. The trap is implemented in JS only;
+with JS off the menus revert to native `<details>` behaviour and Tab
+walks normally — see *No-JS fallback* below.
+
 #### Whitelist / validation
 
 The blueprint never forwards a hand-edited query-string value straight

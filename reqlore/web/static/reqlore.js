@@ -493,6 +493,11 @@
   //   * Clicking outside any menu closes them all.
   //   * On open, focus moves to the first input/checkbox/radio in
   //     the panel (SC 2.4.3 / 3.2.2).
+  //   * Tab / Shift+Tab cycle inside the open panel — the menu
+  //     behaves like a popup: keyboard + screen-reader users never
+  //     accidentally walk past the menu into the next column header
+  //     or row while the menu is open. Escape (or Cancel) is the
+  //     only way out without committing.
   // Pressing Enter inside any field still submits the wrapping
   // <form id="hist-filters"> normally — that's how the filters
   // commit. Auto-submit on every checkbox change is intentionally
@@ -502,21 +507,47 @@
     var menus = document.querySelectorAll('[data-hist-col-filter]');
     if (!menus.length) return;
 
+    var FOCUSABLE = 'input:not([disabled]):not([type="hidden"]),' +
+                    'select:not([disabled]),' +
+                    'textarea:not([disabled]),' +
+                    'button:not([disabled]),' +
+                    'a[href],' +
+                    '[tabindex]:not([tabindex="-1"])';
+
+    function panelFocusables(d) {
+      var panel = d.querySelector('.hist-col-filter-panel');
+      if (!panel) return [];
+      // Filter out elements that are visually hidden by CSS — open
+      // panels paint everything, but be defensive in case a hidden
+      // helper is ever added.
+      return Array.prototype.filter.call(
+        panel.querySelectorAll(FOCUSABLE),
+        function (el) { return el.offsetParent !== null || el === document.activeElement; }
+      );
+    }
+
     function closeOthers(except) {
       menus.forEach(function (d) {
         if (d !== except && d.open) d.open = false;
       });
     }
 
+    function closeMenu(d, restoreFocus) {
+      if (!d.open) return;
+      d.open = false;
+      if (restoreFocus) {
+        var summary = d.querySelector('summary');
+        if (summary) summary.focus();
+      }
+    }
+
     menus.forEach(function (d) {
       var summary = d.querySelector('summary');
+
       d.addEventListener('toggle', function () {
         if (d.open) {
           closeOthers(d);
-          // Focus the first form control in the just-opened panel.
-          var first = d.querySelector(
-            '.hist-col-filter-panel input, .hist-col-filter-panel select, .hist-col-filter-panel textarea, .hist-col-filter-panel button'
-          );
+          var first = panelFocusables(d)[0];
           if (first) {
             // Defer until after the browser has painted the panel
             // so screen readers detect the focused control's new
@@ -525,14 +556,54 @@
           }
         }
       });
-      // Escape inside the panel: close and restore focus to the
-      // <summary> so keyboard users don't get dumped at the top
-      // of the document.
-      d.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Escape' && d.open) {
+
+      // Cancel button = close without committing, restore focus to
+      // the summary trigger. The browser's default <button> inside
+      // a <form> would submit the form; the click handler runs
+      // first and we preventDefault to swallow the submit.
+      var cancelBtn = d.querySelector('[data-hist-filter-close]');
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', function (ev) {
           ev.preventDefault();
-          d.open = false;
-          if (summary) summary.focus();
+          closeMenu(d, true);
+        });
+      }
+
+      d.addEventListener('keydown', function (ev) {
+        if (!d.open) return;
+
+        // Escape: close + restore focus (SC 2.4.3 Focus Order).
+        if (ev.key === 'Escape') {
+          ev.preventDefault();
+          closeMenu(d, true);
+          return;
+        }
+
+        // Tab trap. Cycle within panelFocusables; the <summary>
+        // itself is INTENTIONALLY excluded from the cycle because
+        // refocusing it would leak focus back onto the column
+        // header and confuse the screen reader about whether the
+        // menu is still in scope.
+        if (ev.key !== 'Tab') return;
+        var items = panelFocusables(d);
+        if (items.length === 0) return;
+        var first = items[0];
+        var last = items[items.length - 1];
+        var active = document.activeElement;
+        // If focus has somehow already escaped the panel (e.g. user
+        // clicked the summary while a control was focused), pull it
+        // back to the appropriate edge.
+        var inside = items.indexOf(active) !== -1;
+        if (ev.shiftKey) {
+          if (!inside || active === first) {
+            ev.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (!inside || active === last) {
+            ev.preventDefault();
+            first.focus();
+          }
         }
       });
     });

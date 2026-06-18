@@ -84,6 +84,23 @@ a single top-of-page form, with these AAA-aligned commitments:
   `^[1-5]xx$|^[1-9]\d{2}$`, coerces numeric ranges through `int()`,
   and rejects unknown `host_mode` values — even though the storage
   layer already binds with `?` placeholders.
+- **Visible Apply / Cancel buttons + keyboard hint.** Every open
+  menu renders an in-panel **Apply** submit button (commits all
+  columns) and a **Cancel** button (closes, restores focus), plus a
+  `<p>` reading *"Press Enter or Apply to update the table. Esc
+  cancels and closes this menu."* The commit mechanism is therefore
+  never hidden behind invisible keystrokes — sighted, mouse,
+  keyboard, and screen-reader users all see / hear the same contract
+  (SC 3.2.4 *Consistent Identification*, SC 3.3.2 *Labels or
+  Instructions*).
+- **Tab focus trap inside the open menu.** While a menu is open the
+  JS layer cycles Tab / Shift+Tab within the panel's controls + Apply
+  + Cancel. Screen-reader users cannot accidentally walk past the
+  menu into the next column header or table row and lose their
+  place. The only ways out are Esc / Cancel (closes without
+  committing) or Enter / Apply (commits and reloads). With JS off
+  the menus remain plain `<details>` and Tab walks normally — the
+  trap is a JS-only enhancement on top of working baseline.
 
 Verified by [`test_history_filters.py`](../reqlore/tests/unit/test_history_filters.py).
 
