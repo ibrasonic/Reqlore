@@ -667,6 +667,62 @@ def test_intercept_config_round_trip_and_persistence(tmp_path):
     assert should_hold_request([rule], "target.tld", "POST", "/login") is False
 
 
+def _seed_gzip_response(project) -> int:
+    import gzip
+    plain = b"<html><body>Invalid username or password.</body></html>"
+    body = gzip.compress(plain)
+    resp = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Content-Type: text/html; charset=utf-8\r\n"
+        b"Content-Encoding: gzip\r\n"
+        b"Content-Length: " + str(len(body)).encode() + b"\r\n"
+        b"\r\n" + body
+    )
+    return project.add_history(
+        host="x.test", method="POST", url="https://x.test/login",
+        status=200, duration_ms=1, engine="httpx",
+        raw_req=b"POST /login HTTP/1.1\r\nHost: x.test\r\n\r\nu=a&p=b",
+        raw_resp=resp,
+    )
+
+
+def test_history_detail_default_shows_raw_compressed_body(app, client):
+    hid = _seed_gzip_response(app.extensions["reqlore_project"])
+    r = client.get(f"/history/{hid}")
+    assert r.status_code == 200
+    assert b"Decode compressed bodies" in r.data
+    # Raw gzipped body must NOT contain the plaintext error string.
+    assert b"Invalid username or password" not in r.data
+
+
+def test_history_detail_decode_checkbox_reveals_plaintext(app, client):
+    hid = _seed_gzip_response(app.extensions["reqlore_project"])
+    r = client.get(f"/history/{hid}?decode=1")
+    assert r.status_code == 200
+    assert b"Invalid username or password" in r.data
+    # The Content-Encoding header should be stripped from the displayed blob.
+    assert b"Content-Encoding: gzip" not in r.data
+    # Status note announces what was decoded.
+    assert b"gzip" in r.data and b"bytes" in r.data
+
+
+def test_history_detail_decode_uncompressed_hides_toggle(app, client):
+    project = app.extensions["reqlore_project"]
+    hid = project.add_history(
+        host="x.test", method="GET", url="https://x.test/p",
+        status=200, duration_ms=1, engine="httpx",
+        raw_req=b"GET /p HTTP/1.1\r\nHost: x.test\r\n\r\n",
+        raw_resp=b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nhello",
+    )
+    # Without a Content-Encoding header the Body-display section is
+    # hidden entirely \u2014 no toggle clutter on rows where it would do
+    # nothing. ?decode=1 is also a no-op (idempotent URL).
+    r = client.get(f"/history/{hid}?decode=1")
+    assert r.status_code == 200
+    assert b"hello" in r.data
+    assert b"Decode compressed bodies" not in r.data
+
+
 def test_request_only_rule_does_not_hold_responses():
     """A rule built from InterceptConfig has no response criteria — it
     must NOT match any response, otherwise the Reqlore UI's own 302

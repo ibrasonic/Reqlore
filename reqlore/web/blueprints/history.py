@@ -1,7 +1,9 @@
 """HTTP history list + detail."""
 from __future__ import annotations
 
+import gzip
 import json
+import zlib
 
 from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for, Response
 
@@ -70,8 +72,16 @@ def show(hid: int):
     row = g.project.get_history(hid)
     if not row:
         abort(404)
-    req_text = _safe_text(row.req_blob)
-    resp_text = _safe_text(row.resp_blob)
+    # Only honour ?decode=1 when at least one side actually has a
+    # Content-Encoding header we can act on — keeps the URL idempotent
+    # for rows where the toggle isn't shown.
+    has_encoded_body = (_has_supported_encoding(row.req_blob)
+                        or _has_supported_encoding(row.resp_blob))
+    decode = has_encoded_body and request.args.get("decode") == "1"
+    req_blob, req_decode_note = _maybe_decode_blob(row.req_blob, decode)
+    resp_blob, resp_decode_note = _maybe_decode_blob(row.resp_blob, decode)
+    req_text = _safe_text(req_blob)
+    resp_text = _safe_text(resp_blob)
 
     # Parse response headers from the raw blob for the summariser
     headers, status_line, body = _split_http(row.resp_blob)
@@ -106,6 +116,10 @@ def show(hid: int):
         find_body=find_body,
         find_req=panes_by_prefix.get("req"),
         find_resp=panes_by_prefix.get("resp"),
+        decode=decode,
+        has_encoded_body=has_encoded_body,
+        req_decode_note=req_decode_note,
+        resp_decode_note=resp_decode_note,
     )
 
 
@@ -199,6 +213,87 @@ def _safe_text(data: bytes) -> str:
         return data.decode("utf-8")
     except UnicodeDecodeError:
         return data.decode("latin-1", errors="replace")
+
+
+def _decompress_body(body: bytes, encoding: str) -> tuple[bytes, str]:
+    enc = encoding.strip().lower()
+    if not enc or enc == "identity":
+        return body, ""
+    if enc in ("gzip", "x-gzip"):
+        return gzip.decompress(body), enc
+    if enc == "deflate":
+        try:
+            return zlib.decompress(body), enc
+        except zlib.error:
+            return zlib.decompress(body, -zlib.MAX_WBITS), enc
+    if enc == "br":
+        import brotli  # type: ignore[import-not-found]
+        return brotli.decompress(body), enc
+    if enc == "zstd":
+        import zstandard  # type: ignore[import-not-found]
+        return zstandard.ZstdDecompressor().decompress(body), enc
+    raise ValueError(f"unsupported Content-Encoding: {encoding!r}")
+
+
+_SUPPORTED_ENCODINGS = {"gzip", "x-gzip", "deflate", "br", "zstd"}
+
+
+def _has_supported_encoding(raw: bytes) -> bool:
+    """True when the blob's headers list a Content-Encoding we can decode.
+    Used to gate the Body-display toggle on the detail page so it only
+    appears when it would actually do something."""
+    if not raw:
+        return False
+    headers, _, _ = _split_http(raw)
+    for k, v in headers:
+        if k.lower() != "content-encoding":
+            continue
+        for piece in v.split(","):
+            tok = piece.strip().lower()
+            if tok and tok != "identity" and tok in _SUPPORTED_ENCODINGS:
+                return True
+    return False
+
+
+def _maybe_decode_blob(raw: bytes, decode: bool) -> tuple[bytes, str]:
+    """Return (blob_for_display, status_note). When ``decode`` is true and a
+    supported ``Content-Encoding`` is present, the body is decompressed and
+    the headers rewritten (``Content-Encoding`` removed,
+    ``Content-Length`` updated). On failure the original blob is returned
+    with a status_note explaining why."""
+    if not decode or not raw:
+        return raw, ""
+    headers, status_line, body = _split_http(raw)
+    enc_values = [v for k, v in headers if k.lower() == "content-encoding"]
+    if not enc_values:
+        return raw, ""
+    encodings = [e.strip() for e in ",".join(enc_values).split(",") if e.strip()]
+    out_body = body
+    applied: list[str] = []
+    for enc in reversed(encodings):
+        try:
+            out_body, applied_name = _decompress_body(out_body, enc)
+            if applied_name:
+                applied.append(applied_name)
+        except (OSError, zlib.error, ValueError) as exc:
+            return raw, f"decode failed ({enc}): {exc.__class__.__name__}"
+        except ImportError:
+            return raw, f"{enc} decoder not installed (pip install brotli zstandard)"
+    new_headers: list[tuple[str, str]] = []
+    for k, v in headers:
+        kl = k.lower()
+        if kl == "content-encoding":
+            continue
+        if kl == "content-length":
+            new_headers.append((k, str(len(out_body))))
+        else:
+            new_headers.append((k, v))
+    if not any(k.lower() == "content-length" for k, _ in new_headers):
+        new_headers.append(("Content-Length", str(len(out_body))))
+    head = status_line + "\r\n" + "\r\n".join(f"{k}: {v}" for k, v in new_headers)
+    return head.encode("latin-1", errors="replace") + b"\r\n\r\n" + out_body, (
+        " + ".join(applied) + f" → {len(out_body)} bytes"
+    )
 
 
 def _split_http(raw: bytes) -> tuple[list[tuple[str, str]], str, bytes]:

@@ -38,6 +38,10 @@ OPERATIONS = [
     ("gzip_decode", "Gzip decompress"),
     ("deflate_encode", "Deflate compress"),
     ("deflate_decode", "Deflate decompress"),
+    ("br_encode", "Brotli compress"),
+    ("br_decode", "Brotli decompress"),
+    ("zstd_encode", "Zstd compress"),
+    ("zstd_decode", "Zstd decompress"),
     ("rot13", "ROT13"),
     ("md5", "MD5 hash"),
     ("sha1", "SHA-1 hash"),
@@ -91,11 +95,43 @@ def _encode(op: str, s: str) -> tuple[str, str | None]:
         if op == "gzip_encode":
             return base64.b64encode(gzip.compress(b)).decode("ascii"), None
         if op == "gzip_decode":
-            return gzip.decompress(_b64_bytes_strict(s)).decode("utf-8", errors="replace"), None
+            return _try_decompress(s, gzip.decompress).decode("utf-8", errors="replace"), None
         if op == "deflate_encode":
             return base64.b64encode(zlib.compress(b)).decode("ascii"), None
         if op == "deflate_decode":
-            return zlib.decompress(_b64_bytes_strict(s)).decode("utf-8", errors="replace"), None
+            def _deflate(raw: bytes) -> bytes:
+                try:
+                    return zlib.decompress(raw)
+                except zlib.error:
+                    # Raw DEFLATE (no zlib wrapper) — common in HTTP
+                    # responses that mis-label raw deflate as "deflate".
+                    return zlib.decompress(raw, -zlib.MAX_WBITS)
+            return _try_decompress(s, _deflate).decode("utf-8", errors="replace"), None
+        if op == "br_encode":
+            try:
+                import brotli  # type: ignore[import-not-found]
+            except ImportError:
+                return "", "brotli not installed (pip install brotli)"
+            return base64.b64encode(brotli.compress(b)).decode("ascii"), None
+        if op == "br_decode":
+            try:
+                import brotli  # type: ignore[import-not-found]
+            except ImportError:
+                return "", "brotli not installed (pip install brotli)"
+            return _try_decompress(s, brotli.decompress).decode("utf-8", errors="replace"), None
+        if op == "zstd_encode":
+            try:
+                import zstandard  # type: ignore[import-not-found]
+            except ImportError:
+                return "", "zstandard not installed (pip install zstandard)"
+            return base64.b64encode(zstandard.ZstdCompressor().compress(b)).decode("ascii"), None
+        if op == "zstd_decode":
+            try:
+                import zstandard  # type: ignore[import-not-found]
+            except ImportError:
+                return "", "zstandard not installed (pip install zstandard)"
+            _dec = zstandard.ZstdDecompressor()
+            return _try_decompress(s, _dec.decompress).decode("utf-8", errors="replace"), None
         if op == "rot13":
             return s.translate(_ROT13), None
         if op in ("md5", "sha1", "sha256", "sha512"):
@@ -153,6 +189,65 @@ def _b64_bytes_strict(s: str) -> bytes:
     cleaned = re.sub(r"\s+", "", s)
     cleaned += "=" * (-len(cleaned) % 4)
     return base64.b64decode(cleaned.encode("ascii"), validate=True)
+
+
+def _compressed_candidates(s: str) -> list[bytes]:
+    """Coerce a textarea value into ordered candidate byte payloads for a
+    decompressor. We try each candidate in turn (see ``_try_decompress``)
+    so the user doesn't have to declare up front whether they pasted
+    base64, hex, or raw bytes. Order matters: hex first when the input
+    is unambiguously hex (even length, hex alphabet only), because gzip
+    magic ``1f8b...`` is also valid base64 — trying base64 first there
+    decodes to gibberish that then "works" against gzip until it
+    doesn't, masking the user's actual intent.
+    """
+    out: list[bytes] = []
+    seen: set[bytes] = set()
+
+    def _add(b: bytes) -> None:
+        if b and b not in seen:
+            out.append(b)
+            seen.add(b)
+
+    hexish = re.sub(r"[\s:_\-]", "", s)
+    if hexish.lower().startswith("0x"):
+        hexish = hexish[2:]
+    if hexish and len(hexish) % 2 == 0 and re.fullmatch(r"[0-9A-Fa-f]+", hexish):
+        try:
+            _add(bytes.fromhex(hexish))
+        except ValueError:
+            pass
+    b64ish = re.sub(r"\s+", "", s)
+    if b64ish and re.fullmatch(r"[A-Za-z0-9+/_\-]+=*", b64ish):
+        try:
+            normalised = b64ish.replace("-", "+").replace("_", "/")
+            normalised += "=" * (-len(normalised) % 4)
+            _add(base64.b64decode(normalised.encode("ascii"), validate=True))
+        except (binascii.Error, ValueError):
+            pass
+    # Raw bytes: textarea posts arrive as str, but each codepoint maps
+    # 1:1 to a byte under latin-1 — round-trips any byte that survived
+    # the clipboard.
+    _add(s.encode("latin-1", errors="replace"))
+    return out
+
+
+def _try_decompress(s: str, decompress):
+    """Run ``decompress`` against each candidate from
+    ``_compressed_candidates`` and return the first successful result.
+    Re-raises the last error if all candidates fail, so the operator
+    sees a real decompression error ("not a gzipped file") instead of
+    the input-format heuristic's noise.
+    """
+    last_err: Exception | None = None
+    for cand in _compressed_candidates(s):
+        try:
+            return decompress(cand)
+        except Exception as e:  # noqa: BLE001 — surfaced via _encode's handler
+            last_err = e
+    if last_err is not None:
+        raise last_err
+    raise ValueError("empty input")
 
 
 def _b64_decode_strict(s: str, *, urlsafe: bool) -> str:

@@ -184,6 +184,49 @@ class TestCompression:
         _, err = _encode("gzip_decode", "Zm9v")  # valid b64, not gzip
         assert err is not None
 
+    def test_gzip_decode_accepts_raw_bytes_paste(self):
+        # User pastes raw gzipped bytes into the textarea (latin-1
+        # round-trip). Decoder must coerce to bytes without first
+        # demanding base64.
+        import gzip as _gzip
+        raw = _gzip.compress(b"hello")
+        out, err = _encode("gzip_decode", raw.decode("latin-1"))
+        assert err is None and out == "hello"
+
+    def test_gzip_decode_accepts_hex(self):
+        import gzip as _gzip
+        raw = _gzip.compress(b"hi")
+        out, err = _encode("gzip_decode", raw.hex())
+        assert err is None and out == "hi"
+
+    def test_deflate_decode_accepts_raw_deflate_without_zlib_header(self):
+        # HTTP "Content-Encoding: deflate" responses in the wild are
+        # often raw DEFLATE (no zlib header) \u2014 must not error.
+        import zlib as _zlib
+        raw = _zlib.compress(b"x" * 50)[2:-4]  # strip zlib wrapper
+        out, err = _encode("deflate_decode", raw.decode("latin-1"))
+        assert err is None and out == "x" * 50
+
+    def test_brotli_round_trip(self):
+        try:
+            import brotli  # noqa: F401
+        except ImportError:
+            pytest.skip("brotli not installed")
+        enc, e1 = _encode("br_encode", "hello brotli " * 5)
+        assert e1 is None and enc
+        dec, e2 = _encode("br_decode", enc)
+        assert e2 is None and dec == "hello brotli " * 5
+
+    def test_zstd_round_trip(self):
+        try:
+            import zstandard  # noqa: F401
+        except ImportError:
+            pytest.skip("zstandard not installed")
+        enc, e1 = _encode("zstd_encode", "hello zstd " * 5)
+        assert e1 is None and enc
+        dec, e2 = _encode("zstd_decode", enc)
+        assert e2 is None and dec == "hello zstd " * 5
+
 
 class TestHashes:
     def test_md5(self):
