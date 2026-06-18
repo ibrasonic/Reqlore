@@ -270,3 +270,6 @@ def test_each_filter_menu_renders_apply_and_cancel(client):
     # is documented in the page itself.
     assert body.count("Press <kbd>Enter</kbd>") == 7
     assert body.count("<kbd>Esc</kbd>") == 7
+    # Arrow-key roving inside the open panel is also documented in
+    # the hint so sighted users know it exists.
+    assert body.count("<kbd>↑</kbd> <kbd>↓</kbd>") == 7

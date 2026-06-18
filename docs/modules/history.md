@@ -122,6 +122,30 @@ lose their place. The only ways out are:
 - **Esc** or **Cancel** (closes, restores focus to the column summary), or
 - **Enter** or **Apply** (commits — page reloads to the filtered table).
 
+In addition to Tab, **ArrowDown / ArrowUp / Home / End** rove focus
+inside the panel when the currently focused control does not own arrow
+behaviour itself. The rules:
+
+| Currently focused control                                            | What arrows do                                  |
+|----------------------------------------------------------------------|-------------------------------------------------|
+| Checkbox, button (Apply / Cancel), link, generic `[tabindex]`        | Roving — ↓ next, ↑ previous, Home / End jump to edges, with wrap. |
+| Text-like input (`text` / `search` / `url` / `email` / `password` / `tel` / `date` / `time` / …) | Native caret movement — left untouched. |
+| Number input                                                         | Native increment / decrement — left untouched.  |
+| `<select>` / `<textarea>`                                            | Native value change / caret — left untouched.   |
+| Radio button (`host_mode` exact / contains)                          | Native HTML radio-group navigation — left untouched. |
+| Any control                                                          | **ArrowLeft / ArrowRight are never intercepted** (text caret + radio navigation depend on them). |
+
+This means a checkbox-heavy panel feels like a menu, but typing into
+the URL filter or stepping the Bytes / ms numeric range still works
+the way the browser would normally let it.
+
+> **Caveat: screen-reader browse mode.** NVDA and JAWS in *browse*
+> mode handle arrow keys at the virtual-cursor level — those keys
+> never reach the page's keydown handler and we cannot trap them.
+> Committing the filter still requires Enter / Apply / Esc, all of
+> which work in any SR mode, so the menu remains usable; the
+> virtual cursor just walks normally.
+
 This is a deliberate departure from a plain disclosure: the open menu
 behaves more like a popup. We picked it because the user-research
 report specifically asked for "cannot go out of [the menu] if it is

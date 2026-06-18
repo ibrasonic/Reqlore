@@ -498,6 +498,12 @@
   //     accidentally walk past the menu into the next column header
   //     or row while the menu is open. Escape (or Cancel) is the
   //     only way out without committing.
+  //   * ArrowDown / ArrowUp / Home / End rove between focusable
+  //     panel items when the focused control doesn't already use
+  //     arrows (so checkboxes + buttons get menu-style nav, while
+  //     text inputs keep caret movement, number inputs keep
+  //     increment/decrement, and radio groups keep native group nav).
+  //     Left / Right are never intercepted.
   // Pressing Enter inside any field still submits the wrapping
   // <form id="hist-filters"> normally — that's how the filters
   // commit. Auto-submit on every checkbox change is intentionally
@@ -577,6 +583,60 @@
           ev.preventDefault();
           closeMenu(d, true);
           return;
+        }
+
+        // Arrow / Home / End roving inside the panel. Native HTML
+        // doesn't move focus between siblings on Up/Down, so by
+        // default arrows wouldn't escape — but a checkbox-heavy
+        // panel feels broken if arrows do nothing. We add APG
+        // menu-style roving for the controls that DON'T already
+        // own arrow behaviour, and we leave the rest alone:
+        //
+        //   * text-like inputs   -> caret movement (keep native)
+        //   * number inputs      -> increment / decrement (keep)
+        //   * <select>, <textarea> -> native value / caret (keep)
+        //   * radio groups       -> native group navigation (keep)
+        //   * checkboxes, buttons, links, [tabindex] -> roving
+        //
+        // ArrowLeft / ArrowRight are never intercepted: text caret
+        // and radio-group navigation depend on them.
+        //
+        // Caveat: in NVDA/JAWS *browse* mode, arrow keys move the
+        // virtual cursor and never reach this handler. We can't
+        // trap browse-mode reading; the menu still survives because
+        // committing requires Enter / Apply / Esc, all of which
+        // work whatever mode the SR is in.
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp' ||
+            ev.key === 'Home'       || ev.key === 'End') {
+          var t = ev.target;
+          var tag = (t && t.tagName ? t.tagName : '').toLowerCase();
+          var typ = (t && t.type ? t.type : '').toLowerCase();
+          var nativeArrows = (
+            tag === 'select' || tag === 'textarea' ||
+            (tag === 'input' && (
+              typ === 'text' || typ === 'search' || typ === 'url' ||
+              typ === 'email' || typ === 'password' || typ === 'tel' ||
+              typ === 'number' || typ === 'date' || typ === 'datetime-local' ||
+              typ === 'month' || typ === 'time' || typ === 'week' ||
+              typ === 'radio'
+            ))
+          );
+          if (!nativeArrows) {
+            var ritems = panelFocusables(d);
+            if (ritems.length) {
+              var ridx = ritems.indexOf(document.activeElement);
+              ev.preventDefault();
+              if (ev.key === 'Home') ritems[0].focus();
+              else if (ev.key === 'End') ritems[ritems.length - 1].focus();
+              else if (ev.key === 'ArrowDown') {
+                ritems[(ridx + 1 + ritems.length) % ritems.length].focus();
+              } else if (ev.key === 'ArrowUp') {
+                ritems[(ridx - 1 + ritems.length) % ritems.length].focus();
+              }
+              return;
+            }
+          }
+          // Otherwise fall through and let the browser handle it.
         }
 
         // Tab trap. Cycle within panelFocusables; the <summary>

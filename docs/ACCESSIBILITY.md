@@ -101,6 +101,17 @@ a single top-of-page form, with these AAA-aligned commitments:
   committing) or Enter / Apply (commits and reloads). With JS off
   the menus remain plain `<details>` and Tab walks normally — the
   trap is a JS-only enhancement on top of working baseline.
+- **Arrow-key roving inside the panel.** ArrowDown / ArrowUp / Home
+  / End move focus between the panel's focusable items (checkboxes,
+  buttons, links) with wrap. Controls whose own arrow keys carry
+  meaning are explicitly excluded so they keep their native
+  behaviour: text and number inputs (caret / increment), `<select>`
+  / `<textarea>` (caret / value), and radio groups (native group
+  navigation). ArrowLeft / ArrowRight are never intercepted.
+  Screen-reader *browse* mode arrows operate on the virtual cursor
+  and bypass the handler altogether — committing still requires
+  Enter / Apply / Esc, which work in any SR mode, so usability is
+  preserved.
 
 Verified by [`test_history_filters.py`](../reqlore/tests/unit/test_history_filters.py).
 
