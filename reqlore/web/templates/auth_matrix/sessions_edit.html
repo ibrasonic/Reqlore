@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Edit Auth Matrix session{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('.sessions_list') }}">&larr; Sessions</a>
+</nav>
+<h1>Edit session #{{ session.id }}</h1>
+<form method="post">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>
+    <label for="f-name">Name</label><br>
+    <input type="text" id="f-name" name="name" value="{{ session.name }}" required maxlength="80">
+  </p>
+  <p>
+    <label for="f-kind">Kind</label><br>
+    <select id="f-kind" name="kind" required>
+      {% for k in kinds %}
+        <option value="{{ k }}" {% if session.kind == k %}selected{% endif %}>{{ k }}</option>
+      {% endfor %}
+    </select>
+  </p>
+  <p>
+    <label for="f-payload">Payload</label><br>
+    <textarea id="f-payload" name="payload" rows="6" cols="80">{{ session.payload }}</textarea>
+  </p>
+  <p>
+    <button type="submit">Save changes</button>
+    <a href="{{ url_for('.sessions_list') }}">Cancel</a>
+  </p>
+</form>
+{% endblock %}

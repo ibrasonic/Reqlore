@@ -50,6 +50,39 @@ simple 1-second polling thread.
 
 The backend is auto-selected; the UI status panel shows which is active.
 
+## Multi-process safety
+
+Only one Reqlore process at a time may run the scheduler against a given
+project file. The lock is a JSON stamp persisted at
+`project_state["sched:lock"]` shaped as
+`{"pid": <int>, "host": <str>, "ts": <unix_int>}`.
+
+Acquisition (on `Scheduler.start()`):
+
+- A foreign stamp younger than **30 s** (the TTL) refuses the start with
+  `SchedulerLockError`. The `/schedule/start` route catches the error
+  and flashes the holder's pid + host so you know which process to
+  stop.
+- A stamp older than the TTL (likely a crashed process that never
+  cleaned up) is silently overridden.
+- A corrupt or unparseable stamp is silently overridden.
+- A stamp owned by the current process is silently refreshed (so
+  stop → start cycles inside a single Reqlore run always succeed).
+
+Refresh: while the thread-fallback loop is running, the stamp is
+re-written every **10 s** to keep the lease fresh.
+
+Release (on `Scheduler.stop()`): the stamp row is cleared **only** if
+it still belongs to this process. A foreign holder that grabbed the
+slot after our TTL expired is never clobbered.
+
+Boot behaviour: when `sched:auto_start` is on but the lock is held by
+another process at app boot, the boot hook in
+`reqlore/web/__init__.py` swallows the error — the app starts
+normally, the scheduler simply stays stopped. Visit `/schedule/` and
+click **Start scheduler** once the other process releases the lock
+(or wait ≈ 30 s for the TTL to expire).
+
 ## Job schema
 
 ```json
@@ -133,6 +166,13 @@ Doesn't pollute long-term jobs.
 ## Storage footprint
 
 - `project_state["sched:jobs"]` — JSON list of jobs.
+- `project_state["sched:auto_start"]` — `"0"` / `"1"` flag; when on,
+  the web boot hook starts the scheduler automatically.
+- `project_state["sched:lock"]` — JSON stamp
+  `{pid, host, ts}` for cross-process serialisation. Written on
+  `start()`, refreshed every 10 s while running, cleared on `stop()`
+  (only if still owned by this process). Stale stamps (older than
+  30 s) are overridden on the next `start()` attempt.
 
 No DB tables of its own; findings go into the `issues` table via
 Scanner.
@@ -150,7 +190,8 @@ supervisor and let it manage the scheduler.
 | "interval_s must be >= 30" error                          | Sub-30s intervals rejected                                              | Bump to ≥ 30 s.                                                                                  |
 | Jobs don't run after restart                              | Scheduler is stopped by default                                         | Click **Start scheduler** after each restart, or auto-start via a plugin.                        |
 | Exception in scan silently lost                           | `_thread_loop()` catches and ignores                                    | Tail Reqlore stderr; if a rule's misbehaving, run it via `/scanner/` to surface the traceback.    |
-| Two Reqlore processes corrupt `sched:jobs`                | No distributed locking                                                  | Run a single instance per project file.                                                          |
+| Two Reqlore processes corrupt `sched:jobs`                | Pre-Phase-18 — no longer possible                                       | The scheduler now holds a cross-process lock at `project_state["sched:lock"]`; the second process refuses to start. See **Multi-process safety** above.  |
+| Start refused: "Scheduler is already running for this project (pid X on host Y)" | Another Reqlore process holds the lock                                  | Stop the other process, or wait ≈ 30 s for its TTL to expire. If you know that process crashed, just retry — the stale stamp is overridden automatically. |
 | `last_run_ts` not updating                                 | Job is disabled                                                         | Disable / enable via Python API; the UI does not expose the flag.                                |
 | Thread backend feels imprecise                            | 1-second poll resolution                                                | Install `reqlore[schedule]` for APScheduler.                                                     |
 

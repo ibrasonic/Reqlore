@@ -181,6 +181,23 @@ def render_html(project_meta: dict, findings: Iterable[dict],
                 vec = f.get("cvss_vector") or ""
                 cvss = str(f["cvss_score"]) + (f" ({vec})" if vec else "")
                 parts.append(f"<dt>CVSS</dt><dd>{_h.escape(cvss)}</dd>")
+            _conf = f.get("confidence") or "firm"
+            parts.append(
+                f"<dt>Confidence</dt><dd>{_h.escape(_conf)}</dd>"
+            )
+            _occ = f.get("occurrence_count") or 1
+            if _occ and _occ > 1:
+                parts.append(
+                    f"<dt>Occurrences</dt><dd>{int(_occ)}</dd>"
+                )
+            _tags = f.get("fingerprint_tags_list") or (
+                [t for t in (f.get("fingerprint_tags") or "").split(",") if t]
+            )
+            if _tags:
+                _tags_html = ", ".join(_h.escape(t) for t in _tags)
+                parts.append(
+                    f"<dt>Response signals</dt><dd>{_tags_html}</dd>"
+                )
             parts.append(f"<dt>Status</dt><dd>{_h.escape(f.get('status', 'open'))}</dd>")
             parts.append("</dl>")
             if f.get("description"):

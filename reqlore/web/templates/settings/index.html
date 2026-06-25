@@ -47,6 +47,42 @@
     </p>
   </fieldset>
 
+  <fieldset>
+    <legend>Issue consolidation</legend>
+    <p>
+      <input type="checkbox" id="cs-en" name="consolidation_enabled" value="1"
+             {% if consolidation.enabled %}checked{% endif %}>
+      <label for="cs-en">Enable post-scan consolidation. Disabled by default;
+        when on, the scanner rolls up frequent same-rule findings under a
+        single directory-level finding and (optionally) collapses across
+        hosts that share a backend.</label>
+    </p>
+    <p>
+      <label for="cs-path">Directory roll-up threshold (minimum distinct URLs
+        before consolidation kicks in):</label>
+      <input type="number" id="cs-path"
+             name="consolidation_path_rollup_threshold"
+             value="{{ consolidation.path_rollup_threshold }}"
+             min="3" max="1000" step="1">
+    </p>
+    <p>
+      <label for="cs-ip">Insertion-point lightweight threshold (probes
+        without a fire before dropping to the cheap probe tier):</label>
+      <input type="number" id="cs-ip"
+             name="consolidation_ip_lightweight_threshold"
+             value="{{ consolidation.ip_lightweight_threshold }}"
+             min="10" max="10000" step="1">
+    </p>
+    <p>
+      <input type="checkbox" id="cs-xh"
+             name="consolidation_cross_host_enabled" value="1"
+             {% if consolidation.cross_host_enabled %}checked{% endif %}>
+      <label for="cs-xh">Cross-host backend dedupe. When on, findings on
+        different hosts that share the same response <code>Server</code>
+        header collapse into one finding.</label>
+    </p>
+  </fieldset>
+
   <button type="submit">Save</button>
 </form>
 

@@ -141,6 +141,7 @@ def index():
         engines_all=_engines_seen(g.project),
         page=page, per_page=per_page, total=total,
         max_id=max_id,
+        plugin_apps_available=bool(get_registry().active_plugin_apps()),
         any_filter_active=any([
             f["host"], f["q"], f["methods"], f["statuses"], f["engines"],
             f["len_min"] is not None, f["len_max"] is not None,
@@ -195,6 +196,7 @@ def show(hid: int):
     ))
     plugin_copy_as = [h.name for h in get_registry().active_copy_as()]
     send_targets = available_targets(row.req_blob)
+    plugin_apps_available = bool(get_registry().active_plugin_apps())
 
     # Server-side find-in-body. One shared Find form drives highlights
     # across both panes; each pane is marked up in place (no duplicated
@@ -217,6 +219,7 @@ def show(hid: int):
         summary=summary, status_line=status_line,
         plugin_copy_as=plugin_copy_as,
         send_targets=send_targets,
+        plugin_apps_available=plugin_apps_available,
         find_body=find_body,
         find_req=panes_by_prefix.get("req"),
         find_resp=panes_by_prefix.get("resp"),
@@ -284,6 +287,10 @@ def send_to(hid: int, slug: str):
     elif slug == "decoder":
         target = url_for("decoder.index",
                          text=parsed.body.decode("utf-8", errors="replace"))
+    elif slug == "plugin-app":
+        target = url_for("plugins.send_to_chooser", from_history=hid)
+    elif slug == "auth-matrix":
+        target = url_for("auth_matrix.from_history", hid=hid)
     else:
         abort(404, description=f"Unknown send target: {slug!r}")
     flash(f"Sent history #{hid} to {target_label(slug)}.", "ok")

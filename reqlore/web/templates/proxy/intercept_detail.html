@@ -15,6 +15,14 @@
 <dl class="meta" aria-label="Intercept summary">
   <dt>Direction</dt><dd>{{ item.kind }}</dd>
   <dt>Held by</dt><dd>{{ item.hold_reason }}</dd>
+  {% if item.parent_intercept_id %}
+  <dt>Redirect of</dt>
+  <dd>
+    <a href="{{ url_for('proxy.show_intercept', iid=item.parent_intercept_id) }}">
+      Intercept #{{ item.parent_intercept_id }}
+    </a>
+  </dd>
+  {% endif %}
   <dt>Status</dt><dd>Pending &mdash; Forward or Drop below to release.</dd>
 </dl>
 
@@ -81,6 +89,16 @@
       </form>
     </li>
     {% endfor %}
+    {% if plugin_apps_available %}
+    <li>
+      <form method="post"
+            action="{{ url_for('proxy.send_to', iid=item.id, slug='plugin-app') }}"
+            class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" accesskey="g">Send to plu<u>g</u>in app&hellip;</button>
+      </form>
+    </li>
+    {% endif %}
   </ul>
 </section>
 {% endif %}

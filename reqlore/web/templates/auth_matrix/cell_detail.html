@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Auth Matrix cell #{{ cell.id }}{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('.runs_detail', rid=run.id) }}">&larr; Run #{{ run.id }}</a>
+</nav>
+<h1>Cell #{{ cell.id }} — {{ cell.verdict }}</h1>
+<dl class="meta">
+  <dt>History row</dt><dd><a href="{{ url_for('history.show', hid=cell.history_id) }}">#{{ cell.history_id }}</a></dd>
+  <dt>Session</dt><dd>{{ session.name if session else '#' ~ cell.session_id }} ({{ session.kind if session else '?' }})</dd>
+  <dt>Status</dt><dd>{{ cell.status }}{% if cell.baseline_status is not none %} (baseline {{ cell.baseline_status }}){% endif %}</dd>
+  <dt>Similarity</dt><dd>{{ cell.similarity_pct }}%</dd>
+  <dt>Body length</dt><dd>{{ cell.body_len }}{% if cell.baseline_len is not none %} (baseline {{ cell.baseline_len }}){% endif %}</dd>
+  <dt>Duration</dt><dd>{{ cell.duration_ms }} ms</dd>
+  {% if cell.error %}
+    <dt>Error</dt><dd class="flash flash-warn">{{ cell.error }}</dd>
+  {% endif %}
+  {% if cell.finding_id %}
+    <dt>Finding</dt><dd><a href="{{ url_for('scanner.show', fid=cell.finding_id) }}">#{{ cell.finding_id }}</a></dd>
+  {% endif %}
+</dl>
+
+{% if cell.verdict != 'dismissed' %}
+  <form method="post" action="{{ url_for('.cell_dismiss', rid=run.id, cid=cell.id) }}" class="inline">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit">Dismiss (mark false-positive)</button>
+  </form>
+{% endif %}
+
+<section aria-labelledby="req-h">
+  <h2 id="req-h">Replayed request</h2>
+  <pre>{{ cell.request_text }}</pre>
+</section>
+
+<section aria-labelledby="diff-h">
+  <h2 id="diff-h">Responses</h2>
+  <div class="two-col">
+    <article>
+      <h3>Baseline ({{ cell.baseline_status }})</h3>
+      <pre>{{ cell.baseline_response_text }}</pre>
+    </article>
+    <article>
+      <h3>Candidate ({{ cell.status }})</h3>
+      <pre>{{ cell.response_text }}</pre>
+    </article>
+  </div>
+</section>
+{% endblock %}

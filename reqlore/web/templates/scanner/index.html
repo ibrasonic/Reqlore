@@ -48,8 +48,42 @@
         <option value="{{ h }}" {% if host == h %}selected{% endif %}>{{ h }}</option>
       {% endfor %}
     </select>
+    <label for="cf">Confidence</label>
+    <select id="cf" name="confidence">
+      <option value="">all</option>
+      {% for c in confidences %}
+        <option value="{{ c }}" {% if confidence == c %}selected{% endif %}>{{ c }}</option>
+      {% endfor %}
+    </select>
+    <label class="inline-check" for="waf">
+      <input type="checkbox" id="waf" name="waf_tagged" value="1"
+             {% if waf_tagged %}checked{% endif %}>
+      Behind WAF
+    </label>
     <button type="submit">Filter</button>
   </form>
+
+  {% if active_filters %}
+    <ul class="filter-chips" aria-label="Active filters">
+      {% for chip in active_filters %}
+        <li class="filter-chip">
+          <span>{{ chip.label }}</span>
+          {# Drop-this-filter link: rebuild the querystring without it. #}
+          {% set qs = {} %}
+          {% if sev and chip.name != 'severity' %}{% set _ = qs.update({'severity': sev}) %}{% endif %}
+          {% if status and chip.name != 'status' %}{% set _ = qs.update({'status': status}) %}{% endif %}
+          {% if host and chip.name != 'host' %}{% set _ = qs.update({'host': host}) %}{% endif %}
+          {% if confidence and chip.name != 'confidence' %}{% set _ = qs.update({'confidence': confidence}) %}{% endif %}
+          {% if waf_tagged and chip.name != 'waf_tagged' %}{% set _ = qs.update({'waf_tagged': '1'}) %}{% endif %}
+          <a href="{{ url_for('.index', **qs) }}"
+             aria-label="Remove filter: {{ chip.label }}">×</a>
+        </li>
+      {% endfor %}
+      <li class="filter-chip filter-chip-clear">
+        <a href="{{ url_for('.index') }}">Clear all</a>
+      </li>
+    </ul>
+  {% endif %}
 
   {% if findings %}
   <table>
@@ -58,6 +92,7 @@
       <tr>
         <th scope="col">#</th>
         <th scope="col">Severity</th>
+        <th scope="col">Confidence</th>
         <th scope="col">Title</th>
         <th scope="col">Host</th>
         <th scope="col">URL</th>
@@ -66,10 +101,41 @@
     </thead>
     <tbody>
       {% for f in findings %}
+      {% set _conf = f.confidence or 'firm' %}
+      {% set _icon = {'tentative': '?', 'firm': '=', 'certain': '!'}.get(_conf, '=') %}
       <tr>
         <td>{{ f.id }}</td>
         <td><span class="sev sev-{{ f.severity }}" aria-label="Severity: {{ f.severity }}">{{ f.severity }}</span></td>
-        <td><a href="{{ url_for('.show', fid=f.id) }}">{{ f.title }}</a></td>
+        <td>
+          <span class="conf conf-{{ _conf }}"
+                aria-label="Confidence: {{ _conf }}"
+                title="Confidence: {{ _conf }}"
+          ><span aria-hidden="true">[{{ _icon }}]</span> {{ _conf }}</span>
+        </td>
+        <td>
+          <a href="{{ url_for('.show', fid=f.id) }}">{{ f.title }}</a>
+          {% if (f.occurrence_count or 1) > 1 %}
+            <span class="occ" aria-label="Occurrences: {{ f.occurrence_count }}"
+                  title="Seen {{ f.occurrence_count }} times">× {{ f.occurrence_count }}</span>
+            {% if f.occurrence_preview %}
+              <details class="occ-preview">
+                <summary>Preview {{ f.occurrence_preview|length }} of {{ f.occurrence_count }}</summary>
+                <ul class="occ-preview-list">
+                  {% for occ in f.occurrence_preview %}
+                    <li><code class="url">{{ occ.url or '—' }}</code></li>
+                  {% endfor %}
+                </ul>
+              </details>
+            {% endif %}
+          {% endif %}
+          {% if f.fingerprint_tags_list %}
+            <ul class="fp-tags" aria-label="Response signals">
+              {% for t in f.fingerprint_tags_list %}
+                <li class="fp-tag">{{ t }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </td>
         <td>{{ f.host or '—' }}</td>
         <td><code class="url">{{ f.url or '—' }}</code></td>
         <td>{{ f.status }}</td>

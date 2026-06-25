@@ -96,6 +96,16 @@ def render_markdown(project_meta: dict, findings: Iterable[dict],
                 chips.append(
                     f"CVSS: {f['cvss_score']}" + (f" ({vec})" if vec else "")
                 )
+            _conf = f.get("confidence") or "firm"
+            chips.append(f"Confidence: {_conf}")
+            _occ = f.get("occurrence_count") or 1
+            if _occ and _occ > 1:
+                chips.append(f"Occurrences: {int(_occ)}")
+            _tags = f.get("fingerprint_tags_list") or (
+                [t for t in (f.get("fingerprint_tags") or "").split(",") if t]
+            )
+            if _tags:
+                chips.append("Signals: " + ", ".join(_tags))
             if f.get("host"):
                 chips.append(f"Host: `{f['host']}`")
             if chips:

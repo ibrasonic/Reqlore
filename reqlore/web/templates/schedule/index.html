@@ -8,11 +8,17 @@
    Jobs only run while the UI process is alive.</p>
 
 <p>Backend: <strong>{{ status.backend }}</strong> &middot;
-   Running: <strong>{{ 'yes' if status.running else 'no' }}</strong></p>
+   Running: <strong>{{ 'yes' if status.running else 'no' }}</strong> &middot;
+   Auto-start on app boot:
+   <strong>{{ 'on' if auto_start else 'off' }}</strong></p>
 
-<form method="post" action="{{ url_for('.start' if not status.running else '.stop') }}">
+<form method="post" action="{{ url_for('.start' if not status.running else '.stop') }}" style="display:inline">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
   <button type="submit">{{ 'Stop scheduler' if status.running else 'Start scheduler' }}</button>
+</form>
+<form method="post" action="{{ url_for('.toggle_auto_start') }}" style="display:inline">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <button type="submit">{{ 'Disable auto-start' if auto_start else 'Enable auto-start' }}</button>
 </form>
 
 <h2>Jobs</h2>
@@ -21,10 +27,13 @@
     <thead>
       <tr>
         <th scope="col">Name</th>
+        <th scope="col">Status</th>
         <th scope="col">Interval (s)</th>
         <th scope="col">Scan limit</th>
-        <th scope="col">Last run</th>
+        <th scope="col">Last started</th>
+        <th scope="col">Last finished</th>
         <th scope="col">Last findings</th>
+        <th scope="col">Last error</th>
         <th scope="col">Actions</th>
       </tr>
     </thead>
@@ -32,14 +41,27 @@
     {% for j in status.jobs %}
       <tr>
         <td><code>{{ j.name }}</code></td>
+        <td>{{ 'enabled' if j.enabled else 'disabled' }}</td>
         <td>{{ j.interval_s }}</td>
         <td>{{ j.scan_limit }}</td>
         <td>{{ j.last_run_ts or '—' }}</td>
+        <td>{{ j.last_finished_ts or '—' }}</td>
         <td>{{ j.last_findings }}</td>
+        <td>
+          {% if j.last_error %}
+            <span class="err">{{ j.last_error }}</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
         <td>
           <form method="post" action="{{ url_for('.run', name=j.name) }}" style="display:inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">
             <button type="submit">Run now</button>
+          </form>
+          <form method="post" action="{{ url_for('.toggle_job', name=j.name) }}" style="display:inline">
+            <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+            <button type="submit">{{ 'Disable' if j.enabled else 'Enable' }}</button>
           </form>
           <form method="post" action="{{ url_for('.remove', name=j.name) }}" style="display:inline">
             <input type="hidden" name="_csrf" value="{{ csrf_token }}">

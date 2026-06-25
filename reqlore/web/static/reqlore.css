@@ -313,6 +313,161 @@ form:has(input[name="preset"]:checked:not([value="custom"])) .customise-checks {
   border: 1px dotted var(--border);
 }
 
+/* Phase 3 — confidence badges. Same a11y rules as severity: the text
+   label and the leading [?]/[=]/[!] icon both carry meaning, so the
+   badge remains distinguishable without colour (WCAG 1.4.1). */
+.conf {
+  display: inline-block;
+  min-width: 5rem;
+  padding: 0.05rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.25rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  line-height: 1.4;
+}
+.conf-tentative {
+  background: var(--code-bg);
+  color: var(--muted);
+  border: 1px dashed var(--border);
+}
+.conf-firm {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+.conf-certain {
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  border: 2px solid var(--warn-fg);
+}
+
+/* Occurrence pill ("× 7") next to consolidated finding titles. */
+.occ {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--code-bg);
+  color: var(--fg);
+}
+
+/* Fingerprint tag list — inline pills for WAF/error-page signals. */
+.fp-tags {
+  display: inline;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.fp-tags li.fp-tag {
+  display: inline-block;
+  margin: 0 0.15rem;
+  padding: 0 0.4rem;
+  font-size: 0.75rem;
+  border: 1px dotted var(--border);
+  border-radius: 0.25rem;
+  background: var(--code-bg);
+  color: var(--muted);
+}
+
+/* Phase 4 — active filter chips on the Findings tab. Border + text
+   label carry meaning; the × link removes that filter only. */
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+.filter-chips .filter-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--code-bg);
+  font-size: 0.85rem;
+}
+.filter-chips .filter-chip a {
+  text-decoration: none;
+  font-weight: 600;
+}
+.filter-chips .filter-chip-clear {
+  border-style: dashed;
+}
+.inline-check {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  margin: 0 0.5rem;
+}
+
+/* Inline occurrence preview on the findings table — collapsed by
+   default; expands to show the first N URLs that consolidated into
+   this finding. */
+.occ-preview {
+  display: inline-block;
+  margin-left: 0.4rem;
+}
+.occ-preview > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.occ-preview-list {
+  list-style: disc inside;
+  margin: 0.25rem 0 0 0;
+  padding: 0;
+  font-size: 0.8rem;
+}
+
+/* Phase 4 — CSS-only throughput sparkline. Each <li> is a vertical
+   bar whose height is driven by an inline ``--bar`` percentage so
+   the rendering stays in a single flow row with no canvas / JS.
+   Bars use border weight + height (never colour alone) — a value
+   of 0 still leaves a visible 1px outline so screen-readers' AT
+   matches the visual count. */
+.sparkline {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 1.5rem;
+  list-style: none;
+  padding: 0;
+  margin: 0 0.4rem 0 0;
+  vertical-align: middle;
+}
+.sparkline .sparkline-bar {
+  width: 0.5rem;
+  height: var(--bar, 0%);
+  min-height: 2px;
+  background: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 1px 1px 0 0;
+}
+.sparkline-legend {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* Long-text <pre> blocks: wrap rather than scroll horizontally
    (WCAG 1.4.8 / 1.4.10 — no horizontal scroll at narrow widths). */
 .wrap-pre {

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — {{ app.name }} (Plugin App){% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('plugins.index') }}">&larr; All plugins</a>
+</nav>
+<h1>{{ app.name }}
+  <small style="font-weight:normal">
+    <code>{{ app.slug }}</code>
+    {% if app.version %} v{{ app.version }}{% endif %}
+    {% if app.author %} &middot; by {{ app.author }}{% endif %}
+  </small>
+</h1>
+{% if app.description %}
+  <p>{{ app.description }}</p>
+{% endif %}
+
+{% if seed %}
+<section aria-labelledby="seed-h">
+  <h2 id="seed-h">Seed request</h2>
+  <p>
+    This run was launched from
+    <a href="{{ url_for('history.show', hid=seed.history_id) }}">history #{{ seed.history_id }}</a>:
+    <code>{{ seed.method }} {{ seed.url }}</code>.
+    The plugin can read the full request from <code>ctx.seed_request</code>.
+    Matching fields below were pre-filled — review and edit before
+    pressing <strong>Run</strong>.
+  </p>
+</section>
+{% endif %}
+
+<section aria-labelledby="run-h">
+  <h2 id="run-h">Run this plugin</h2>
+  {% if is_running %}
+    <p role="status" aria-live="polite">
+      <strong>Currently running.</strong>
+      Open the
+      {% if latest %}
+        <a href="{{ url_for('.app_run_detail', slug=app.slug, rid=latest.id) }}">live run page</a>
+      {% else %}
+        live run page
+      {% endif %}
+      to follow progress, or stop it below.
+    </p>
+    <form method="post" action="{{ url_for('.app_stop', slug=app.slug) }}" class="inline">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      {% if latest %}<input type="hidden" name="rid" value="{{ latest.id }}">{% endif %}
+      <button type="submit">Stop running plugin</button>
+    </form>
+  {% else %}
+    <form method="post" action="{{ url_for('.app_run', slug=app.slug) }}"
+          data-focus-after-submit="1">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      {% if seed %}
+        <input type="hidden" name="_seed_history_id" value="{{ seed.history_id }}">
+      {% endif %}
+      <fieldset>
+        <legend>Settings</legend>
+        {% if not fields %}
+          <p><em>This plugin has no settings.</em></p>
+        {% endif %}
+        {% for f in fields %}
+          {% set fid = "pf_" ~ f.name %}
+          {# When the operator arrived via Send-to-plugin, a few field
+             names get their default overridden by the seed request. #}
+          {% set fdefault = (seed_overrides[f.name] if seed_overrides and f.name in seed_overrides else f.default) %}
+          <p>
+            {% if f.kind == "bool" %}
+              <input type="checkbox" id="{{ fid }}" name="{{ f.name }}" value="1"
+                     {% if f.default %}checked{% endif %}>
+              <label for="{{ fid }}">{{ f.label }}</label>
+            {% else %}
+              <label for="{{ fid }}">
+                {{ f.label }}{% if f.required %} <abbr title="required">*</abbr>{% endif %}
+              </label><br>
+              {% if f.kind == "str" %}
+                <input type="text" id="{{ fid }}" name="{{ f.name }}"
+                       value="{{ fdefault }}"
+                       {% if f.placeholder %}placeholder="{{ f.placeholder }}"{% endif %}
+                       {% if f.max_len %}maxlength="{{ f.max_len }}"{% endif %}
+                       {% if f.required %}required{% endif %}
+                       {% if f.help %}aria-describedby="{{ fid }}_h"{% endif %}>
+              {% elif f.kind == "text" %}
+                <textarea id="{{ fid }}" name="{{ f.name }}"
+                          rows="{{ f.rows or 6 }}"
+                          {% if f.placeholder %}placeholder="{{ f.placeholder }}"{% endif %}
+                          {% if f.required %}required{% endif %}
+                          {% if f.help %}aria-describedby="{{ fid }}_h"{% endif %}>{{ fdefault }}</textarea>
+              {% elif f.kind == "int" %}
+                <input type="number" id="{{ fid }}" name="{{ f.name }}"
+                       value="{{ fdefault }}"
+                       {% if f.min is not none %}min="{{ f.min }}"{% endif %}
+                       {% if f.max is not none %}max="{{ f.max }}"{% endif %}
+                       {% if f.required %}required{% endif %}
+                       {% if f.help %}aria-describedby="{{ fid }}_h"{% endif %}>
+              {% elif f.kind == "select" %}
+                <select id="{{ fid }}" name="{{ f.name }}"
+                        {% if f.required %}required{% endif %}
+                        {% if f.help %}aria-describedby="{{ fid }}_h"{% endif %}>
+                  {% for c in f.choices %}
+                    <option value="{{ c }}" {% if c == fdefault %}selected{% endif %}>{{ c }}</option>
+                  {% endfor %}
+                </select>
+              {% endif %}
+            {% endif %}
+            {% if f.help %}
+              <br><small id="{{ fid }}_h">{{ f.help }}</small>
+            {% endif %}
+          </p>
+        {% endfor %}
+      </fieldset>
+      <p>
+        <button type="submit">Run plugin</button>
+      </p>
+    </form>
+  {% endif %}
+</section>
+
+<section aria-labelledby="last-h">
+  <h2 id="last-h">Most recent run</h2>
+  {% if latest %}
+    <p>
+      <a href="{{ url_for('.app_run_detail', slug=app.slug, rid=latest.id) }}">
+        Run #{{ latest.id }}
+      </a>
+      — status <strong>{{ latest.status }}</strong>,
+      {{ latest.results|length }} result(s),
+      {{ latest.log|length }} bytes of log
+      {% if latest.error %}<br>Error: <code>{{ latest.error }}</code>{% endif %}
+    </p>
+    <p>
+      <a href="{{ url_for('.app_runs', slug=app.slug) }}">View all runs &rarr;</a>
+    </p>
+  {% else %}
+    <p>No previous runs.</p>
+  {% endif %}
+</section>
+{% endblock %}

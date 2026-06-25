@@ -104,8 +104,8 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 
 | Feature | Status | Notes |
 |---|---|---|
-| Passive — security headers, X-Frame-Options, cookies, banner, CORS, errors, dir listing, sensitive paths, mixed content, JWT alg=none, open-redirect, basic-auth-over-HTTP, GraphQL batching hint, +others | ✅ | See [scanner.md](modules/scanner.md). |
-| Active — XSS reflected, SQLi error, open-redirect, SSTI, OS-cmd-time, JWT alg=none, prototype-pollution, GraphQL introspection, GraphQL batching, deserialisation reflection, forced-browsing, web-cache deception, HTTP smuggling (opt-in), OAST-SSRF | ✅ | Gap-plan complete. |
+| Passive — security headers, X-Frame-Options, cookies, banner, CORS, errors, dir listing, sensitive paths, mixed content, JWT alg=none, open-redirect, basic-auth-over-HTTP, GraphQL batching hint, PII/secret leak, CVE / EOL fingerprint, framework debug pages, subdomain-takeover hints, error-response infra leaks, +others | ✅ | 25 built-in passive rules. See [scanner.md](modules/scanner.md). |
+| Active — XSS reflected (body + headers), XSS stored, XSS DOM (Playwright), SQLi error, SSTI, NoSQLi (Mongo), XXE, path traversal, OS-cmd-time, JWT alg=none, open-redirect, OAuth redirect-uri, prototype-pollution, default-creds, IDOR (alt-identity), race-condition, GraphQL introspection / active, CORS misconfig, forced-browsing, deserialisation, web-cache deception, cloud blob misconfig, OAST-SSRF, HTTP smuggling, TLS active, subdomain-takeover, account-enum timing, CSRF-token-not-validated, MFA bypass, session fixation | ✅ | 32 built-in active checks; auth-flow checks (MFA bypass / session fixation) consume `MacroStep.step_type` tags. |
 | Per-finding CWE + OWASP + reproducer | ✅ | |
 | Triage workflow (open → triaged → false_positive → fixed) | ✅ | |
 | Filter by severity / status / host | ✅ | |
@@ -117,6 +117,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 
 | Feature | Status | Notes |
 |---|---|---|
+| Auth Matrix (Autorize / AuthMatrix-equivalent access-control tester) | ✅ | Two modes share one verdict pipeline: active runs against a chosen history slice **and** a passive shadow worker that replays every proxied response under every saved session in the background. Saved sessions are encrypted at rest with ChaCha20-Poly1305 keyed per project. 8 verdict labels including `bypass-suspect`, `denied-status-only`, `denied-correctly`. See [auth-matrix.md](modules/auth-matrix.md). |
 | JWT workbench (decode / sign / alg-switch / key-confusion / kid traversal) | ✅ | See [jwt.md](modules/jwt.md). |
 | SAML inspector + signature audit | ✅ | See [saml.md](modules/saml.md). |
 | GraphQL workbench (introspection, schema explorer, batch) | ✅ | See [graphql.md](modules/graphql.md). |

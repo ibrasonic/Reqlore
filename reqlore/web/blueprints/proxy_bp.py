@@ -100,6 +100,20 @@ def _snapshot_intercept_to_history(item) -> int:
     )
 
 
+def _plugin_apps_available() -> bool:
+    """``True`` if at least one enabled plugin app is registered.
+
+    Lazy import: the plugins package pulls in optional engine imports
+    and we don't want to load it on every proxy request when the
+    operator never opens an intercept.
+    """
+    try:
+        from ...plugins import get_registry
+        return bool(get_registry().active_plugin_apps())
+    except Exception:
+        return False
+
+
 def _underline_first(text: str, ch: str) -> str:
     """Wrap the first case-insensitive occurrence of ``ch`` in ``text``
     in <u>…</u>. Used to visually mark the access-key letter in a
@@ -159,9 +173,15 @@ def _send_redirect(item, slug: str):
         _, _, _, _, body = _parse_raw_request(raw)
         target = url_for("decoder.index",
                          text=body.decode("utf-8", errors="replace"))
+    elif slug == "plugin-app":
+        target = url_for("plugins.send_to_chooser", from_history=hid)
+    elif slug == "auth-matrix":
+        target = url_for("auth_matrix.from_history", hid=hid)
     else:
         abort(404, description=f"Unknown send target: {slug!r}")
     label = next((t[1] for t in _SEND_TARGETS if t[0] == slug), slug)
+    if slug == "plugin-app":
+        label = "plugin app chooser"
     flash(f"Sent intercept #{item.id} to {label} (history #{hid}). "
           f"Flow is still held \u2014 Forward or Drop when ready.", "ok")
     return redirect(target)
@@ -285,6 +305,7 @@ def set_intercept_config():
         "exclude_host_regex", "").strip() or DEFAULT_NOISE_HOST_REGEX)
     exclude_path_regex = (request.form.get(
         "exclude_path_regex", "").strip() or DEFAULT_NOISE_PATH_REGEX)
+    restrict_to_scope = request.form.get("restrict_to_scope") == "1"
     # L-12: validate every operator-supplied regex at save time.
     # Falling through to the runtime would only suppress the bad
     # pattern silently (safe_search returns None on regex.error), so
@@ -311,6 +332,7 @@ def set_intercept_config():
         path_regex=path_regex,
         exclude_host_regex=exclude_host_regex,
         exclude_path_regex=exclude_path_regex,
+        restrict_to_scope=restrict_to_scope,
     )
     g.proxy.set_intercept_config(cfg)
     g.project.set_state("intercept_config", json.dumps(cfg.to_dict()))
@@ -338,7 +360,8 @@ def show_intercept(iid: int):
     return render_template("proxy/intercept_detail.html", item=item,
                            body_text=body_text,
                            find_body=find_body,
-                           send_targets=_available_targets(item))
+                           send_targets=_available_targets(item),
+                           plugin_apps_available=_plugin_apps_available())
 
 
 @bp.route("/intercept/<int:iid>/drop", methods=["POST"])

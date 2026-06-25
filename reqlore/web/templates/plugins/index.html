@@ -94,4 +94,41 @@ def scanner_rules():
 </pre>
   {% endif %}
 </section>
+
+<section aria-labelledby="apps-h">
+  <h2 id="apps-h">Plugin Apps</h2>
+  <p>Standalone plugin tools (fuzzers, recon helpers, custom scanners).
+     Each one has its own settings form, Run / Stop buttons, live log,
+     results table and findings hook. Disabled plugins are hidden
+     until you re-enable them above.</p>
+  {% if plugin_apps %}
+    <table>
+      <caption>{{ plugin_apps|length }} plugin app(s) available</caption>
+      <thead>
+        <tr>
+          <th scope="col">Name</th>
+          <th scope="col">Slug</th>
+          <th scope="col">Description</th>
+          <th scope="col">Category</th>
+          <th scope="col">Open</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in plugin_apps %}
+          <tr>
+            <th scope="row">{{ a.name }}</th>
+            <td><code>{{ a.slug }}</code></td>
+            <td>{{ a.description }}</td>
+            <td>{{ a.category }}</td>
+            <td><a href="{{ url_for('.app_detail', slug=a.slug) }}">Open</a></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No plugin apps registered yet. A plugin app is a module-level
+       <code>PLUGIN_APP = sdk.make_app(...)</code> with an
+       <code>@PLUGIN_APP.runner</code> decorated function.</p>
+  {% endif %}
+</section>
 {% endblock %}

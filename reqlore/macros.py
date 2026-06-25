@@ -26,6 +26,19 @@ from .engines import Request, Response
 from .engines import httpx_engine
 
 
+# Recognised values for ``MacroStep.step_type``. The empty string is the
+# default (untyped step). The other values let auth-flow active checks
+# locate specific stages of the macro without name-guessing:
+#   - ``"login"``     -- the step that submits credentials and issues
+#                        the first session cookie. Required by the
+#                        ``SessionFixationActiveCheck``.
+#   - ``"mfa"``       -- the step that submits a second-factor code.
+#                        Required by the ``MFABypassCheck``.
+# Plugin authors may use additional values; the dataclass does not
+# enforce membership in this set so future checks can extend it.
+KNOWN_STEP_TYPES: tuple[str, ...] = ("", "login", "mfa")
+
+
 @dataclass
 class MacroStep:
     name: str
@@ -36,6 +49,10 @@ class MacroStep:
     capture: dict[str, dict] = field(default_factory=dict)
     timeout_s: float = 10.0
     follow_redirects: bool = True
+    # Phase 26 -- machine-readable tag describing the role of this step
+    # in the auth flow. See ``KNOWN_STEP_TYPES`` above. Defaults to the
+    # empty string so existing macros and tests round-trip unchanged.
+    step_type: str = ""
 
     @classmethod
     def from_dict(cls, d: dict) -> "MacroStep":
@@ -48,6 +65,7 @@ class MacroStep:
             capture=dict(d.get("capture") or {}),
             timeout_s=float(d.get("timeout_s", 10.0)),
             follow_redirects=bool(d.get("follow_redirects", True)),
+            step_type=str(d.get("step_type", "") or ""),
         )
 
     def to_dict(self) -> dict:
@@ -55,6 +73,7 @@ class MacroStep:
             "name": self.name, "method": self.method, "url": self.url,
             "headers": self.headers, "body": self.body, "capture": self.capture,
             "timeout_s": self.timeout_s, "follow_redirects": self.follow_redirects,
+            "step_type": self.step_type,
         }
 
 

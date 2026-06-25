@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Auth Matrix runs{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('.index') }}">&larr; Auth Matrix</a>
+</nav>
+<h1>Runs</h1>
+<p><a href="{{ url_for('.runs_new') }}">New active run…</a></p>
+
+{% if runs %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Mode</th>
+        <th scope="col">Label</th>
+        <th scope="col">Status</th>
+        <th scope="col">Progress</th>
+        <th scope="col">Bypass</th>
+        <th scope="col">Status-only</th>
+        <th scope="col">Errors</th>
+        <th scope="col">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+        <tr>
+          <th scope="row">
+            <a href="{{ url_for('.runs_detail', rid=r.id) }}">#{{ r.id }}</a>
+          </th>
+          <td>{{ r.mode }}</td>
+          <td>{{ r.label }}</td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.progress_done }} / {{ r.progress_total }}</td>
+          <td>{{ r.verdict_counts.get('bypass-suspect', 0) }}</td>
+          <td>{{ r.verdict_counts.get('denied-status-only', 0) }}</td>
+          <td>{{ r.verdict_counts.get('error', 0) }}</td>
+          <td>
+            <form method="post" action="{{ url_for('.runs_delete', rid=r.id) }}" class="inline"
+                  onsubmit="return confirm('Delete run #{{ r.id }} and all its cells?');">
+              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+              <button type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No runs yet.</p>
+{% endif %}
+{% endblock %}

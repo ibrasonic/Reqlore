@@ -138,6 +138,109 @@ class ActiveOptions:
     # because it spins up a headless browser per probe, which is
     # slow and pulls in a heavy optional dep.
     allow_dom_xss_probes: bool = False
+    # Phase 2 (Burp-parity plan) — coarse intensity filter that runs
+    # *in addition to* ``enabled_checks``. When ``enabled_checks`` is
+    # set, it wins (explicit selection bypasses intensity). When it is
+    # ``None``, each check is gated by its
+    # ``RuleMeta.intensity`` membership in this set. ``"intrusive"``
+    # is opt-in by default; the route layer additionally requires an
+    # explicit confirm form field before constructing an
+    # ``ActiveOptions`` with it.
+    intensity_levels: frozenset[str] = field(
+        default_factory=lambda: frozenset({"light", "medium"})
+    )
+    # Phase 5 — per-row insertion-point cap. The unified insertion-point
+    # engine (``reqlore.scanner.insertion_points``) yields one
+    # :class:`InsertionPoint` per mutable position in a request; the
+    # cap below prevents pathological corpora (10k JSON keys, 500
+    # cookies) from exploding the probe budget. Enforced by
+    # :class:`InsertionPointCache` rather than at iteration time so
+    # callers can still ``len()`` the full list for dry-run estimates.
+    max_insertion_points_per_row: int = 200
+    # Phase 9 — global wall-clock cap on a ``run_on_project`` call,
+    # in seconds. ``None`` disables the cap (used by the ``deep``
+    # preset). Enforced between rows so a long-running row finishes
+    # cleanly rather than being torn down mid-probe.
+    wall_clock_seconds: float | None = None
+    # Phase 10 — authenticated-scan session manager. When set, the
+    # send factory injects session cookies + bearer headers into
+    # every outgoing probe, harvests rotated cookies from each
+    # response, periodically validity-probes the session, and
+    # re-runs the login macro on expiry. Typed as ``Any`` to avoid
+    # importing :mod:`reqlore.scanner.auth_session` here — that
+    # module imports from :mod:`reqlore.engines` which in turn
+    # pulls active.py back transitively in some test paths.
+    auth_session: Any | None = None
+    # Phase 12 — Burp-style audit prioritisation. When ``True`` the
+    # ``run_on_project`` loop iterates rows in attack-surface order
+    # (rows that introduce the most novel insertion points + the
+    # most "interesting" methods / content types / auth requirements
+    # go first) instead of raw id-DESC. Off by default so existing
+    # tests keep their FIFO assumptions. ``surface_weight`` and
+    # ``interest_weight`` blend the two axes (Burp's 80/20 split).
+    prioritise: bool = False
+    surface_weight: float = 0.8
+    interest_weight: float = 0.2
+    # Phase 12 — when ``prioritise=True``, recompute scores after
+    # each picked row so a row whose surface is consumed by an
+    # earlier pick drops in rank. O(n^2) — leave off for large
+    # corpora (cap N at ~50 for the incremental mode).
+    prioritise_recompute_after_row: bool = False
+    # Phase 13 — JavaScript analysis pipeline gate. Normally set by
+    # the scan preset (Phase 9); see
+    # :mod:`reqlore.scanner.js_pipeline` for the mode semantics.
+    # ``"off"`` keeps the historical behaviour (JS analysers must
+    # be invoked manually) so every existing call-site is
+    # unaffected.
+    js_analysis_mode: str = "off"
+
+    def __post_init__(self) -> None:
+        # Validate the intensity set so a typo (e.g. ``"intense"``)
+        # surfaces immediately instead of silently skipping every
+        # check. Cast to frozenset so callers can pass any iterable.
+        from .rules import INTENSITIES
+        levels = frozenset(self.intensity_levels)
+        bad = levels - set(INTENSITIES)
+        if bad:
+            raise ValueError(
+                f"ActiveOptions.intensity_levels contains unknown "
+                f"tier(s) {sorted(bad)!r}; valid: {INTENSITIES}"
+            )
+        if not levels:
+            raise ValueError(
+                "ActiveOptions.intensity_levels must contain at "
+                "least one tier; got empty set"
+            )
+        object.__setattr__(self, "intensity_levels", levels)
+        # Phase 12 — weight validation. We catch the obvious mistakes
+        # (negatives, both-zero) here rather than at run_on_project
+        # time so a misconfigured options object can't ship a scan
+        # that produces an undefined ordering.
+        if self.surface_weight < 0 or self.interest_weight < 0:
+            raise ValueError(
+                "ActiveOptions surface_weight / interest_weight must "
+                "be non-negative; got "
+                f"surface={self.surface_weight}, "
+                f"interest={self.interest_weight}"
+            )
+        if (self.prioritise
+                and self.surface_weight == 0
+                and self.interest_weight == 0):
+            raise ValueError(
+                "ActiveOptions.prioritise=True requires at least one "
+                "of surface_weight / interest_weight to be > 0"
+            )
+        # Phase 13 — validate the JS-analysis mode. Unknown values
+        # are rejected loudly here rather than silently no-op'd at
+        # scan time, mirroring the intensity-tiers validator above.
+        from .js_pipeline import JS_ANALYSIS_MODES
+        mode = (self.js_analysis_mode or "").strip().lower()
+        if mode not in JS_ANALYSIS_MODES:
+            raise ValueError(
+                "ActiveOptions.js_analysis_mode must be one of "
+                f"{JS_ANALYSIS_MODES!r}; got {self.js_analysis_mode!r}"
+            )
+        object.__setattr__(self, "js_analysis_mode", mode)
 
 
 # ---- context: parsed snapshot of a recorded history row ----
@@ -420,11 +523,104 @@ def _response_to_raw(resp: Response) -> bytes:
     return head + (resp.body or b"")
 
 
+# ---- Phase 19 helpers — timing statistics + CSRF token discovery ----
+
+def _median(values: list[int]) -> int:
+    """Median of a list of integers (millisecond samples). 0 for empty."""
+    if not values:
+        return 0
+    s = sorted(values)
+    n = len(s)
+    if n % 2 == 1:
+        return s[n // 2]
+    return (s[n // 2 - 1] + s[n // 2]) // 2
+
+
+def _mad(values: list[int], centre: int) -> int:
+    """Median Absolute Deviation around `centre`. 0 for empty."""
+    if not values:
+        return 0
+    return _median([abs(v - centre) for v in values])
+
+
+def _is_timing_anomaly(baseline_samples: list[int],
+                        probe_samples: list[int],
+                        *, mad_mult: float = 3.0,
+                        min_delta_ms: int = 50) -> bool:
+    """Robust two-sample timing comparison.
+
+    Probe median must exceed baseline median by more than ``mad_mult ×
+    MAD(baseline)`` AND by at least ``min_delta_ms``. The floor stops
+    zero-variance baselines (MAD = 0) from flagging on noise-level jitter.
+    """
+    if len(baseline_samples) < 2 or len(probe_samples) < 2:
+        return False
+    base_med = _median(baseline_samples)
+    probe_med = _median(probe_samples)
+    delta = probe_med - base_med
+    if delta < min_delta_ms:
+        return False
+    base_mad = _mad(baseline_samples, base_med)
+    threshold = max(int(mad_mult * base_mad), min_delta_ms)
+    return delta > threshold
+
+
+# CSRF token discovery — names common to Rails / Django / Laravel /
+# Spring / generic frameworks. Case-insensitive match.
+_CSRF_PARAM_NAMES: frozenset[str] = frozenset({
+    "csrf_token", "_token", "authenticity_token", "csrf",
+    "_csrf", "_csrf_token", "xsrf", "xsrf_token",
+    "csrfmiddlewaretoken",
+})
+_CSRF_HEADER_NAMES: frozenset[str] = frozenset({
+    "x-csrf-token", "x-xsrf-token", "csrf-token", "xsrf-token",
+})
+
+
+def _find_csrf_token(ctx: ActiveContext) -> tuple[str, str, str] | None:
+    """Return ``(location, key, value)`` of a CSRF token, or ``None``.
+
+    Locations: ``"form"``, ``"query"``, ``"header"``. Cookies are
+    intentionally excluded — a cookie-only token is part of the
+    double-submit pattern and removing it from the request body does
+    not exercise the server-side validation we are probing.
+    """
+    for key, val in ctx.form_pairs():
+        if key.lower() in _CSRF_PARAM_NAMES:
+            return ("form", key, val)
+    for key, val in ctx.query_pairs():
+        if key.lower() in _CSRF_PARAM_NAMES:
+            return ("query", key, val)
+    for k, v in ctx.req_headers:
+        if k.lower() in _CSRF_HEADER_NAMES:
+            return ("header", k, v)
+    return None
+
+
+# Username-shaped field names for the account-enumeration heuristic.
+_USERNAME_PARAM_NAMES: frozenset[str] = frozenset({
+    "username", "user", "email", "login", "userid", "user_id",
+    "j_username", "acct", "account",
+})
+
+
+def _find_username_field(ctx: ActiveContext) -> tuple[str, str, str] | None:
+    """Return ``(location, key, value)`` of a likely username field, or ``None``."""
+    for key, val in ctx.form_pairs():
+        if key.lower() in _USERNAME_PARAM_NAMES:
+            return ("form", key, val)
+    for key, val in ctx.query_pairs():
+        if key.lower() in _USERNAME_PARAM_NAMES:
+            return ("query", key, val)
+    return None
+
+
 # ---- individual checks ----
 
 class ReflectedXSSCheck(ActiveCheck):
     meta = RuleMeta(
         id="active:xss-reflected",
+        intensity="medium",
         title="Reflected XSS probe echoed unescaped",
         default_severity="high",
         cwe="CWE-79",
@@ -482,6 +678,7 @@ class ReflectedXSSCheck(ActiveCheck):
 class SQLiErrorCheck(ActiveCheck):
     meta = RuleMeta(
         id="active:sqli-error",
+        intensity="medium",
         title="SQL injection error message returned",
         default_severity="high",
         cwe="CWE-89",
@@ -542,6 +739,7 @@ class SQLiErrorCheck(ActiveCheck):
 class OpenRedirectCheck(ActiveCheck):
     meta = RuleMeta(
         id="active:open-redirect",
+        intensity="light",
         title="Open redirect via parameter",
         default_severity="medium",
         cwe="CWE-601",
@@ -598,6 +796,7 @@ class OpenRedirectCheck(ActiveCheck):
 class SSTICheck(ActiveCheck):
     meta = RuleMeta(
         id="active:ssti",
+        intensity="medium",
         title="Server-side template injection",
         default_severity="high",
         cwe="CWE-1336",
@@ -665,6 +864,7 @@ class SSTICheck(ActiveCheck):
 class TimeBasedOSCommandCheck(ActiveCheck):
     meta = RuleMeta(
         id="active:os-cmd-time",
+        intensity="intrusive",
         title="OS command injection (time-based)",
         default_severity="critical",
         cwe="CWE-78",
@@ -734,6 +934,7 @@ class TimeBasedOSCommandCheck(ActiveCheck):
 class JWTAlgNoneAcceptanceCheck(ActiveCheck):
     meta = RuleMeta(
         id="active:jwt-alg-none",
+        intensity="light",
         title="Server accepts JWT with alg=none",
         default_severity="critical",
         cwe="CWE-347",
@@ -801,6 +1002,7 @@ class JWTAlgNoneAcceptanceCheck(ActiveCheck):
 class PrototypePollutionCheck(ActiveCheck):
     meta = RuleMeta(
         id="active:prototype-pollution",
+        intensity="light",
         title="Prototype pollution via JSON body",
         default_severity="high",
         cwe="CWE-1321",
@@ -862,6 +1064,7 @@ class PrototypePollutionCheck(ActiveCheck):
 class GraphQLIntrospectionCheck(ActiveCheck):
     meta = RuleMeta(
         id="active:graphql-introspection",
+        intensity="light",
         title="GraphQL introspection enabled",
         default_severity="medium",
         cwe="CWE-200",
@@ -919,6 +1122,7 @@ class ReflectedHeaderXSSCheck(ActiveCheck):
     """B.2.a — reflected XSS via request headers (UA, Referer, X-FF, cookies)."""
     meta = RuleMeta(
         id="active:xss-reflected-headers",
+        intensity="medium",
         title="Reflected XSS via request header",
         default_severity="high",
         cwe="CWE-79",
@@ -1001,6 +1205,7 @@ class PathTraversalCheck(ActiveCheck):
     """B.2.b — classic Unix / Windows LFI via query / form params."""
     meta = RuleMeta(
         id="active:path-traversal-lfi",
+        intensity="medium",
         title="Path traversal / local file inclusion",
         default_severity="high",
         cwe="CWE-22",
@@ -1076,6 +1281,7 @@ class NoSQLInjectionCheck(ActiveCheck):
     """B.2.c — Mongo-style operator-injection in JSON request bodies."""
     meta = RuleMeta(
         id="active:nosqli-mongo",
+        intensity="medium",
         title="NoSQL operator injection (MongoDB)",
         default_severity="high",
         cwe="CWE-943",
@@ -1167,6 +1373,7 @@ class XXEClassicCheck(ActiveCheck):
     """B.2.d — classic XML external entity (file:// disclosure)."""
     meta = RuleMeta(
         id="active:xxe-classic",
+        intensity="medium",
         title="XML external entity (file disclosure)",
         default_severity="high",
         cwe="CWE-611",
@@ -1252,6 +1459,7 @@ class ActiveCORSCheck(ActiveCheck):
     """B.2.i — active CORS misconfig: arbitrary or null origin reflected with creds."""
     meta = RuleMeta(
         id="active:cors-misconfig-extended",
+        intensity="light",
         title="CORS reflects arbitrary origin with credentials",
         default_severity="high",
         cwe="CWE-942",
@@ -1352,6 +1560,7 @@ class OASTSSRFCheck(ActiveCheck):
                    "server-side fetch is recorded by the local OAST receiver.")
     meta = RuleMeta(
         id="active:oast-ssrf",
+        intensity="intrusive",
         title="Out-of-band callback triggered (likely SSRF)",
         default_severity="high",
         cwe="CWE-918",
@@ -1445,6 +1654,7 @@ class ForcedBrowsingCheck(ActiveCheck):
                    "on the same host and flag any that return 200.")
     meta = RuleMeta(
         id="active:forced-browsing",
+        intensity="medium",
         title="Sensitive path exposed",
         default_severity="high",
         cwe="CWE-538",
@@ -1543,6 +1753,7 @@ class DeserialisationReflectCheck(ActiveCheck):
                    "leak a deserialiser stack trace.")
     meta = RuleMeta(
         id="active:deserialisation-reflect",
+        intensity="medium",
         title="Insecure deserialisation hint",
         default_severity="high",
         cwe="CWE-502",
@@ -1653,6 +1864,7 @@ class WebCacheDeceptionCheck(ActiveCheck):
                    "personal body back from the cache.")
     meta = RuleMeta(
         id="active:web-cache-deception",
+        intensity="medium",
         title="Web cache deception",
         default_severity="high",
         cwe="CWE-525",
@@ -1776,6 +1988,7 @@ class OAuthRedirectURICheck(ActiveCheck):
                    "redirect to it.")
     meta = RuleMeta(
         id="active:oauth-redirect-uri",
+        intensity="light",
         title="Open redirect via OAuth redirect_uri",
         default_severity="medium",
         cwe="CWE-601",
@@ -1919,6 +2132,7 @@ class HTTPSmugglingCheck(ActiveCheck):
                    "default; enable via the run-page Custom preset.")
     meta = RuleMeta(
         id="active:http-smuggling",
+        intensity="intrusive",
         title="Likely HTTP request smuggling",
         default_severity="critical",
         cwe="CWE-444",
@@ -2017,6 +2231,7 @@ class GraphQLActiveCheck(ActiveCheck):
                    "field-suggestion hints even with introspection off.")
     meta = RuleMeta(
         id="active:graphql-active",
+        intensity="medium",
         title="GraphQL hardening gap",
         default_severity="medium",
         cwe="CWE-200",
@@ -2245,6 +2460,7 @@ class ActiveTLSCheck(ActiveCheck):
                    "hostname mismatch.")
     meta = RuleMeta(
         id="active:tls-active",
+        intensity="medium",
         title="TLS configuration weakness",
         default_severity="medium",
         cwe="CWE-326",
@@ -2432,6 +2648,7 @@ class SubdomainTakeoverCheck(ActiveCheck):
                    "GitHub Pages / Heroku / S3 / Azure / Fastly hosts.")
     meta = RuleMeta(
         id="active:subdomain-takeover",
+        intensity="medium",
         title="Subdomain takeover candidate",
         default_severity="high",
         cwe="CWE-350",
@@ -2539,6 +2756,7 @@ class DefaultCredsSprayCheck(ActiveCheck):
                    "default; enable via the run-page Custom preset.")
     meta = RuleMeta(
         id="active:default-creds",
+        intensity="light",
         title="Default credentials accepted",
         default_severity="critical",
         cwe="CWE-521",
@@ -2818,6 +3036,7 @@ class StoredXSSCheck(ActiveCheck):
 
     meta = RuleMeta(
         id="active:xss-stored",
+        intensity="intrusive",
         title="Stored XSS marker reflected on re-fetch",
         default_severity="high",
         cwe="CWE-79",
@@ -2913,6 +3132,7 @@ class IDORAltIdentityCheck(ActiveCheck):
 
     meta = RuleMeta(
         id="active:idor-alt-identity",
+        intensity="intrusive",
         title="Insecure direct object reference (alt identity)",
         default_severity="high",
         cwe="CWE-639",
@@ -3013,6 +3233,7 @@ class RaceConditionCheck(ActiveCheck):
 
     meta = RuleMeta(
         id="active:race-condition",
+        intensity="intrusive",
         title="Race condition: parallel duplicates accepted",
         default_severity="high",
         cwe="CWE-362",
@@ -3154,6 +3375,7 @@ class CloudBlobMisconfigCheck(ActiveCheck):
 
     meta = RuleMeta(
         id="active:cloud-blob-misconfig",
+        intensity="light",
         title="Cloud blob storage allows anonymous listing",
         default_severity="high",
         cwe="CWE-200",
@@ -3289,6 +3511,7 @@ class DOMXSSCheck(ActiveCheck):
 
     meta = RuleMeta(
         id="active:xss-dom",
+        intensity="intrusive",
         title="DOM XSS sink reached by URL-controlled marker",
         default_severity="high",
         cwe="CWE-79",
@@ -3422,6 +3645,686 @@ BUILTIN_ACTIVE_CHECKS.append(CloudBlobMisconfigCheck())
 BUILTIN_ACTIVE_CHECKS.append(DOMXSSCheck())
 
 
+# ---- Phase 19 — auth-flow + CSRF active checks ----
+
+class AccountEnumTimingCheck(ActiveCheck):
+    """Detect timing-based account enumeration on login-shaped endpoints.
+
+    Heuristic: when the baseline request carries a username-shaped field
+    (``username`` / ``user`` / ``email`` / ``login`` / ...), send N
+    "user-exists" probes (replaying the baseline username) and N
+    "user-absent" probes (a random non-existent variant) and compare
+    medians. A robust median-of-N + MAD threshold (see
+    :func:`_is_timing_anomaly`) keeps false positives low on noisy
+    networks.
+
+    Opt-in: only runs when ``ActiveOptions.enabled_checks`` includes
+    ``"auth-enum-timing"`` or ``intensity_levels`` includes
+    ``"intrusive"``.
+    """
+    meta = RuleMeta(
+        id="active:auth-enum-timing",
+        intensity="intrusive",
+        title="Account enumeration via response-time delta",
+        default_severity="medium",
+        cwe="CWE-204",
+        owasp="A07:2021-Identification and Authentication Failures",
+        description=(
+            "Compare response times for known-existing vs likely-absent "
+            "usernames on a login-shaped endpoint. A consistent delta "
+            "leaks valid account names to unauthenticated attackers."
+        ),
+        remediation=(
+            "Ensure the login endpoint takes the same time regardless of "
+            "whether the supplied account exists; in particular, always "
+            "compute the password hash (or a dummy hash) and emit the "
+            "same generic error message."
+        ),
+        tags=("auth", "enumeration", "timing"),
+    )
+    name = "auth-enum-timing"
+    description = (
+        "Time login probes for an existing vs absent username and flag a "
+        "robust median delta as account enumeration."
+    )
+    SAMPLES_PER_SIDE = 7
+    MIN_DELTA_MS = 50
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        target = _find_username_field(ctx)
+        if target is None:
+            return
+        location, key, val = target
+
+        # Only state-changing verbs; GET-based login forms are rare and
+        # the baseline timing is dominated by a redirect we cannot
+        # control here.
+        if ctx.method.upper() not in {"POST", "PUT"}:
+            return
+
+        # One logical check per (row, target).
+        if not ctx.claim_probe(opts, rule_id, location, key):
+            return
+
+        absent_marker = f"{val or 'reqlore'}_nx9k2x_zzz"
+        exists_req = _mutated(ctx, key, val or "", location)
+        absent_req = _mutated(ctx, key, absent_marker, location)
+
+        base_samples: list[int] = []
+        probe_samples: list[int] = []
+        for _ in range(self.SAMPLES_PER_SIDE):
+            try:
+                pr_e = send(exists_req)
+                base_samples.append(int(pr_e.elapsed_ms))
+            except Exception:  # noqa: BLE001 — never block a scan
+                return
+            try:
+                pr_a = send(absent_req)
+                probe_samples.append(int(pr_a.elapsed_ms))
+            except Exception:  # noqa: BLE001
+                return
+
+        # Bidirectional: an "absent slower" delta is the classic Django
+        # / Rails default-hash pattern; "exists slower" is the bcrypt
+        # path. Flag whichever side is consistently slower.
+        if _is_timing_anomaly(base_samples, probe_samples,
+                              min_delta_ms=self.MIN_DELTA_MS):
+            slower = "absent"
+            fast_med, slow_med = (_median(base_samples),
+                                  _median(probe_samples))
+        elif _is_timing_anomaly(probe_samples, base_samples,
+                                min_delta_ms=self.MIN_DELTA_MS):
+            slower = "existing"
+            fast_med, slow_med = (_median(probe_samples),
+                                  _median(base_samples))
+        else:
+            return
+
+        yield Finding(
+            severity="medium",
+            title="Account enumeration via response-time delta",
+            description=(
+                "The login endpoint at {u} responds noticeably slower for "
+                "{slower} usernames than the other case (median {slow} ms "
+                "vs {fast} ms across {n} samples each side). An attacker "
+                "can use this timing oracle to enumerate valid accounts "
+                "without ever needing a valid password."
+            ).format(u=ctx.full_url, slower=slower,
+                     fast=fast_med, slow=slow_med,
+                     n=self.SAMPLES_PER_SIDE),
+            remediation=(
+                "Make the login path constant-time with respect to whether "
+                "the supplied account exists. Always run the password hash "
+                "(or a dummy hash on the absent path) and return the same "
+                "generic error message."
+            ),
+            cwe="CWE-204",
+            owasp="A07:2021-Identification and Authentication Failures",
+            host=ctx.host, url=ctx.full_url,
+            request_id=ctx.history_id,
+            payload=f"{key}={absent_marker} vs {key}={val}",
+            evidence=(
+                f"{location} param '{key}': baseline median "
+                f"{_median(base_samples)} ms, absent median "
+                f"{_median(probe_samples)} ms over "
+                f"{self.SAMPLES_PER_SIDE} samples each"
+            ),
+            confidence="tentative",
+        )
+
+
+class CSRFTokenValidationCheck(ActiveCheck):
+    """Probe whether the server actually validates the CSRF token.
+
+    For each state-changing request that carries a recognisable CSRF
+    token (``csrf_token`` / ``_token`` / ``authenticity_token`` /
+    ``X-CSRF-Token`` / ...) the check issues two probes:
+
+    1. Token removed entirely.
+    2. Token replaced with a syntactically plausible but invalid value.
+
+    Either probe returning a 2xx response means the server did not
+    enforce the token. The check skips silently when the original
+    response was already non-2xx (we cannot tell anti-CSRF from any
+    other rejection) or when the method is not state-changing.
+    """
+    meta = RuleMeta(
+        id="active:csrf-token-not-validated",
+        intensity="intrusive",
+        title="CSRF token not validated by server",
+        default_severity="high",
+        cwe="CWE-352",
+        owasp="A01:2021-Broken Access Control",
+        description=(
+            "Re-send the recorded state-changing request with the CSRF "
+            "token removed and again with a mangled value. A 2xx response "
+            "in either case indicates the server accepts the request "
+            "without a valid token."
+        ),
+        remediation=(
+            "Reject every state-changing request whose CSRF token is "
+            "missing, malformed, or does not match the session-bound "
+            "expected value. Use the framework's built-in CSRF middleware "
+            "rather than rolling a custom check."
+        ),
+        tags=("csrf", "access-control"),
+    )
+    name = "csrf-token-not-validated"
+    description = (
+        "Send state-changing requests with the CSRF token removed and "
+        "mangled; flag a 2xx response."
+    )
+    MANGLED_VALUE = "reqlore_invalid_csrf_zzz"
+
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        if ctx.method.upper() not in {"POST", "PUT", "PATCH", "DELETE"}:
+            return
+        if not (200 <= ctx.resp_status < 300):
+            return
+
+        found = _find_csrf_token(ctx)
+        if found is None:
+            return
+        location, key, original = found
+        if not original:
+            return
+
+        if not ctx.claim_probe(opts, rule_id, location, key):
+            return
+
+        # Probe 1 — token mangled (kept the same shape, wrong value).
+        if location == "header":
+            mangled_req = _mutated_header(ctx, key, self.MANGLED_VALUE)
+        else:
+            mangled_req = _mutated(ctx, key, self.MANGLED_VALUE, location)
+        try:
+            pr_mangled = send(mangled_req)
+        except Exception:  # noqa: BLE001
+            return
+        mangled_ok = 200 <= pr_mangled.response.status < 300
+
+        # Probe 2 — token removed entirely.
+        if location == "header":
+            # Drop the header by filtering it out of the scrubbed list.
+            headers = [(k, v) for k, v in _scrub_headers(ctx.req_headers)
+                       if k.lower() != key.lower()]
+            removed_req = Request(method=ctx.method, url=ctx.full_url,
+                                  headers=headers, body=ctx.req_body)
+        elif location == "form":
+            removed_req = _mutated(ctx, key, "", "form")
+        else:
+            removed_req = _mutated(ctx, key, "", "query")
+        try:
+            pr_removed = send(removed_req)
+        except Exception:  # noqa: BLE001
+            return
+        removed_ok = 200 <= pr_removed.response.status < 300
+
+        if not (mangled_ok or removed_ok):
+            return
+
+        which = []
+        if removed_ok:
+            which.append(f"removed (status {pr_removed.response.status})")
+        if mangled_ok:
+            which.append(f"mangled (status {pr_mangled.response.status})")
+        yield Finding(
+            severity="high",
+            title="CSRF token not validated by server",
+            description=(
+                "The {l} CSRF token '{k}' on {u} is not validated: the "
+                "server accepted the request when the token was {w}. An "
+                "attacker can therefore forge this request from a victim's "
+                "browser without needing the real token value."
+            ).format(l=location, k=key, u=ctx.full_url,
+                     w=" and ".join(which)),
+            remediation=(
+                "Reject state-changing requests whose CSRF token is "
+                "missing or does not match the session-bound expected "
+                "value. Use the framework's built-in anti-CSRF middleware."
+            ),
+            cwe="CWE-352",
+            owasp="A01:2021-Broken Access Control",
+            host=ctx.host, url=ctx.full_url,
+            request_id=ctx.history_id,
+            payload=f"{location}:{key} removed/mangled",
+            evidence=(
+                f"baseline status {ctx.resp_status}; "
+                f"removed -> {pr_removed.response.status}; "
+                f"mangled -> {pr_mangled.response.status}"
+            ),
+            confidence="firm",
+        )
+
+
+BUILTIN_ACTIVE_CHECKS.append(AccountEnumTimingCheck())
+BUILTIN_ACTIVE_CHECKS.append(CSRFTokenValidationCheck())
+
+
+# ---- Phase 26 -- auth-flow active checks built on MacroStep.step_type ----
+
+
+def _macro_from_opts(opts: "ActiveOptions"):
+    """Return the auth macro attached to opts, or None.
+
+    Pulled out so both Phase 26 checks share the gate logic and so a
+    unit test can drive it without standing up the full scanner.
+    """
+    auth = getattr(opts, "auth_session", None)
+    if auth is None:
+        return None
+    macro = getattr(auth, "macro", None)
+    if macro is None or not getattr(macro, "steps", None):
+        return None
+    return macro
+
+
+def _raw_sender_from(send):
+    """Return the unwrapped raw sender attached to ``send`` if any.
+
+    The active scanner stashes its ``_raw_send`` closure on the
+    auth-wrapped ``_send`` (see ``_send_factory``); falling back to
+    ``send`` itself keeps unit tests that pass a bare callable
+    working unchanged.
+    """
+    raw = getattr(send, "raw", None)
+    return raw if callable(raw) else send
+
+
+def _macro_step_adapter(raw_send):
+    """Wrap a ``(Request) -> ProbeResult-or-Response`` callable so the
+    macro runner sees a ``(Request) -> Response`` callable."""
+    def adapter(req):
+        try:
+            result = raw_send(req)
+        except Exception:  # noqa: BLE001 -- never block a scan
+            return Response(status=0, headers=[], body=b"",
+                            engine="reqlore-macro-replay",
+                            error="send-failed")
+        # If a ProbeResult-shaped object came back (real scanner),
+        # unwrap to the Response. A bare Response (test fakes /
+        # raw_send factory) passes through unchanged.
+        resp = getattr(result, "response", None)
+        return resp if resp is not None else result
+    return adapter
+
+
+class MFABypassCheck(ActiveCheck):
+    """Detect whether MFA can be bypassed by skipping the MFA macro step.
+
+    Re-runs the configured auth macro with every step tagged
+    ``step_type="mfa"`` removed, then inspects whether a subsequent
+    verification step still returns 2xx. When it does, the MFA step
+    is decorative -- the server hands out a full authenticated
+    session after just the password step, which an attacker who
+    captures the victim's credentials can replay without ever
+    completing the second factor.
+
+    Gates:
+        * ``ActiveOptions.auth_session`` is configured.
+        * The macro has at least one step with ``step_type="mfa"``.
+        * The macro has at least one step AFTER the last MFA step
+          (the "verification" step whose status decides the verdict).
+        * The check has not already run against this ``auth_session``
+          instance (one-shot per scan, sentinel attribute).
+    """
+    meta = RuleMeta(
+        id="active:mfa-bypass",
+        intensity="intrusive",
+        title="MFA bypass: server issues authenticated session "
+              "without the MFA step",
+        default_severity="high",
+        cwe="CWE-308",
+        owasp="A07:2021-Identification and Authentication Failures",
+        description=(
+            "Re-runs the configured auth macro with every step "
+            "tagged step_type=\"mfa\" removed and observes whether "
+            "the verification step still succeeds (2xx). When it "
+            "does, an attacker who captures the password alone can "
+            "obtain an authenticated session without ever completing "
+            "the second factor."
+        ),
+        remediation=(
+            "Treat MFA as an atomic part of authentication: do not "
+            "issue an authenticated session cookie until both the "
+            "password and the MFA factor have been verified. Reject "
+            "any subsequent authenticated request whose session was "
+            "issued mid-flow."
+        ),
+        tags=("auth", "mfa", "session"),
+    )
+    name = "mfa-bypass"
+    description = (
+        "Re-run the auth macro without its MFA-tagged steps and "
+        "verify whether a later step still authenticates."
+    )
+
+    _SENTINEL = "_reqlore_mfa_bypass_checked"
+
+    def run(self, ctx, send, *, opts: "ActiveOptions | None" = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        macro = _macro_from_opts(opts)
+        if macro is None:
+            return
+
+        steps = list(macro.steps)
+        mfa_indices = [i for i, s in enumerate(steps)
+                       if getattr(s, "step_type", "") == "mfa"]
+        if not mfa_indices:
+            return
+        # Need at least one step AFTER the last MFA step to serve as
+        # the verification probe; otherwise we cannot tell bypass from
+        # "the macro stops at MFA".
+        if mfa_indices[-1] >= len(steps) - 1:
+            return
+
+        # One-shot per AuthSession: across many rows in the same scan
+        # the answer is identical, so only the first row pays the
+        # cost. Sentinel is best-effort -- read-only auth objects
+        # simply re-fire each row, which is correct but noisier.
+        auth = opts.auth_session
+        if getattr(auth, self._SENTINEL, False):
+            return
+        try:
+            setattr(auth, self._SENTINEL, True)
+        except Exception:  # noqa: BLE001
+            pass
+
+        if not ctx.claim_probe(opts, rule_id, "macro", "mfa"):
+            return
+
+        from ..macros import Macro as _Macro
+        from ..macros import run as _run_macro
+
+        no_mfa_steps = [s for s in steps
+                        if getattr(s, "step_type", "") != "mfa"]
+        partial_macro = _Macro(
+            name=getattr(macro, "name", ""),
+            base_headers=dict(getattr(macro, "base_headers", {}) or {}),
+            variables=dict(getattr(macro, "variables", {}) or {}),
+            steps=no_mfa_steps,
+        )
+
+        adapter = _macro_step_adapter(_raw_sender_from(send))
+        try:
+            run_result = _run_macro(partial_macro, sender=adapter)
+        except Exception:  # noqa: BLE001
+            return
+
+        if not run_result.steps:
+            return
+        verify = run_result.steps[-1]
+        if verify.error:
+            return
+        if not (200 <= verify.status < 300):
+            return
+
+        verify_step = no_mfa_steps[-1]
+        verify_url = verify.request_url or getattr(verify_step, "url", "") \
+            or ctx.full_url
+        yield Finding(
+            severity="high",
+            title="MFA bypass: server issues authenticated session "
+                  "without the MFA step",
+            description=(
+                "After re-running the configured auth macro with the "
+                "{n} step(s) tagged step_type=\"mfa\" removed, the "
+                "verification step '{vs}' returned {s} from {u}. "
+                "The server therefore hands out a full authenticated "
+                "session after just the password step -- an attacker "
+                "who captures the password alone can replay the same "
+                "partial flow and pivot straight to the protected "
+                "endpoints."
+            ).format(
+                n=len(mfa_indices), vs=verify.step,
+                s=verify.status, u=verify_url,
+            ),
+            remediation=(
+                "Treat MFA as atomic: do not issue an authenticated "
+                "session cookie until both the password and the MFA "
+                "factor have been verified. Reject subsequent "
+                "authenticated requests whose session was issued "
+                "mid-flow."
+            ),
+            cwe="CWE-308",
+            owasp="A07:2021-Identification and Authentication Failures",
+            host=ctx.host, url=verify_url,
+            request_id=ctx.history_id,
+            payload=(
+                f"removed {len(mfa_indices)} step(s) with "
+                f"step_type=mfa from auth macro"
+            ),
+            evidence=(
+                f"verification step '{verify.step}' returned "
+                f"{verify.status} (no error) after running the "
+                f"macro without its MFA step(s)"
+            ),
+            confidence="firm",
+        )
+
+
+class SessionFixationActiveCheck(ActiveCheck):
+    """Detect whether the server rotates the session cookie on login.
+
+    Re-runs the macro's login step (the step tagged ``step_type=
+    "login"``) with an attacker-chosen value pre-set on the captured
+    session-cookie name(s), then inspects the resulting Set-Cookie
+    header(s):
+
+        * If the post-login Set-Cookie carries our injected value,
+          the server echoed it -- confirmed fixation.
+        * If no Set-Cookie at all was issued, the server kept the
+          pre-set value as the active session -- also fixation.
+        * If a fresh server-generated value came back, the server
+          rotates the session on login -- safe.
+
+    The captured-cookie names are inferred from the login step's
+    ``capture`` spec (any capture with
+    ``{"source": "header", "name": "Set-Cookie"}``), so the check
+    needs no extra configuration when the macro already follows
+    the normal convention.
+    """
+    meta = RuleMeta(
+        id="active:session-fixation",
+        intensity="intrusive",
+        title="Session fixation: server does not rotate session "
+              "cookie on login",
+        default_severity="high",
+        cwe="CWE-384",
+        owasp="A07:2021-Identification and Authentication Failures",
+        description=(
+            "Pre-set a session cookie before invoking the login step "
+            "of the configured auth macro and observe whether the "
+            "server issues a fresh session identifier. If the "
+            "post-login cookie matches the attacker-supplied value "
+            "(or is absent), the server is vulnerable to session "
+            "fixation."
+        ),
+        remediation=(
+            "Issue a fresh session identifier on every successful "
+            "login. Most frameworks expose this as "
+            "session.regenerate_id() / request.session.cycle_key() / "
+            "session.regenerate() -- combine with the Secure, "
+            "HttpOnly, and SameSite cookie flags."
+        ),
+        tags=("auth", "session", "fixation"),
+    )
+    name = "session-fixation"
+    description = (
+        "Pre-set a session cookie before the login step and check "
+        "whether the server rotates it."
+    )
+
+    FIXATION_VALUE = "reqlore_fixated_session_zzz"
+    _SENTINEL = "_reqlore_session_fixation_checked"
+
+    def run(self, ctx, send, *, opts: "ActiveOptions | None" = None):
+        opts = opts or ActiveOptions()
+        rule_id = self.meta.id
+
+        macro = _macro_from_opts(opts)
+        if macro is None:
+            return
+
+        steps = list(macro.steps)
+        login_idx = next(
+            (i for i, s in enumerate(steps)
+             if getattr(s, "step_type", "") == "login"),
+            -1,
+        )
+        if login_idx < 0:
+            return
+        login_step = steps[login_idx]
+
+        cookie_names: list[str] = []
+        for var, spec in (getattr(login_step, "capture", {}) or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            src = (spec.get("source") or "").lower()
+            name = (spec.get("name") or "").lower()
+            if src == "header" and name == "set-cookie":
+                cookie_names.append(var)
+        if not cookie_names:
+            return
+
+        auth = opts.auth_session
+        if getattr(auth, self._SENTINEL, False):
+            return
+        try:
+            setattr(auth, self._SENTINEL, True)
+        except Exception:  # noqa: BLE001
+            pass
+
+        if not ctx.claim_probe(opts, rule_id, "macro", "login"):
+            return
+
+        from ..macros import Macro as _Macro
+        from ..macros import MacroStep as _MacroStep
+        from ..macros import run as _run_macro
+
+        injected_cookie = "; ".join(
+            f"{n}={self.FIXATION_VALUE}" for n in cookie_names
+        )
+        fixated_steps: list = []
+        for i, s in enumerate(steps):
+            if i != login_idx:
+                fixated_steps.append(s)
+                continue
+            headers = dict(getattr(s, "headers", {}) or {})
+            existing = ""
+            existing_key = None
+            for k, v in list(headers.items()):
+                if k.lower() == "cookie":
+                    existing_key = k
+                    existing = v or ""
+                    break
+            if existing_key is not None:
+                headers.pop(existing_key, None)
+            headers["Cookie"] = (
+                f"{existing}; {injected_cookie}" if existing else injected_cookie
+            )
+            fixated_steps.append(_MacroStep(
+                name=s.name, method=s.method, url=s.url,
+                headers=headers, body=s.body,
+                capture=dict(getattr(s, "capture", {}) or {}),
+                timeout_s=getattr(s, "timeout_s", 10.0),
+                follow_redirects=getattr(s, "follow_redirects", True),
+                step_type=getattr(s, "step_type", ""),
+            ))
+
+        fixated_macro = _Macro(
+            name=getattr(macro, "name", ""),
+            base_headers=dict(getattr(macro, "base_headers", {}) or {}),
+            variables=dict(getattr(macro, "variables", {}) or {}),
+            steps=fixated_steps,
+        )
+
+        adapter = _macro_step_adapter(_raw_sender_from(send))
+        try:
+            run_result = _run_macro(fixated_macro, sender=adapter)
+        except Exception:  # noqa: BLE001
+            return
+
+        login_result = next(
+            (sr for sr in run_result.steps if sr.step == login_step.name),
+            None,
+        )
+        if login_result is None:
+            return
+        if login_result.error:
+            return
+        # Only act on a successful login -- a 4xx/5xx tells us the
+        # server rejected our pre-set cookie outright, which is the
+        # safe behaviour.
+        if not (200 <= login_result.status < 400):
+            return
+
+        captured = login_result.captured or {}
+        fixation_outcomes: list[tuple[str, str]] = []
+        for var in cookie_names:
+            value = (captured.get(var) or "").strip()
+            if not value:
+                fixation_outcomes.append((var, "not-rotated"))
+            elif self.FIXATION_VALUE in value:
+                fixation_outcomes.append((var, "echoed"))
+            # else: server returned a fresh cookie -- safe.
+
+        if not fixation_outcomes:
+            return
+
+        modes = ", ".join(f"{n} ({mode})" for n, mode in fixation_outcomes)
+        yield Finding(
+            severity="high",
+            title="Session fixation: server does not rotate session "
+                  "cookie on login",
+            description=(
+                "After pre-setting the cookie(s) [{names}] to a known "
+                "attacker value, the login step on {u} did not rotate "
+                "the session identifier: {modes}. An attacker who can "
+                "fix a victim's session cookie (via XSS, a sibling "
+                "subdomain, or a meta-refresh) can therefore log into "
+                "the victim's authenticated session by sharing the "
+                "fixed value."
+            ).format(
+                names=", ".join(cookie_names),
+                u=login_step.url,
+                modes=modes,
+            ),
+            remediation=(
+                "Issue a fresh session identifier on every successful "
+                "login. Most frameworks expose this as "
+                "session.regenerate_id() / request.session.cycle_key() "
+                "/ session.regenerate(). Combine with the Secure, "
+                "HttpOnly, and SameSite cookie flags."
+            ),
+            cwe="CWE-384",
+            owasp="A07:2021-Identification and Authentication Failures",
+            host=ctx.host, url=login_step.url,
+            request_id=ctx.history_id,
+            payload=(
+                f"pre-set Cookie: {injected_cookie} "
+                f"on step '{login_step.name}'"
+            ),
+            evidence=(
+                f"login step returned status {login_result.status}; "
+                f"captured outcomes: {modes}"
+            ),
+            confidence="firm",
+        )
+
+
+BUILTIN_ACTIVE_CHECKS.append(MFABypassCheck())
+BUILTIN_ACTIVE_CHECKS.append(SessionFixationActiveCheck())
+
+
 # ---- runner ----
 
 @dataclass
@@ -3433,37 +4336,68 @@ class ActiveScanResult:
     throttled_count: int = 0
     # B.0.5 — number of history rows skipped because they were out of scope.
     skipped_out_of_scope: int = 0
+    # Phase 2 — number of (row, check) pairs the intensity filter blocked.
+    # Surfaced in the run summary so the operator can see whether a more
+    # aggressive tier would have changed the result.
+    skipped_by_intensity: int = 0
     by_severity: dict[str, int] = field(default_factory=lambda: {
         "info": 0, "low": 0, "medium": 0, "high": 0, "critical": 0,
     })
+    # Phase 2 — breakdown of *findings* by the intensity tier of the check
+    # that fired them. Useful for the report: "12 findings came from light
+    # probes, 3 from medium, 0 from intrusive."
+    by_intensity: dict[str, int] = field(default_factory=lambda: {
+        "light": 0, "medium": 0, "intrusive": 0,
+    })
     elapsed_ms: int = 0
+    # Phase 9 — populated when ``ActiveOptions.wall_clock_seconds``
+    # was set and the cap was reached mid-run. ``rows_skipped_deadline``
+    # is the count of in-scope rows we never started because the
+    # deadline had already elapsed.
+    aborted_due_to_deadline: bool = False
+    deadline_seconds: float | None = None
+    rows_skipped_deadline: int = 0
+    # Phase 10 — mirrored from ``ActiveOptions.auth_session.stats``
+    # at the end of the run so the result is a self-contained
+    # serialisable summary (the AuthSession instance itself contains
+    # an in-memory cookie jar that must not be reported).
+    auth_macro_runs: int = 0
+    auth_macro_failures: int = 0
+    session_recoveries: int = 0
+    validity_probes: int = 0
+    csrf_token_refetches: int = 0
+    csrf_token_swaps: int = 0
+    # Phase 12 — audit prioritisation. ``prioritised`` is True when
+    # the run iterated rows in scored order instead of id-DESC.
+    # ``top_score`` / ``top_history_id`` capture the row that was
+    # audited first so the operator can confirm the scoring picked
+    # the row they expected. Zero / 0 / 0 when prioritisation was
+    # off.
+    prioritised: bool = False
+    top_score: float = 0.0
+    top_history_id: int = 0
+    # Phase 13 — JavaScript analysis pipeline counters. All zero
+    # when ``js_analysis_mode='off'``. ``js_pages_analysed`` counts
+    # distinct responses the pipeline actually inspected (after the
+    # content-type gate); ``js_static_findings`` and
+    # ``js_dynamic_hits`` count the raw stage outputs;
+    # ``js_cross_confirmed`` counts findings the dynamic stage
+    # promoted from ``firm`` → ``certain``.
+    js_pages_analysed: int = 0
+    js_static_findings: int = 0
+    js_dynamic_hits: int = 0
+    js_cross_confirmed: int = 0
 
 
 def _host_in_scope(host: str, scope_rules: list[dict]) -> bool:
-    """Apply project scope rules using fnmatch on host patterns.
-
-    Semantics (matches the existing UI):
-      * No enabled `include` rules → everything is in-scope.
-      * Any enabled `exclude` rule that matches → out of scope (wins over include).
-      * Otherwise: must match at least one enabled `include` rule.
-
-    Only `target == "host"` rules are considered — the scanner runs per-row
-    keyed on host, so path-shaped scope is honoured elsewhere.
+    """Backwards-compat shim. The canonical implementation lives in
+    ``reqlore.scanner.scope_utils.host_in_scope`` so the passive
+    scanner, active scanner, and live worker all apply identical
+    semantics. Kept here as a thin alias because plugins / tests may
+    have imported the private name.
     """
-    if not scope_rules:
-        return True
-    includes = [r for r in scope_rules
-                if r.get("enabled") and r.get("kind") == "include"
-                and (r.get("target") or "host") == "host"]
-    excludes = [r for r in scope_rules
-                if r.get("enabled") and r.get("kind") == "exclude"
-                and (r.get("target") or "host") == "host"]
-    for r in excludes:
-        if fnmatch.fnmatch(host, r["pattern"]):
-            return False
-    if not includes:
-        return True
-    return any(fnmatch.fnmatch(host, r["pattern"]) for r in includes)
+    from .scope_utils import host_in_scope as _shared
+    return _shared(host, scope_rules)
 
 
 class ActiveScanner:
@@ -3478,7 +4412,32 @@ class ActiveScanner:
                        result: ActiveScanResult | None = None,
                        project: object | None = None,
                        ctx: "ActiveContext | None" = None):
+        def _raw_send(req: Request) -> Response:
+            # Lowest-level outgoing call. Used both by the probe path
+            # below and by the Phase 10 ``AuthSession`` (which needs
+            # to fire CSRF-token re-fetches and validity probes
+            # without recursing back through the per-probe gates).
+            if self._sender is not None:
+                return self._sender(req)
+            return httpx_engine.send(
+                req, timeout=opts.timeout_s,
+                follow_redirects=opts.follow_redirects,
+            )
+
         def _send(req: Request) -> ProbeResult:
+            # Phase 10 — inject session cookies + bearer headers from
+            # the auth manager, and (if configured) refresh any CSRF
+            # token in the body. We pass ``_raw_send`` rather than
+            # ``_send`` so CSRF / validity-probe fetches do not
+            # recursively apply auth or count against the probe
+            # budget.
+            if opts.auth_session is not None:
+                try:
+                    req = opts.auth_session.apply_to_request(
+                        req, sender=_raw_send,
+                    )
+                except _SAFE_NETWORK_EXC:
+                    pass
             # B.0.3 — if a refresh macro is configured, periodically re-run it
             # and merge the returned headers/cookies into the next request.
             if (opts.replay_macro is not None and project is not None
@@ -3502,13 +4461,7 @@ class ActiveScanner:
                                   headers=merged, body=req.body)
 
             t0 = time.monotonic()
-            if self._sender is not None:
-                resp = self._sender(req)
-            else:
-                resp = httpx_engine.send(
-                    req, timeout=opts.timeout_s,
-                    follow_redirects=opts.follow_redirects,
-                )
+            resp = _raw_send(req)
             elapsed = int((time.monotonic() - t0) * 1000)
             counter[0] += 1
 
@@ -3525,15 +4478,19 @@ class ActiveScanner:
                 if wait_s:
                     time.sleep(wait_s)
                 t1 = time.monotonic()
-                if self._sender is not None:
-                    resp = self._sender(req)
-                else:
-                    resp = httpx_engine.send(
-                        req, timeout=opts.timeout_s,
-                        follow_redirects=opts.follow_redirects,
-                    )
+                resp = _raw_send(req)
                 elapsed = int((time.monotonic() - t1) * 1000)
                 counter[0] += 1
+
+            # Phase 10 — let the auth manager opportunistically harvest
+            # rotated cookies and (if its threshold is reached) fire a
+            # validity probe + macro recovery before the next probe.
+            if opts.auth_session is not None:
+                try:
+                    opts.auth_session.notify_response(req, resp)
+                    opts.auth_session.maybe_revalidate(sender=_raw_send)
+                except _SAFE_NETWORK_EXC:
+                    pass
 
             if ctx is not None:
                 ctx.probes_log.append(
@@ -3552,6 +4509,11 @@ class ActiveScanner:
             if opts.rate_delay_ms:
                 time.sleep(opts.rate_delay_ms / 1000.0)
             return ProbeResult(req, resp, elapsed)
+        # Phase 26 -- expose the unwrapped sender so auth-flow checks
+        # (MFA bypass, session fixation) can re-run the configured auth
+        # macro without the AuthSession wrapper re-injecting the
+        # already-primed session cookies on every step.
+        _send.raw = _raw_send  # type: ignore[attr-defined]
         return _send
 
     def run_on_row(self, row, *, options: ActiveOptions | None = None
@@ -3561,8 +4523,18 @@ class ActiveScanner:
         counter = [0]
         send = self._send_factory(opts, counter, ctx=ctx)
         findings: list[Finding] = []
+        from .rules import intensity_for
         for check in self.checks:
-            if opts.enabled_checks and check.name not in opts.enabled_checks:
+            # Two-stage filter: explicit ``enabled_checks`` wins over
+            # the coarse intensity gate so a test that names a single
+            # intrusive check by name still runs that check, even
+            # though the default ``intensity_levels`` excludes
+            # intrusive. When ``enabled_checks`` is ``None`` we fall
+            # through to the intensity filter.
+            if opts.enabled_checks:
+                if check.name not in opts.enabled_checks:
+                    continue
+            elif intensity_for(check) not in opts.intensity_levels:
                 continue
             try:
                 # OAST-aware checks accept the options kwarg; older checks do not.
@@ -3588,17 +4560,78 @@ class ActiveScanner:
         """Run active checks across the most recent `limit` history rows.
         Active scans send traffic — keep `limit` small."""
         from ..findings_bus import record_finding
-        from .rules import apply_meta_defaults, id_for, meta_for
+        from .rules import apply_meta_defaults, id_for, intensity_for, meta_for
         opts = options or ActiveOptions()
         t0 = time.monotonic()
         result = ActiveScanResult()
+        # Phase 9 — record the configured cap on the result so the
+        # report renderer can show what limit was in force, even if
+        # we finish under it.
+        deadline_at: float | None = None
+        if opts.wall_clock_seconds is not None and opts.wall_clock_seconds > 0:
+            deadline_at = t0 + float(opts.wall_clock_seconds)
+            result.deadline_seconds = float(opts.wall_clock_seconds)
         # B.0.5 — apply project scope rules.
         try:
             scope_rules = list(project.list_scope())
         except AttributeError:
             scope_rules = []
+        # Phase 10 — prime the auth session once before any probes
+        # fire. Failures here are non-fatal: we still let the run
+        # proceed unauthenticated and surface the failure via the
+        # macro_failures stat.
+        if opts.auth_session is not None and not getattr(
+                opts.auth_session, "primed", False):
+            try:
+                opts.auth_session.prime(sender=self._sender)
+            except _SAFE_NETWORK_EXC:
+                pass
         rows = project.list_history(limit=limit, host=host)
+        # Phase 12 — optional audit prioritisation. When enabled we
+        # re-order the row list using the same insertion-point
+        # enumeration the per-row probe loop will run anyway, so the
+        # cost is amortised. The scoring is deterministic and pure,
+        # but parser failures can still happen on hostile blobs —
+        # any exception leaves the row order untouched and emits a
+        # diagnostic flag so the operator can see the prioritiser
+        # bailed.
+        if opts.prioritise:
+            try:
+                from .prioritise import (
+                    ScoringWeights as _Weights,
+                    prioritise_queue as _prioritise,
+                )
+                ranked = _prioritise(
+                    rows,
+                    weights=_Weights(
+                        surface=opts.surface_weight,
+                        interest=opts.interest_weight,
+                    ),
+                    recompute_after_row=(
+                        opts.prioritise_recompute_after_row
+                    ),
+                )
+                rows = [r for r, _ in ranked]
+                result.prioritised = True
+                if ranked:
+                    _, top = ranked[0]
+                    result.top_score = float(top.score)
+                    result.top_history_id = int(top.history_id)
+            except Exception:  # noqa: BLE001 — never block a scan
+                # Leave rows in their original id-DESC order if
+                # scoring blew up. ``prioritised`` stays False so
+                # the operator can tell the prioritiser was
+                # requested but skipped.
+                pass
         for row in rows:
+            # Phase 9 — wall-clock guard. Checked between rows so a
+            # row that started before the deadline gets to finish
+            # cleanly rather than being torn down mid-probe.
+            if deadline_at is not None and time.monotonic() >= deadline_at:
+                if _host_in_scope(row.host, scope_rules):
+                    result.rows_skipped_deadline += 1
+                result.aborted_due_to_deadline = True
+                continue
             if not _host_in_scope(row.host, scope_rules):
                 result.skipped_out_of_scope += 1
                 continue
@@ -3608,7 +4641,16 @@ class ActiveScanner:
             send = self._send_factory(opts, counter, result=result,
                                        project=project, ctx=ctx)
             for check in self.checks:
-                if opts.enabled_checks and check.name not in opts.enabled_checks:
+                # Two-stage filter: explicit ``enabled_checks`` wins;
+                # otherwise gate by intensity. Skipped-by-intensity is
+                # counted so the run summary shows how much coverage
+                # the chosen tier set is leaving on the table.
+                tier = intensity_for(check)
+                if opts.enabled_checks:
+                    if check.name not in opts.enabled_checks:
+                        continue
+                elif tier not in opts.intensity_levels:
+                    result.skipped_by_intensity += 1
                     continue
                 rid = id_for(check, prefix="active")
                 meta = meta_for(check)
@@ -3656,12 +4698,92 @@ class ActiveScanner:
                         request_id=f.request_id, response_id=f.response_id,
                         evidence=evidence, payload=f.payload,
                         reproduction=repro,
+                        # Phase 3 — forward the rule's self-declared
+                        # confidence. Bus may still demote on WAF /
+                        # error-page fingerprint match.
+                        confidence=getattr(f, "confidence", "firm"),
                     )
                     if fid is not None:
                         result.findings_added += 1
                         result.by_severity[f.severity] = (
                             result.by_severity.get(f.severity, 0) + 1
                         )
+                        result.by_intensity[tier] = (
+                            result.by_intensity.get(tier, 0) + 1
+                        )
             result.probes_sent = result.probes_sent + counter[0]
+            # Phase 13 — JavaScript analysis pipeline. Runs once per
+            # row, after the per-check loop has finished. Defensive:
+            # any pipeline failure is swallowed so a buggy esprima /
+            # Playwright path can never block a scan. The hook is a
+            # no-op when ``opts.js_analysis_mode == 'off'``.
+            if opts.js_analysis_mode != "off":
+                try:
+                    from .js_pipeline import run_js_pipeline
+                    js_result = run_js_pipeline(
+                        response_body=ctx.resp_body,
+                        response_headers=ctx.resp_headers,
+                        host=ctx.host,
+                        url=ctx.full_url,
+                        mode=opts.js_analysis_mode,
+                    )
+                    if js_result.pages_analysed:
+                        result.js_pages_analysed += (
+                            js_result.pages_analysed
+                        )
+                        result.js_dynamic_hits += len(
+                            js_result.dynamic_hits
+                        )
+                        result.js_cross_confirmed += (
+                            js_result.cross_confirmed_count
+                        )
+                        # Surface every static finding via the
+                        # findings bus so suppressions /
+                        # fingerprinting / dedupe all apply.
+                        for jf in js_result.static_findings:
+                            jf_host = jf.host or ctx.host
+                            jf_url = jf.url or ctx.full_url
+                            fid = record_finding(
+                                project,
+                                source="scanner",
+                                rule_id="js-static:dom-xss",
+                                severity=jf.severity,
+                                title=jf.title,
+                                description=jf.description,
+                                remediation=jf.remediation,
+                                references=jf.references,
+                                cwe=jf.cwe,
+                                owasp=jf.owasp,
+                                host=jf_host,
+                                url=jf_url,
+                                request_id=ctx.history_id,
+                                evidence=jf.evidence,
+                                payload=jf.payload,
+                                confidence=getattr(
+                                    jf, "confidence", "firm"),
+                            )
+                            if fid is not None:
+                                result.findings_added += 1
+                                result.js_static_findings += 1
+                                result.by_severity[jf.severity] = (
+                                    result.by_severity.get(
+                                        jf.severity, 0) + 1
+                                )
+                except Exception:  # noqa: BLE001 — never block a scan
+                    pass
         result.elapsed_ms = int((time.monotonic() - t0) * 1000)
+        # Phase 10 — mirror the auth-session counters into the result
+        # so the report renderer / web flash can show how busy the
+        # auth machinery was without needing to introspect the
+        # session object itself (which still holds an in-memory
+        # cookie jar we must not surface).
+        if opts.auth_session is not None:
+            stats = getattr(opts.auth_session, "stats", None)
+            if stats is not None:
+                result.auth_macro_runs = getattr(stats, "macro_runs", 0)
+                result.auth_macro_failures = getattr(stats, "macro_failures", 0)
+                result.session_recoveries = getattr(stats, "session_recoveries", 0)
+                result.validity_probes = getattr(stats, "validity_probes", 0)
+                result.csrf_token_refetches = getattr(stats, "csrf_token_refetches", 0)
+                result.csrf_token_swaps = getattr(stats, "csrf_token_swaps", 0)
         return result

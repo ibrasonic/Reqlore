@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — {{ app.name }} runs{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('plugins.index') }}">Plugins</a> /
+  <a href="{{ url_for('.app_detail', slug=app.slug) }}">{{ app.name }}</a> /
+  Runs
+</nav>
+<h1>Runs of {{ app.name }}</h1>
+{% if runs %}
+  <table>
+    <caption>{{ runs|length }} run(s)</caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Started</th>
+        <th scope="col">Finished</th>
+        <th scope="col">Status</th>
+        <th scope="col">Results</th>
+        <th scope="col">Open</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in runs %}
+        <tr>
+          <th scope="row">{{ r.id }}</th>
+          <td>{{ r.started_at }}</td>
+          <td>{{ r.finished_at or "—" }}</td>
+          <td>{{ r.status }}{% if r.error %} <small>({{ r.error }})</small>{% endif %}</td>
+          <td>{{ r.results|length }}</td>
+          <td><a href="{{ url_for('.app_run_detail', slug=app.slug, rid=r.id) }}">Open</a></td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No runs yet.</p>
+{% endif %}
+{% endblock %}

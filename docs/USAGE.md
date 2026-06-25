@@ -184,6 +184,7 @@ Storage.
 - [Intruder](modules/intruder.md) — Sniper / Battering ram / Pitchfork / Cluster bomb; payload processors including `jwt:`.
 - [Param miner](modules/param-miner.md) — query / body / header parameter discovery.
 - [Scanner](modules/scanner.md) — passive + active checks; presets; manual finding entry; suppressions.
+- [Auth Matrix](modules/auth-matrix.md) — Autorize / AuthMatrix-style structured access-control testing; active runs against a history slice **and** a passive shadow worker that replays every proxied response under every saved session.
 - [Comparer](modules/comparer.md) — side-by-side, unified diff, `.diff` download.
 - [Decoder](modules/decoder.md) — every encoder/decoder; `smart_decode`; JWT decode.
 - [JWT workbench](modules/jwt.md) — parse, verify, re-sign; alg-none; HS-secret crack; `kid` injection.

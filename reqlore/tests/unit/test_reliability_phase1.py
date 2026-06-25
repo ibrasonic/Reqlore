@@ -52,6 +52,11 @@ _RULE_ENDPOINT_SKIPS: frozenset[str] = frozenset({
     # `t=` (cache token) or `from_a=&from_b=` (history ids). The smoke
     # client has neither, so the 404 is the correct behaviour.
     "comparer.export_diff",
+    # `/plugins/send/` is the Send-to-plugin chooser; it requires a
+    # `?from_history=<hid>` query arg pointing at a real history row
+    # and 404s otherwise. The smoke client has neither, so the 404 is
+    # the correct behaviour.
+    "plugins.send_to_chooser",
 })
 
 

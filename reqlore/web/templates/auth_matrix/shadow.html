@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Auth Matrix shadow{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('.index') }}">&larr; Auth Matrix</a>
+</nav>
+<h1>Shadow worker</h1>
+<p class="help">
+  The passive shadow worker replays every proxied response under every
+  <strong>active session</strong> in the background. Cells land under a
+  long-running run with <code>mode = "shadow"</code>.
+</p>
+
+{% if not available %}
+  <p class="flash flash-warn">Shadow worker is not running in this mode.</p>
+{% else %}
+  <dl class="meta">
+    <dt>Alive</dt><dd>{{ 'yes' if shadow.alive else 'no' }}</dd>
+    <dt>Queue depth</dt><dd>{{ shadow.queue_depth }}</dd>
+    <dt>Enqueued</dt><dd>{{ shadow.enqueued }}</dd>
+    <dt>Processed</dt><dd>{{ shadow.processed }}</dd>
+    <dt>Dropped (queue full)</dt><dd>{{ shadow.dropped }}</dd>
+    <dt>Findings added</dt><dd>{{ shadow.findings_added }}</dd>
+    <dt>Skipped (out of scope)</dt><dd>{{ shadow.skipped_out_of_scope }}</dd>
+    <dt>Errors</dt><dd>{{ shadow.errors }}</dd>
+    {% if shadow.run_id %}
+      <dt>Shadow run</dt><dd>
+        <a href="{{ url_for('.runs_detail', rid=shadow.run_id) }}">#{{ shadow.run_id }}</a>
+      </dd>
+    {% endif %}
+  </dl>
+
+  <section aria-labelledby="verdicts-h">
+    <h2 id="verdicts-h">Verdicts</h2>
+    <ul>
+      {% for k, v in (shadow.verdict_counts or {}).items() %}
+        <li><code>{{ k }}</code>: {{ v }}</li>
+      {% else %}
+        <li>None yet.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <form method="post" action="{{ url_for('.shadow_toggle') }}">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    {% if shadow.alive %}
+      <button type="submit" name="action" value="stop">Stop shadow worker</button>
+    {% else %}
+      <button type="submit" name="action" value="start">Start shadow worker</button>
+    {% endif %}
+  </form>
+{% endif %}
+{% endblock %}

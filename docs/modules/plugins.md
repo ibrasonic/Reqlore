@@ -29,12 +29,19 @@ the app. Hot-reload via `watchdog` if installed.
 
 ## Routes
 
-| URL                          | Method | What it does                                                            |
-|------------------------------|--------|-------------------------------------------------------------------------|
-| `/plugins/`                  | GET    | List discovered plugins (status, version, rules count, toggle button).   |
-| `/plugins/reload`            | POST   | Force re-scan of plugin directories.                                     |
-| `/plugins/<name>/toggle`     | POST   | Enable / disable a single plugin.                                        |
-| `/plugins/watch`             | POST   | Enable / disable watchdog hot-reload (`?on=1` / `?on=0`).                  |
+| URL                                              | Method | What it does                                                            |
+|--------------------------------------------------|--------|-------------------------------------------------------------------------|
+| `/plugins/`                                      | GET    | List discovered plugins (status, version, rules count, toggle button).   |
+| `/plugins/reload`                                | POST   | Force re-scan of plugin directories.                                     |
+| `/plugins/<name>/toggle`                         | POST   | Enable / disable a single plugin.                                        |
+| `/plugins/watch`                                 | POST   | Enable / disable watchdog hot-reload (`?on=1` / `?on=0`).                  |
+| `/plugins/app/<slug>/`                           | GET    | Plugin App settings form + runs list.                                    |
+| `/plugins/app/<slug>/run`                        | POST   | Validate the form and start a new run on a daemon thread.                |
+| `/plugins/app/<slug>/stop`                       | POST   | Cooperative-cancel signal for the most recent / chosen run.              |
+| `/plugins/app/<slug>/runs/`                      | GET    | Run history for one Plugin App (status, start, duration, result count).   |
+| `/plugins/app/<slug>/runs/<int:rid>/`            | GET    | One run detail — settings, live log, results table, recorded findings.   |
+| `/plugins/app/<slug>/runs/<int:rid>/poll`        | GET    | JSON tail used by the live log + results table (long-polled by the page). |
+| `/send/`                                         | GET    | *Send to plugin…* picker — chooses a Plugin App and forwards the seed.    |
 
 **Copy-as integration** (lives in `history_bp`, not `plugins_bp`):
 
@@ -50,6 +57,8 @@ the app. Hot-reload via `watchdog` if installed.
 | `scanner_rules()`  | optional | Returns iterable of passive rule callables.                                              |
 | `copy_as()`        | optional | Returns iterable of `CopyAsHandler(name, render)` objects.                                |
 | `register(app)`    | optional | Flask hook; called once with the app — register blueprints / `after_request` handlers. |
+| `PLUGIN_APP`       | optional | Single `PluginApp` (from `sdk.make_app(...)`) — registers a first-class app under `/plugins/app/<slug>/`. |
+| `PLUGIN_APPS`      | optional | Iterable of `PluginApp` objects when one module ships several sibling tools.             |
 
 Files starting with `_` (e.g. `_helpers.py`) are skipped — convention
 for private modules.
@@ -58,10 +67,19 @@ for private modules.
 
 | Symbol                                                | Purpose                                                                                  |
 |-------------------------------------------------------|------------------------------------------------------------------------------------------|
+| `SDK_VERSION`                                         | Current host SDK version string (`"1.0"`). Stamped on `make_info(...)` output.            |
 | `make_info(name, version, description, author, homepage, min_reqlore)` | Build a valid `PLUGIN_INFO` dict.                                                     |
 | `make_passive_rule(name, severity="info")`            | Decorator. Tags a `(ctx) -> Iterable[Finding]` function with `reqlore_rule_name` and `reqlore_rule_severity`. |
 | `CopyAsHandler(name: str, render: callable)`          | Dataclass for copy-as renderers. `render` takes raw request bytes, returns string.        |
 | `assert_compatible(info)`                             | Validates `PLUGIN_INFO` — checks `"name"` exists, SDK major-version match. Raises `ValueError`. |
+| `make_app(slug, name, fields, columns, ...)`          | Build a `PluginApp` — see [PLUGINS.md](../PLUGINS.md#plugin_app--plugin_apps).             |
+| `PluginApp`                                           | Returned by `make_app`. `.runner` decorator registers the entry-point; `.validate_settings(raw)` exposes the SDK validator. |
+| `StrField` / `TextField` / `IntField` / `BoolField` / `SelectField` | Settings-form field types with built-in validation.                            |
+| `ScopeView`                                           | Read-only view of the project's sitemap scope (`is_in_scope`, `is_url_in_scope`, `hosts()`, `empty`). |
+| `SeedRequest`                                         | A captured request handed to a Plugin App through *Send to plugin…* (`method`, `url`, `host`, `path`, `headers`, `body`, `raw`, `header(name)`). |
+| `parse_seed_request(history_id, raw)`                 | Build a `SeedRequest` from raw HTTP/1.1 bytes (used internally; useful in tests).         |
+| `PluginContext`                                       | The single argument passed to a runner: `.settings`, `.scope`, `.seed_request`, `.send`, `.log`, `.progress`, `.add_result`, `.record_finding`, `.oast_token`, `.oast_interactions`, `.stop_requested`, `.check_stop`, `.sleep`. |
+| `CancelledError`                                      | Raised by `ctx.check_stop()` / `ctx.sleep()` when **Stop** is clicked or the timeout fires. Caught by the host. |
 
 ## Discovery
 
@@ -174,6 +192,72 @@ def copy_as():
 
 After **Reload**, the History detail page exposes a "PHP curl" link
 that calls `_render_php(row.req_blob)`.
+
+### Plugin App — settings form + live log + findings
+
+Minimal echo app. Read the full reference in
+[PLUGINS.md](../PLUGINS.md#plugin-apps); the bundled
+[file_upload_scanner.py](../../reqlore/builtin_plugins/file_upload_scanner.py)
+is the canonical large example.
+
+```python
+# ~/.reqlore/plugins/echo_app.py
+from reqlore import plugins_sdk as sdk
+
+PLUGIN_INFO = sdk.make_info(name="echo-app", version="0.1",
+                            description="Tiny Plugin App example.")
+
+PLUGIN_APP = sdk.make_app(
+    slug="echo-app",
+    name="Echo App",
+    description="Sends one request and records the status.",
+    fields=[
+        sdk.StrField("url", required=True, label="Target URL",
+                     placeholder="https://app.example.com/"),
+        sdk.SelectField("method", choices=["GET", "HEAD"], default="GET"),
+    ],
+    columns=["status", "length"],
+    timeout_s=30,
+)
+
+@PLUGIN_APP.runner
+def run(ctx):
+    url = ctx.settings["url"]
+    if not ctx.scope.empty and not ctx.scope.is_url_in_scope(url):
+        ctx.log(f"{url} is out of scope — aborting", "warn")
+        return
+
+    ctx.log(f"sending {ctx.settings['method']} {url}")
+    resp = ctx.send(ctx.settings["method"], url, timeout=15)
+    ctx.add_result({"status": resp.status, "length": len(resp.body or b"")})
+
+    if resp.status == 500:
+        ctx.record_finding(
+            title="Echo App: server error",
+            severity="info",
+            host=ctx.scope.hosts()[0] if ctx.scope.hosts() else "",
+            url=url,
+            evidence=f"HTTP {resp.status} from a single GET",
+        )
+```
+
+Drop into `~/.reqlore/plugins/`, **Reload**, open
+`/plugins/app/echo-app/`, fill the form, click **Run**.
+
+## Storage footprint
+
+Plugin Apps persist per-run state in the project's storage layer:
+
+* one row per run (settings snapshot, status, start / end timestamps);
+* a streaming **log** buffer per run (read by the long-poll endpoint);
+* a **results** table per run (rows from `ctx.add_result`);
+* findings written via `ctx.record_finding` land in the normal
+  [Scanner](scanner.md) `issues` table with
+  `source="plugin:<slug>"` and `rule_id="plugin:<slug>"`.
+
+Deleting a Plugin App's run cleans up its log + results rows but
+leaves any findings it produced in place — they live with the rest of
+the project's scanner output.
 
 ### Custom blueprint
 

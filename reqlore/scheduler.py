@@ -19,6 +19,8 @@ Public API::
 from __future__ import annotations
 
 import json
+import os
+import socket
 import threading
 import time
 from dataclasses import asdict, dataclass, field
@@ -34,6 +36,13 @@ except ImportError:  # pragma: no cover - exercised only when extra is installed
 from .scanner import BUILTIN_RULES, Scanner
 
 _STATE_KEY = "sched:jobs"
+# Phase 18 — cross-process lock: refuse to start a second scheduler
+# against the same .rlr file. The lock is a JSON stamp persisted in
+# project_state with a heartbeat; readers treat a stamp older than
+# ``_LOCK_TTL_S`` as stale (likely a crashed process).
+_LOCK_KEY = "sched:lock"
+_LOCK_TTL_S = 30
+_LOCK_REFRESH_S = 10
 
 
 @dataclass
@@ -44,6 +53,9 @@ class ScheduledJob:
     enabled: bool = True
     last_run_ts: int = 0
     last_findings: int = 0
+    last_finished_ts: int = 0
+    # Empty string == last execution succeeded (or no execution yet).
+    last_error: str = ""
 
 
 @dataclass
@@ -61,9 +73,42 @@ def _deserialise(raw: str | None) -> list[ScheduledJob]:
     if not raw:
         return []
     try:
-        return [ScheduledJob(**j) for j in json.loads(raw)]
+        payload = json.loads(raw)
     except Exception:
         return []
+    out: list[ScheduledJob] = []
+    # Tolerate rows persisted before Phase 14 added `last_error` /
+    # `last_finished_ts`: drop unknown keys (would crash the dataclass
+    # constructor) and let the new keys fall back to their defaults.
+    allowed = {f for f in ScheduledJob.__dataclass_fields__}
+    for j in payload:
+        if not isinstance(j, dict):
+            continue
+        kwargs = {k: v for k, v in j.items() if k in allowed}
+        try:
+            out.append(ScheduledJob(**kwargs))
+        except TypeError:
+            continue
+    return out
+
+
+class SchedulerLockError(RuntimeError):
+    """Raised when another Reqlore process already holds the scheduler
+    lock for this project. The ``pid`` and ``host`` attributes describe
+    the holder so callers can surface a precise message."""
+
+    def __init__(self, pid: int | None, host: str) -> None:
+        self.pid = pid
+        self.host = host or ""
+        who = (f"pid {pid} on {self.host}" if pid is not None and self.host
+               else f"pid {pid}" if pid is not None
+               else f"host {self.host}" if self.host
+               else "another process")
+        super().__init__(
+            f"Scheduler is already running for this project ({who}). "
+            f"Stop the other Reqlore process or wait for its lock to "
+            f"expire."
+        )
 
 
 class Scheduler:
@@ -78,6 +123,17 @@ class Scheduler:
         self._aps = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # Cross-process lock bookkeeping. ``_lock_held`` flips True
+        # once ``_acquire_lock`` succeeds; the heartbeat refresh in
+        # ``_thread_loop`` only runs while it's True so a Scheduler
+        # that never called ``start()`` cannot accidentally stamp the
+        # lock.
+        self._lock_held = False
+        self._lock_last_refresh = 0.0
+        # Populated when ``_acquire_lock`` refuses; the route / CLI
+        # uses these to build a precise error message.
+        self._blocking_pid: int | None = None
+        self._blocking_host: str = ""
 
     # ---- persistence ----
     def _save(self) -> None:
@@ -136,10 +192,21 @@ class Scheduler:
 
     def _run_job(self, job: ScheduledJob) -> int:
         scanner = Scanner(rules=BUILTIN_RULES)
-        result = scanner.scan_project(self.project, limit=job.scan_limit)
         with self._lock:
             job.last_run_ts = int(time.time())
+            self._save()
+        try:
+            result = scanner.scan_project(self.project, limit=job.scan_limit)
+        except Exception as exc:
+            with self._lock:
+                job.last_error = f"{type(exc).__name__}: {exc}"[:240]
+                job.last_finished_ts = int(time.time())
+                self._save()
+            raise
+        with self._lock:
             job.last_findings = result.findings_added
+            job.last_finished_ts = int(time.time())
+            job.last_error = ""
             self._save()
         return result.findings_added
 
@@ -148,10 +215,95 @@ class Scheduler:
         return (self._aps is not None
                 or (self._thread is not None and self._thread.is_alive()))
 
+    # ---- cross-process lock ----
+    def _read_lock(self) -> dict | None:
+        raw = self.project.get_state(_LOCK_KEY, "")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data
+
+    def _stamp_lock(self) -> None:
+        """Persist a fresh lock stamp for this process."""
+        stamp = {
+            "pid": os.getpid(),
+            "host": socket.gethostname(),
+            "ts": int(time.time()),
+        }
+        try:
+            self.project.set_state(_LOCK_KEY, json.dumps(stamp))
+            self._lock_held = True
+            self._lock_last_refresh = time.monotonic()
+        except Exception:
+            # Storage write failed (DB locked / closed). The caller
+            # surfaces the error from start(); the lock simply isn't
+            # held in this run.
+            pass
+
+    def _acquire_lock(self) -> bool:
+        """Try to claim the scheduler lock for this project.
+
+        Returns True on success. On failure populates
+        ``_blocking_pid`` / ``_blocking_host`` so ``start()`` can
+        build a precise error. A stamp older than ``_LOCK_TTL_S`` is
+        treated as stale (the owning process crashed) and overridden.
+        Same-process / same-host stamps are silently refreshed.
+        """
+        existing = self._read_lock()
+        if existing is not None:
+            pid = existing.get("pid")
+            host = existing.get("host", "")
+            ts = existing.get("ts", 0)
+            try:
+                age = max(0, int(time.time()) - int(ts))
+            except (TypeError, ValueError):
+                age = _LOCK_TTL_S + 1
+            same = (pid == os.getpid()
+                    and host == socket.gethostname())
+            if not same and age < _LOCK_TTL_S:
+                self._blocking_pid = pid if isinstance(pid, int) else None
+                self._blocking_host = str(host or "")
+                return False
+        # Either no stamp, stale stamp, or our own stamp: take it.
+        self._blocking_pid = None
+        self._blocking_host = ""
+        self._stamp_lock()
+        return True
+
+    def _release_lock(self) -> None:
+        if not self._lock_held:
+            return
+        # Only clear the row if we still own it: a concurrent process
+        # may have stolen the slot after our TTL expired.
+        existing = self._read_lock()
+        if existing is not None:
+            if existing.get("pid") == os.getpid() \
+                    and existing.get("host") == socket.gethostname():
+                try:
+                    self.project.set_state(_LOCK_KEY, "")
+                except Exception:
+                    pass
+        self._lock_held = False
+
+    def _maybe_refresh_lock(self) -> None:
+        if not self._lock_held:
+            return
+        if time.monotonic() - self._lock_last_refresh < _LOCK_REFRESH_S:
+            return
+        self._stamp_lock()
+
     def start(self) -> str:
         with self._lock:
             if self.is_running():
                 return "apscheduler" if self._aps else "thread"
+            if not self._acquire_lock():
+                raise SchedulerLockError(
+                    self._blocking_pid, self._blocking_host)
             if _APS_AVAILABLE:
                 self._aps = BackgroundScheduler(daemon=True)
                 self._aps.start()
@@ -176,6 +328,7 @@ class Scheduler:
             if self._thread is not None:
                 self._stop.set()
                 self._thread = None
+            self._release_lock()
 
     def status(self) -> SchedulerStatus:
         backend = "stopped"
@@ -213,6 +366,10 @@ class Scheduler:
                     try:
                         self._run_job(j)
                     except Exception:
+                        # `_run_job` already persisted `last_error`;
+                        # swallow here so the thread loop keeps running
+                        # other jobs.
                         pass
                     next_run[j.name] = now + j.interval_s
+            self._maybe_refresh_lock()
             self._stop.wait(timeout=1.0)

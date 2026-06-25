@@ -6,6 +6,14 @@ from typing import Literal
 
 Severity = Literal["info", "low", "medium", "high", "critical"]
 
+# Phase 3 (Burp parity) — confidence tiers stamped on every finding.
+# ``tentative``: pattern matched but evidence is weak (e.g. WAF-fronted,
+# error-page-fronted, single-shot reflection).
+# ``firm``: default — the rule's normal positive case.
+# ``certain``: two independent detection techniques agree (cross-rule
+# corroboration in :class:`reqlore.storage.Project`).
+Confidence = Literal["tentative", "firm", "certain"]
+
 # Map severity to a representative CVSS v3.1 base score band.
 # This is a guideline only; rules may override with their own score.
 CVSS_BAND = {
@@ -33,6 +41,10 @@ class Finding:
     cvss: float | None = None
     remediation: str = ""
     references: list[str] = field(default_factory=list)
+    # Phase 3 — confidence tier (default ``firm``). Rules can set
+    # ``tentative`` when their evidence is genuinely weak (e.g. only a
+    # single benign reflection) so the bus doesn't have to demote them.
+    confidence: Confidence = "firm"
 
     @property
     def cvss_score(self) -> float:

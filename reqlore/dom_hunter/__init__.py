@@ -25,6 +25,10 @@ TOKEN_ROTATION_GRACE_SECONDS = 30
 CANARY_KEY = "dom_hunter_canary"
 ENABLED_KEY = "dom_hunter_enabled"
 SCOPE_KEY = "dom_hunter_scope"
+# When "1", the effective scope unions the explicit SCOPE_KEY list with
+# hosts derived from Project.list_scope() (sitemap scope). Default "0"
+# preserves the pre-Phase-13.5 contract: empty scope = "every host".
+SCOPE_INHERIT_KEY = "dom_hunter_scope_inherit_sitemap"
 AUTO_INJECT_KEY = "dom_hunter_auto_inject"  # comma-list: hash,search,winname,referrer
 
 # Severity scale, low->high.
@@ -351,6 +355,73 @@ def set_auto_inject(project, targets: list[str]) -> None:
     project.set_state(AUTO_INJECT_KEY, cleaned)
 
 
+def is_inherit_sitemap(project) -> bool:
+    """Return True when the effective scope should inherit hosts from the
+    project sitemap scope."""
+    return project.get_state(SCOPE_INHERIT_KEY, "0") == "1"
+
+
+def set_inherit_sitemap(project, on: bool) -> None:
+    project.set_state(SCOPE_INHERIT_KEY, "1" if on else "0")
+
+
+def derive_sitemap_hosts(project) -> list[str]:
+    """Return host tokens derived from the project's sitemap scope.
+
+    Only enabled ``include`` rules whose target is ``host`` participate;
+    ``exclude`` rules are intentionally dropped (the DOM Hunter client-side
+    matcher has no exclude semantics and silently honouring them server-side
+    would diverge from the visible scope list). Each rule's ``pattern`` is
+    fed through :func:`normalize_scope_entry` so plain hostnames and
+    ``*.example.com`` wildcards both round-trip. Patterns that survive
+    normalisation as something the DOM Hunter matcher cannot evaluate
+    (e.g. wildcards in the middle) are kept verbatim — they will simply
+    fail to match at injection time, which is the safe direction.
+    Projects without a ``list_scope`` method (test fakes) yield an empty
+    list rather than crashing the bridge.
+    """
+    try:
+        rules = list(project.list_scope())
+    except AttributeError:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in rules:
+        if not r.get("enabled"):
+            continue
+        if (r.get("kind") or "") != "include":
+            continue
+        if (r.get("target") or "host") != "host":
+            continue
+        pat = normalize_scope_entry(r.get("pattern") or "")
+        if not pat or pat in seen:
+            continue
+        seen.add(pat)
+        out.append(pat)
+    return out
+
+
+def get_effective_scope(project) -> list[str]:
+    """Return the host list the bridge / proxy hook should actually enforce.
+
+    Order: explicit DOM Hunter scope entries first, then sitemap-derived
+    hosts (only when inheritance is on). Duplicates are dropped while
+    preserving first-seen order so the operator's explicit choices win
+    when both lists name the same host.
+    """
+    explicit = get_scope(project)
+    if not is_inherit_sitemap(project):
+        return explicit
+    seen: set[str] = set(explicit)
+    merged = list(explicit)
+    for h in derive_sitemap_hosts(project):
+        if h in seen:
+            continue
+        seen.add(h)
+        merged.append(h)
+    return merged
+
+
 def host_in_scope(host: str, scope: list[str]) -> bool:
     """Return True if `host` is covered by the scope list.
 
@@ -450,7 +521,7 @@ def should_inject_referer(
     targets = get_auto_inject(project)
     if "document.referrer" not in targets:
         return False
-    return host_in_scope(host, get_scope(project))
+    return host_in_scope(host, get_effective_scope(project))
 
 
 def dedupe_key(*, sink: str, source: str, page_url: str,

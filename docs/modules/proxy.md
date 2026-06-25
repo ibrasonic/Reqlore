@@ -180,6 +180,7 @@ The single rule built from `InterceptConfig` (persisted as JSON in
 | `methods`             | `["POST", "PUT", "PATCH", "DELETE"]`                            | UI checkboxes for GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS.          |
 | `host_regex`          | empty (any host)                                                | Python `re`.                                                                    |
 | `path_regex`          | empty (any path)                                                | Python `re`.                                                                    |
+| `restrict_to_scope`   | `False` (unchecked)                                             | Opt-in: when on, the proxy consults the project's [Sitemap](sitemap.md) scope rules before holding. Out-of-scope hosts pass through even if every other field matches. Useful when you want intercept to follow the same boundary as the rest of the project. |
 | `exclude_host_regex`  | `DEFAULT_NOISE_HOST_REGEX` (Mozilla telemetry etc.)             | Excludes always apply. Edit the field to broaden / narrow.                       |
 | `exclude_path_regex`  | `DEFAULT_NOISE_PATH_REGEX` (`\.(?:css|js|png|svg|woff2|...)$`)   | Static-asset blanket exclude.                                                    |
 
@@ -191,7 +192,13 @@ Matching order on a request:
 4. Host required but does not match → skip.
 5. Method not in list → skip.
 6. Path required but does not match → skip.
-7. Otherwise → hold.
+7. `restrict_to_scope` is on **and** host is out-of-scope per Sitemap → skip.
+8. Otherwise → hold.
+
+Note: the scope check is the last gate. An empty Sitemap (no include /
+exclude rules) treats every host as in scope, so toggling
+`restrict_to_scope` on a fresh project changes nothing until you add at
+least one scope rule.
 
 Responses can also be held — set `status_in` or `content_type_regex` on a
 rule and the response addon will match.
@@ -282,6 +289,7 @@ original `req_blob` is still in the queue if you need to compare.
 | Send-to **JWT** missing                                   | No `Authorization: Bearer <jwt>` in the request                        | Use the JWT workbench's manual paste-token form instead.                                          |
 | Send-to **Decoder** missing                               | Request body is empty                                                  | Decoder operates on bodies; for URL params use the in-place query builder elsewhere.              |
 | Static assets clutter History                             | `exclude_path_regex` not filtering them at the proxy level             | Expand the regex (e.g. add `|\.map$|\.json$`) and Save.                                          |
+| Intercept holds nothing for in-scope hosts even though the rule matches | `restrict_to_scope` is checked and the host isn't in your Sitemap include scope | Either add the host to your Sitemap scope (**Settings → Scope**) or untick **Only hold requests for hosts that are in scope** on the intercept filter. An empty Sitemap means *every* host is in scope. |
 
 ## CLI
 
@@ -300,8 +308,8 @@ See [`../login.md`](../login.md) for password requirements when
 
 - **`intercept_q`** — queue of held flows (see schema above).
 - **`project_state["intercept_on"]`** — `"0"` or `"1"`; survives restarts.
-- **`project_state["intercept_config"]`** — JSON of `InterceptConfig`;
-  survives restarts.
+- **`project_state["intercept_config"]`** — JSON of `InterceptConfig`
+  (including the `restrict_to_scope` flag); survives restarts.
 - **`http_history`** — every proxied flow, plus every Send-to snapshot.
 - **`match_replace`** — rules applied here on the wire; managed in the
   Match & Replace panel.

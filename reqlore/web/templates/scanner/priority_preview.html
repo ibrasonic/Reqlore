@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Priority preview{% endblock %}
+{% block main %}
+{% include "scanner/_section_nav.html" %}
+<h1>Audit priority preview</h1>
+<p>
+  Pre-launch preview of the row order an active scan would use with
+  <code>prioritise=True</code>. Scoring is pure (no probes sent) and
+  uses Burp's 80/20 split: <strong>attack-surface exposure</strong>
+  (how many new insertion points the row contributes) plus
+  <strong>interest level</strong> (state-changing method,
+  structured content type, and auth requirement). Tied rows fall
+  back to ascending history id.
+</p>
+
+<form method="get" action="{{ url_for('.priority_preview') }}" class="filter-form">
+  <p>
+    <label for="pp-host">Host contains</label>
+    <input id="pp-host" type="text" name="host" value="{{ host_filter }}" placeholder="example.com">
+  </p>
+  <p>
+    <label for="pp-limit">History rows considered</label>
+    <input id="pp-limit" type="number" name="limit" min="10" max="1000" step="10" value="{{ limit }}">
+  </p>
+  <p>
+    <label for="pp-top">Preview rows</label>
+    <input id="pp-top" type="number" name="top" min="1" max="200" step="1" value="{{ top_n }}">
+  </p>
+  <p>
+    <label for="pp-sw">Surface weight</label>
+    <input id="pp-sw" type="number" name="surface_weight" min="0" max="10" step="0.1" value="{{ surface_weight }}">
+  </p>
+  <p>
+    <label for="pp-iw">Interest weight</label>
+    <input id="pp-iw" type="number" name="interest_weight" min="0" max="10" step="0.1" value="{{ interest_weight }}">
+  </p>
+  <p>
+    <button type="submit" accesskey="a"><u>A</u>pply</button>
+    <a href="{{ url_for('.run_page') }}">Back to scan launchpad</a>
+  </p>
+</form>
+
+{% if rows %}
+  <table>
+    <caption>
+      Top {{ rows|length }} of {{ considered }} scored rows
+      (weights surface={{ surface_weight }}, interest={{ interest_weight }})
+    </caption>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Score</th>
+        <th scope="col">Method</th>
+        <th scope="col">URL</th>
+        <th scope="col">Status</th>
+        <th scope="col">Novel / total IPs</th>
+        <th scope="col">Interest</th>
+        <th scope="col">M/C/A</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ r.score }}</td>
+        <td>{{ r.method }}</td>
+        <td><code>{{ r.host }}{{ r.url }}</code></td>
+        <td>{{ r.status }}</td>
+        <td>{{ r.surface_novelty }} / {{ r.surface_total }}</td>
+        <td>{{ r.interest }}</td>
+        <td>
+          <abbr title="method state-changing?">{{ r.method_score }}</abbr> /
+          <abbr title="content type structured?">{{ r.content_type_score }}</abbr> /
+          <abbr title="request carried auth?">{{ r.auth_score }}</abbr>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p>No history rows to score yet — capture some traffic via the proxy
+  first, then re-run this preview.</p>
+{% endif %}
+{% endblock %}

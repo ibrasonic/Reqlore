@@ -73,6 +73,14 @@
              value="{{ intercept_cfg.path_regex }}"
              placeholder="e.g. ^/api/  (blank = any path)">
     </p>
+    <p>
+      <label>
+        <input type="checkbox" name="restrict_to_scope" value="1"
+               {% if intercept_cfg.restrict_to_scope %}checked{% endif %}>
+        Only hold requests for hosts that are <strong>in scope</strong>
+        (per <a href="{{ url_for('sitemap.index') }}">Sitemap</a> rules)
+      </label>
+    </p>
     <details>
       <summary>Advanced excludes</summary>
       <p>
@@ -126,7 +134,16 @@
         {% for it in items %}
         <tr>
           <th scope="row">{{ it.id }}</th>
-          <td>{{ it.kind }}</td>
+          <td>
+            {{ it.kind }}
+            {% if it.parent_intercept_id %}
+              <a href="{{ url_for('proxy.show_intercept', iid=it.parent_intercept_id) }}"
+                 class="redirect-parent-link"
+                 aria-label="Redirect from intercept {{ it.parent_intercept_id }}">
+                &#8627; from #{{ it.parent_intercept_id }}
+              </a>
+            {% endif %}
+          </td>
           <td>{{ it.hold_reason }}</td>
           <td>
             <a href="{{ url_for('proxy.show_intercept', iid=it.id) }}">View</a>

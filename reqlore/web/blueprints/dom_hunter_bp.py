@@ -82,6 +82,9 @@ def index():
         canary=S.get_or_make_canary(g.project),
         token=S.get_or_make_token(g.project),
         scope=S.get_scope(g.project),
+        effective_scope=S.get_effective_scope(g.project),
+        inherit_sitemap=S.is_inherit_sitemap(g.project),
+        inherited_hosts=S.derive_sitemap_hosts(g.project),
         dom_hunter_messages_count=g.project.dom_hunter_messages_count(),
     )
 
@@ -142,6 +145,9 @@ def settings():
             scope_raw = request.form.get("scope", "")
             hosts = [h for h in (scope_raw or "").replace(",", "\n").splitlines()]
             S.set_scope(g.project, hosts)
+            S.set_inherit_sitemap(
+                g.project, request.form.get("inherit_sitemap") == "1"
+            )
             targets = request.form.getlist("auto_inject")
             S.set_auto_inject(g.project, targets)
             flash("DOM Hunter settings saved. Reload the target tab to apply.", "ok")
@@ -169,6 +175,8 @@ def settings():
         canary=S.get_or_make_canary(g.project),
         token=S.get_or_make_token(g.project),
         scope="\n".join(S.get_scope(g.project)),
+        inherit_sitemap=S.is_inherit_sitemap(g.project),
+        inherited_hosts=S.derive_sitemap_hosts(g.project),
         auto_inject=set(S.get_auto_inject(g.project)),
         targets=S.AUTO_INJECT_TARGETS,
     )
@@ -198,7 +206,11 @@ def bridge_config():
         # is provable by exact substring match (no heuristic co-
         # occurrence guessing across sources).
         "tagged_canaries": S.tagged_canaries(canary),
-        "scope": S.get_scope(g.project),
+        # Effective scope = explicit DOM Hunter entries plus, when the
+        # operator opted in, hosts derived from the project sitemap scope.
+        # The extension never sees the inheritance toggle directly; it
+        # always receives the final flat host list to evaluate.
+        "scope": S.get_effective_scope(g.project),
         "auto_inject": S.get_auto_inject(g.project),
         "sinks": [s["id"] for s in S.SINKS],
         "ui_url": request.url_root.rstrip("/") + url_for(".index"),

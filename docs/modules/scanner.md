@@ -105,7 +105,7 @@ checkbox grid when the **Custom** preset is selected (added in commit
 
 - **Injection** — `xss-reflected`, `xss-reflected-headers`, `sqli-error`, `ssti`, `nosqli-mongo`, `xxe-classic`, `deserialisation-reflect`, `xss-stored`, `xss-dom`.
 - **File / OS** — `path-traversal-lfi`, `os-cmd-time`, `forced-browsing`.
-- **Auth & Logic** — `jwt-alg-none`, `open-redirect`, `prototype-pollution`, `oauth-redirect-uri`, `default-creds`, `idor-alt-identity`, `race-condition`.
+- **Auth & Logic** — `jwt-alg-none`, `open-redirect`, `prototype-pollution`, `oauth-redirect-uri`, `default-creds`, `idor-alt-identity`, `race-condition`, `auth-enum-timing`, `csrf-token-not-validated`, `mfa-bypass`, `session-fixation`.
 - **API & CORS** — `graphql-introspection`, `cors-misconfig-extended`, `web-cache-deception`, `graphql-active`.
 - **SSRF / OAST** — `oast-ssrf`, `http-smuggling`.
 - **TLS & DNS** — `tls-active`, `subdomain-takeover`.
@@ -115,7 +115,7 @@ Button: **Run active scan** (accesskey **a**).
 
 ## Passive rules shipped
 
-Twenty rules in `BUILTIN_RULES`. Each `rule_id` is namespaced `passive:*`.
+Twenty-five rules in `BUILTIN_RULES`. Each `rule_id` is namespaced `passive:*`.
 
 | Rule ID                                | Title                                                  | Severity | CWE     |
 |----------------------------------------|--------------------------------------------------------|----------|---------|
@@ -140,6 +140,11 @@ Twenty rules in `BUILTIN_RULES`. Each `rule_id` is namespaced `passive:*`.
 | `passive:cache-control-on-private`     | `Set-Cookie` response lacks `Cache-Control: no-store`   | low      | CWE-525 |
 | `passive:open-redirect-hint-headers`   | Redirect Location echoes a request header               | medium   | CWE-601 |
 | `passive:weak-session-entropy`         | Set-Cookie token entropy weak (≥8 samples, cross-row)   | medium   | —       |
+| `passive:pii-secrets`                  | PII or secret material in response body (AWS / GitHub / Slack / OpenAI tokens, PEM keys, CC, SSN) | high     | CWE-200 |
+| `passive:cve-fingerprint`              | Known CVE / EOL component in response header (Apache, nginx, PHP, IIS, Tomcat, OpenSSL) | high     | CWE-1104|
+| `passive:framework-debug-page`         | Framework debug or admin page exposed (Actuator, Werkzeug, Django, Rails, Laravel Ignition, Symfony, ELMAH, Express, phpinfo) | high     | CWE-489 |
+| `passive:subdomain-takeover-hint`      | Subdomain-takeover fingerprint (GitHub Pages / Heroku / S3 / Azure / Fastly / Bitbucket / Surge / Tilda / WP Engine / Ghost / Pantheon / Shopify / Readme.io / Teamwork) | high     | CWE-1395|
+| `passive:error-leak`                   | Internal infra leak in 4xx/5xx body (DB URI w/ creds, internal IP / hostname, absolute filesystem path) | medium / critical | CWE-209 |
 
 ## Active checks shipped
 
@@ -169,6 +174,10 @@ Twenty rules in `BUILTIN_RULES`. Each `rule_id` is namespaced `passive:*`.
 | `default-creds`        | HTTP Basic and HTML-form pairs (admin/admin, root/root, …)                      | Non-401 on Basic, 3xx / "logout" page on form                              | critical |
 | `idor-alt-identity`    | Re-sends with alt-identity headers                                              | Both 200 and ≥ 90 % Jaccard similarity vs. baseline                        | high     |
 | `race-condition`       | Baseline + 8 parallel copies of state-change                                    | ≥ 2 creates (201/202/204) in parallel vs. one baseline success             | high     |
+| `auth-enum-timing`     | 7 "exists" + 7 "absent" probes interleaved against a username-shaped field      | Median + MAD timing anomaly (≥ 50 ms floor) on either side                  | medium   |
+| `csrf-token-not-validated` | Re-sends state-changing 2xx with the CSRF token mangled, then with the token field omitted | Either probe still returns 2xx (token isn't actually checked)        | high     |
+| `mfa-bypass`           | Re-runs the configured auth macro with every step tagged `step_type="mfa"` removed   | Verification step still returns 2xx → server hands out a full session after the password alone | high |
+| `session-fixation`     | Pre-sets every captured session cookie on the macro's `step_type="login"` step to a distinctive value, replays the login | Post-login Set-Cookie echoes the attacker value OR no Set-Cookie at all (server kept the fixed value) | high |
 
 ### SSRF / OAST
 

@@ -60,8 +60,9 @@ Source: `templates/proxy/intercept_detail.html`, lines L39 / L40 / L44 / L68.
 | `Alt+B`  | Send to [PoC builder](modules/poc.md) |
 | `Alt+J`  | Send to [JWT workbench](modules/jwt.md) |
 | `Alt+O`  | Send to [Decoder](modules/decoder.md) |
+| `Alt+A`  | Send to [Auth Matrix](modules/auth-matrix.md) |
 
-Source: `templates/history/detail.html` L25.
+Source: `templates/history/detail.html` L25, `reqlore/web/send_targets.py` `SEND_TARGETS`.
 
 ## Intruder list (`/intruder/`)
 

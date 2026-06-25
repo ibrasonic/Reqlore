@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Scanner — Live{% endblock %}
+{% block main %}
+{% include "scanner/_section_nav.html" %}
+<h1>Live passive scanning</h1>
+
+<p>
+  The live scanner watches every response recorded by the proxy and
+  applies the passive rules to it in real time. It sends no extra
+  traffic of its own — it only reads what your browser already
+  fetched. Findings appear in the
+  <a href="{{ url_for('scanner.index') }}">Findings</a> view as they
+  are produced. Live scanning is <strong>off by default</strong> and
+  honours the project scope.
+</p>
+
+<p>
+  When traffic arrives faster than the scanner can process it, the
+  overflowing responses are parked in a durable backlog (on disk)
+  and drained on idle. Nothing is silently dropped: every parked
+  row is counted, and the backlog survives a process restart so
+  scan coverage is never lost to a crash.
+</p>
+
+<section aria-labelledby="ctrl-h">
+  <h2 id="ctrl-h">Control</h2>
+  <p>
+    Status:
+    {% if snapshot.alive %}
+      <strong>Running</strong>
+    {% else %}
+      <strong>Stopped</strong>
+    {% endif %}
+    {% if enabled and not snapshot.alive %}
+      <span> — flagged on, but the worker is not currently alive.</span>
+    {% endif %}
+  </p>
+  <form method="post" action="{{ url_for('scanner.live_toggle') }}"
+        class="inline" data-focus-after-submit="#live-toggle">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    {% if snapshot.alive %}
+      <input type="hidden" name="action" value="stop">
+      <button id="live-toggle" type="submit">Stop live passive scanning</button>
+    {% else %}
+      <input type="hidden" name="action" value="start">
+      <button id="live-toggle" type="submit">Start live passive scanning</button>
+    {% endif %}
+  </form>
+</section>
+
+<section aria-labelledby="met-h">
+  <h2 id="met-h">Throughput</h2>
+  <dl>
+    <dt>In-memory queue depth</dt><dd>{{ snapshot.queue_depth }}</dd>
+    <dt>Durable backlog (parked rows)</dt><dd>{{ snapshot.backlog }}</dd>
+    <dt>Rows scanned (this session)</dt><dd>{{ snapshot.scanned }}</dd>
+    <dt>Rows drained from backlog (this session)</dt>
+      <dd>{{ snapshot.backlog_drained }}</dd>
+    <dt>Findings recorded (this session)</dt><dd>{{ snapshot.findings_added }}</dd>
+    <dt>Scans per minute (rolling)</dt>
+      <dd>{{ "%.1f"|format(snapshot.scans_per_minute) }}</dd>
+    {% if snapshot.throughput_buckets %}
+    <dt>Throughput (last 60s)</dt>
+      <dd>
+        {% set _max = (snapshot.throughput_buckets|max) or 1 %}
+        <ul class="sparkline"
+            aria-label="Scans per 10-second slice across the last 60 seconds"
+            role="img">
+          {% for n in snapshot.throughput_buckets %}
+            {% set _pct = ((n * 100) / _max)|int %}
+            <li class="sparkline-bar"
+                style="--bar:{{ _pct }}%"
+                title="{{ n }} scans"><span class="visually-hidden">{{ n }} scans</span></li>
+          {% endfor %}
+        </ul>
+        <span class="sparkline-legend">oldest &rarr; newest</span>
+      </dd>
+    {% endif %}
+    <dt>Skipped — out of scope</dt><dd>{{ snapshot.skipped_out_of_scope }}</dd>
+    <dt>Parked due to overflow (this session)</dt>
+      <dd>{{ snapshot.overflowed }}</dd>
+    <dt>Dropped after retry budget exhausted</dt>
+      <dd>{{ snapshot.dropped_unrecoverable }}</dd>
+    <dt>Rule errors caught</dt><dd>{{ snapshot.errors }}</dd>
+  </dl>
+  {% if snapshot.backlog %}
+    <p role="status">
+      There {% if snapshot.backlog == 1 %}is 1 row{% else %}are
+      {{ snapshot.backlog }} rows{% endif %} waiting in the durable
+      backlog. Use the button below to catch up faster, or let the
+      worker drain them on its own — fresh traffic is always
+      prioritised.
+    </p>
+    <form method="post" action="{{ url_for('scanner.live_catchup') }}"
+          class="inline" data-focus-after-submit="#live-catchup">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <button id="live-catchup" type="submit">Catch up now</button>
+    </form>
+    <form method="post"
+          action="{{ url_for('scanner.live_clear_backlog') }}"
+          class="inline"
+          onsubmit="return confirm('Clear {{ snapshot.backlog }} parked row(s)? They will not be re-scanned.');">
+      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+      <input type="hidden" name="confirm" value="yes">
+      <button type="submit">Discard backlog</button>
+    </form>
+  {% endif %}
+  {% if snapshot.dropped_unrecoverable %}
+    <p role="alert">
+      {{ snapshot.dropped_unrecoverable }} row(s) were dropped after
+      repeated scan failures. Check the project log and the rule
+      that produced the last error before re-enabling live scanning.
+    </p>
+  {% endif %}
+  {% if snapshot.last_error %}
+    <details>
+      <summary>Last error</summary>
+      <pre><code>{{ snapshot.last_error }}</code></pre>
+    </details>
+  {% endif %}
+</section>
+
+<section aria-labelledby="rec-h">
+  <h2 id="rec-h">Latest findings</h2>
+  {% if recent %}
+    <table>
+      <caption>Most recent {{ recent|length }} finding(s)</caption>
+      <thead>
+        <tr>
+          <th scope="col">#</th>
+          <th scope="col">Severity</th>
+          <th scope="col">Title</th>
+          <th scope="col">Host</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in recent %}
+          <tr>
+            <td>
+              <a href="{{ url_for('scanner.show', fid=f.id) }}">{{ f.id }}</a>
+            </td>
+            <td><span class="sev sev-{{ f.severity }}">{{ f.severity }}</span></td>
+            <td>{{ f.title }}</td>
+            <td>{{ f.host }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No findings recorded yet.
+      {% if snapshot.alive %}
+        Browse the target through the proxy and findings will appear
+        here as they are produced.
+      {% else %}
+        Start live scanning above to begin watching proxy traffic.
+      {% endif %}
+    </p>
+  {% endif %}
+</section>
+{% endblock %}

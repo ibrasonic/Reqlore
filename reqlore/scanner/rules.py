@@ -38,6 +38,30 @@ Severity = str   # narrowed by SEVERITIES below
 
 SEVERITIES: tuple[str, ...] = ("info", "low", "medium", "high", "critical")
 
+# Active-check intensity tiers (Burp Suite Pro parity). The active scanner
+# filters checks by ``ActiveOptions.intensity_levels`` so an operator can
+# opt out of expensive or noisy classes of probe without disabling each
+# check by name. The taxonomy mirrors Burp's "audit checks" intensity:
+#
+# * ``light``     — read-only or single-shot probes (CORS, JWT alg-none,
+#                   open-redirect, OAuth redirect-uri, GraphQL
+#                   introspection, default-creds read-only, cloud-blob,
+#                   prototype-pollution).
+# * ``medium``    — single-parameter mutation probes (XSS, SQLi-error,
+#                   SSTI, NoSQLi, XXE-classic, LFI, deserialisation,
+#                   forced-browsing, cache-deception, subdomain-takeover,
+#                   TLS-active, GraphQL-active).
+# * ``intrusive`` — time-based, parallel, or stateful probes that may
+#                   create resources / lock accounts / take noticeable
+#                   wall-clock time (OS-cmd time, OAST-SSRF, smuggling,
+#                   XSS-stored, XSS-DOM, IDOR-alt-identity, race).
+#
+# A plugin whose ``RuleMeta`` predates this field is treated as
+# ``"medium"`` (default value) — neither blocked by the conservative
+# default nor allowed to fire intrusive probes unannounced.
+Intensity = str
+INTENSITIES: tuple[str, ...] = ("light", "medium", "intrusive")
+
 # rule_id must look like "<source>:<slug>" where source is one of the values
 # the findings bus accepts and slug is a non-empty token.
 _RULE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z][A-Za-z0-9._-]*$")
@@ -59,6 +83,12 @@ class RuleMeta:
     references: tuple[str, ...] = field(default_factory=tuple)
     tags: tuple[str, ...] = field(default_factory=tuple)
     version: int = 1
+    # Phase 2 — active-check intensity tier. Passive rules ignore this
+    # field (they always fire). ``"medium"`` is the safe default so
+    # legacy plugins without a tier set don't suddenly run intrusive
+    # probes, and don't get silently filtered out of conservative
+    # scans either.
+    intensity: Intensity = "medium"
 
     def __post_init__(self) -> None:
         # Validation is cheap and prevents typos from drifting into the
@@ -79,6 +109,11 @@ class RuleMeta:
         if self.version < 1:
             raise ValueError(
                 f"RuleMeta(id={self.id!r}).version must be >= 1"
+            )
+        if self.intensity not in INTENSITIES:
+            raise ValueError(
+                f"RuleMeta(id={self.id!r}).intensity {self.intensity!r} "
+                f"must be one of {INTENSITIES}"
             )
 
 
@@ -123,6 +158,22 @@ def id_for(rule_or_check, *, prefix: str) -> str:
     if meta is not None:
         return meta.id
     return legacy_rule_id(rule_or_check, prefix=prefix)
+
+
+def intensity_for(rule_or_check) -> Intensity:
+    """Return the intensity tier for an active check (or rule).
+
+    Looks at ``meta.intensity`` first; falls back to ``"medium"`` so a
+    plugin whose :class:`RuleMeta` predates the field is neither
+    silently filtered out of conservative scans nor allowed to behave
+    like an intrusive probe by accident. Active checks without any
+    ``meta`` at all also default to ``"medium"``.
+    """
+    meta = meta_for(rule_or_check)
+    if meta is None:
+        return "medium"
+    value = getattr(meta, "intensity", "medium")
+    return value if value in INTENSITIES else "medium"
 
 
 def apply_meta_defaults(finding: Finding, meta: RuleMeta | None) -> Finding:

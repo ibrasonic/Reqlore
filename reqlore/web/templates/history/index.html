@@ -265,6 +265,9 @@
                    data-hid="{{ r.id }}"
                    data-label-a="Compare A"
                    data-label-b="Compare B">Compare A</a></li>
+            {% if plugin_apps_available %}
+            <li><a href="{{ url_for('plugins.send_to_chooser', from_history=r.id) }}">Send to plugin app…</a></li>
+            {% endif %}
           </ul>
         </div>
       </td>

@@ -49,6 +49,10 @@ class PluginRecord:
     rules: list[Callable] = field(default_factory=list)
     register: Callable | None = None
     copy_as_handlers: list[Any] = field(default_factory=list)
+    # Phase 16 — standalone plugin apps exported via ``PLUGIN_APP`` /
+    # ``PLUGIN_APPS`` module attributes. Each entry is a
+    # :class:`reqlore.plugins_sdk.PluginApp` validated at load time.
+    plugin_apps: list[Any] = field(default_factory=list)
     error: str = ""
     loaded_at: int = 0
     enabled: bool = True
@@ -143,6 +147,32 @@ class PluginRegistry:
                     out.extend(rec.copy_as_handlers)
             return out
 
+    def active_plugin_apps(self) -> list[Any]:
+        """Phase 16 — list of :class:`PluginApp` from enabled, error-
+        free plugins. Ordered by plugin record then declaration
+        order so the index page is stable."""
+        with self._lock:
+            out: list[Any] = []
+            for rec in self._plugins.values():
+                if rec.enabled and not rec.error:
+                    out.extend(rec.plugin_apps)
+            return out
+
+    def get_plugin_app(self, slug: str) -> Any | None:
+        """Look up a :class:`PluginApp` by slug across all enabled
+        plugins. Returns ``None`` when the slug is unknown or the
+        owning plugin is disabled / broken."""
+        if not slug:
+            return None
+        with self._lock:
+            for rec in self._plugins.values():
+                if not rec.enabled or rec.error:
+                    continue
+                for app in rec.plugin_apps:
+                    if getattr(app, "slug", None) == slug:
+                        return app
+        return None
+
     def call_register(self, app) -> None:
         with self._lock:
             for rec in self._plugins.values():
@@ -220,6 +250,34 @@ class PluginRegistry:
                 if not isinstance(handlers, list):
                     raise TypeError("copy_as() must return a list")
                 rec.copy_as_handlers = list(handlers)
+            # Phase 16 — collect PluginApp instances. Accept either a
+            # single ``PLUGIN_APP`` attribute or a list/tuple as
+            # ``PLUGIN_APPS``; both are common authoring patterns.
+            from .plugins_sdk import PluginApp
+            apps: list[Any] = []
+            single = getattr(mod, "PLUGIN_APP", None)
+            if single is not None:
+                apps.append(single)
+            multi = getattr(mod, "PLUGIN_APPS", None)
+            if multi is not None:
+                if not isinstance(multi, (list, tuple)):
+                    raise TypeError("PLUGIN_APPS must be a list or tuple")
+                apps.extend(multi)
+            if apps:
+                seen_slugs: set[str] = set()
+                for a in apps:
+                    if not isinstance(a, PluginApp):
+                        raise TypeError(
+                            f"PLUGIN_APP must be a PluginApp instance, "
+                            f"got {type(a).__name__}")
+                    if not a.is_runnable():
+                        raise ValueError(
+                            f"plugin app {a.slug!r} has no @runner function")
+                    if a.slug in seen_slugs:
+                        raise ValueError(
+                            f"duplicate plugin app slug {a.slug!r} in module")
+                    seen_slugs.add(a.slug)
+                rec.plugin_apps = apps
             if hasattr(mod, "register"):
                 rec.register = mod.register
         except Exception:
@@ -254,5 +312,13 @@ def reset_registry() -> None:
 
 
 def default_plugin_dirs() -> list[Path]:
-    """User-scoped plugin directory under the home folder."""
-    return [Path.home() / ".rlr" / "plugins"]
+    """Plugin directories searched on first ``get_registry()`` call.
+
+    Order: bundled built-ins shipped inside the wheel
+    (``reqlore/builtin_plugins/``), then the user-scoped folder under
+    ``~/.rlr/plugins``. Both are scanned non-recursively for ``*.py``
+    files — see :meth:`PluginRegistry.discover` for the symlink and
+    name rules.
+    """
+    builtin = Path(__file__).resolve().parent / "builtin_plugins"
+    return [builtin, Path.home() / ".rlr" / "plugins"]

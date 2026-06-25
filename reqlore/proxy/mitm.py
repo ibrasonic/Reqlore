@@ -11,10 +11,12 @@ import logging
 import os
 import threading
 import time
+import urllib.parse
 import uuid
 from typing import Any
 
 from ..storage import Project
+from ..scanner.scope_utils import host_in_scope, load_scope_rules
 from .ca import ensure_ca
 from .matchreplace import MRRule, apply_request, apply_response, from_row
 from .rules import (
@@ -26,6 +28,14 @@ log = logging.getLogger("reqlore.proxy")
 
 HOLD_POLL_MS = 100
 HOLD_TIMEOUT_S = 600  # 10 min: tunable
+
+# Phase 15 — redirect-aware intercept. When the operator forwards a held
+# request whose response is 3xx, the browser issues a follow-up request
+# to the Location target. We stash (parent_iid, ts) for that target so
+# the next request hook can mark the follow-up as a child of the
+# original.  TTL keeps the cache from accumulating stale entries when
+# the browser never actually navigates.
+_REDIRECT_TTL_S = 30.0
 
 
 def _load_mr(project: Project) -> list[MRRule]:
@@ -113,7 +123,10 @@ def _is_self_ui(host: str, port: int, ui_port: int) -> bool:
 
 class _HistoryAddon:
     def __init__(self, project: Project, rules: list[Rule], sync_hold: bool,
-                 ui_port: int = 0, ui_port_fn: Any = None):
+                 ui_port: int = 0, ui_port_fn: Any = None,
+                 live_enqueue: Any = None,
+                 auth_matrix_enqueue: Any = None,
+                 cfg_reader: Any = None):
         self.project = project
         self.rules = rules
         self.sync_hold = sync_hold
@@ -124,6 +137,61 @@ class _HistoryAddon:
         if ui_port_fn is None:
             ui_port_fn = lambda p=ui_port: p  # noqa: E731
         self._ui_port_fn = ui_port_fn
+        # Phase 1 — optional live-scan callback. Called with the
+        # freshly-inserted history-row id after every recorded
+        # response. Wrapped in try/except at the call site so a slow
+        # or broken scanner can never block the proxy event loop.
+        self._live_enqueue = live_enqueue
+        # Phase 17 — optional Auth Matrix shadow callback. Same
+        # contract as ``live_enqueue``: drop-on-overflow, never
+        # blocks the event loop, the worker itself enforces scope.
+        self._auth_matrix_enqueue = auth_matrix_enqueue
+        # Phase 18 — callable returning the live InterceptConfig so
+        # the addon can read runtime-mutable flags (currently just
+        # ``restrict_to_scope``) without recreating the addon when
+        # the operator edits the filter from the UI.
+        self._cfg_reader = cfg_reader
+        # Phase 15 — redirect chain linkage. Keyed by the absolute
+        # URL the parent's Location pointed at; value is
+        # (parent_intercept_id, monotonic_ts).  Single-process lock
+        # because the addon runs on mitmproxy's single event loop
+        # but `_sync_hold` may sit awaiting alongside other flow
+        # hooks.
+        self._redirect_cache: dict[str, tuple[int, float]] = {}
+        self._redirect_lock = threading.Lock()
+
+    # ----- Phase 15: redirect chain helpers -----
+    def _prune_redirect_cache(self, now: float) -> None:
+        """Drop entries older than ``_REDIRECT_TTL_S`` seconds.  Must
+        be called with ``_redirect_lock`` held."""
+        stale = [k for k, (_, ts) in self._redirect_cache.items()
+                 if now - ts > _REDIRECT_TTL_S]
+        for k in stale:
+            self._redirect_cache.pop(k, None)
+
+    def _consume_redirect_parent(self, url: str) -> int | None:
+        """Pop and return the parent intercept id for ``url`` if one
+        was stashed within the TTL window, else None."""
+        if not url:
+            return None
+        with self._redirect_lock:
+            now = time.monotonic()
+            self._prune_redirect_cache(now)
+            hit = self._redirect_cache.pop(url, None)
+        if hit is None:
+            return None
+        parent_iid, _ = hit
+        return parent_iid
+
+    def _stash_redirect_parent(self, url: str, parent_iid: int) -> None:
+        """Record ``parent_iid`` as the parent of any future request to
+        ``url``.  No-op when ``url`` is empty or ``parent_iid`` is 0."""
+        if not url or not parent_iid:
+            return
+        with self._redirect_lock:
+            now = time.monotonic()
+            self._prune_redirect_cache(now)
+            self._redirect_cache[url] = (parent_iid, now)
 
     # ----- request hook -----
     async def request(self, flow: Any) -> None:
@@ -179,15 +247,43 @@ class _HistoryAddon:
             if _is_self_ui_request(req, ui_port):
                 return
 
+            # Phase 15 — if this request's URL is the Location target
+            # of a recently-forwarded held request, mark it as the
+            # child of that intercept so the queue UI can show the
+            # redirect chain.
+            try:
+                parent_iid = self._consume_redirect_parent(req.pretty_url or "")
+            except Exception:
+                # Defence in depth: cache failures must never block
+                # the proxy. We just lose the link badge.
+                log.exception("redirect-cache lookup failed")
+                parent_iid = None
+
             if should_hold_request(self.rules, host, req.method,
                                    req.path or ""):
+                # Phase 18 — opt-in: if restrict_to_scope is on, never
+                # hold requests for hosts outside the project's Sitemap
+                # scope rules. Lets the operator browse non-target
+                # sites without manually toggling intercept off.
+                if self._cfg_reader is not None:
+                    try:
+                        cfg = self._cfg_reader()
+                    except Exception:
+                        cfg = None
+                    if cfg is not None and getattr(
+                            cfg, "restrict_to_scope", False):
+                        if not host_in_scope(
+                                host, load_scope_rules(self.project)):
+                            return
                 if self.sync_hold:
                     await self._sync_hold(
                         "request", flow, _serialise_request(req),
-                        "rule:request", apply_to_request=True)
+                        "rule:request", apply_to_request=True,
+                        parent_intercept_id=parent_iid)
                 else:
                     self.project.enqueue_intercept(
                         "request", _serialise_request(req), "rule:request",
+                        parent_intercept_id=parent_iid,
                     )
         except Exception:
             log.exception("request hook failed")
@@ -216,11 +312,29 @@ class _HistoryAddon:
             duration_ms = int(getattr(flow, "duration", 0.0) * 1000)
             raw_req = _serialise_request(req)
             raw_resp = _serialise_response(resp)
-            self.project.add_history(
+            hid = self.project.add_history(
                 host=host, method=method, url=url, status=status,
                 duration_ms=duration_ms, engine="proxy",
                 raw_req=raw_req, raw_resp=raw_resp,
             )
+            # Phase 1 — hand the freshly-inserted row off to the live
+            # scanner. ``put_nowait`` semantics inside the callback
+            # mean we never block the event loop; the broad except
+            # below is belt-and-braces in case a third-party
+            # implementation raises something unexpected.
+            if self._live_enqueue is not None and hid:
+                try:
+                    self._live_enqueue(int(hid))
+                except Exception:
+                    log.exception("live scan enqueue failed for hid=%s", hid)
+            # Phase 17 — Auth Matrix passive shadow. Same defensive
+            # wrapping: a broken worker can never stall the proxy.
+            if self._auth_matrix_enqueue is not None and hid:
+                try:
+                    self._auth_matrix_enqueue(int(hid))
+                except Exception:
+                    log.exception(
+                        "auth-matrix shadow enqueue failed for hid=%s", hid)
             # Same self-bypass as the request hook: never hold responses
             # coming from the Reqlore UI itself, otherwise the panel's
             # own redirects (e.g. the 302 from /proxy/intercept/toggle)
@@ -228,6 +342,21 @@ class _HistoryAddon:
             ui_port = int(self._ui_port_fn() or 0)
             if _is_self_ui_request(req, ui_port):
                 return
+
+            # Phase 15 — if this response is a 3xx for a flow we held
+            # on the request leg, stash the Location target so the
+            # browser's follow-up request gets linked to this intercept.
+            try:
+                parent_iid = getattr(flow, "_reqlore_iid", None)
+                if parent_iid and 300 <= status < 400:
+                    loc = (resp.headers.get("location")
+                            or resp.headers.get("Location") or "").strip()
+                    if loc:
+                        abs_url = urllib.parse.urljoin(url, loc)
+                        self._stash_redirect_parent(abs_url, int(parent_iid))
+            except Exception:
+                log.exception("redirect-cache stash failed")
+
             if should_hold_response(self.rules, status, resp.headers.get("content-type", "")):
                 if self.sync_hold:
                     await self._sync_hold(
@@ -242,7 +371,8 @@ class _HistoryAddon:
 
     # ----- sync intercept (blocks this flow only, not the event loop) -----
     async def _sync_hold(self, kind: str, flow: Any, raw: bytes, reason: str,
-                          *, apply_to_request: bool) -> None:
+                          *, apply_to_request: bool,
+                          parent_intercept_id: int | None = None) -> None:
         """Park the flow until the operator decides forward / drop / edit.
         Critically: ``await asyncio.sleep`` yields control back to
         mitmproxy's event loop so OTHER flows keep being processed (and
@@ -252,7 +382,17 @@ class _HistoryAddon:
         "everything is now held" symptom we just fixed.
         """
         flow_id = uuid.uuid4().hex
-        iid = self.project.enqueue_intercept_sync(kind, raw, reason, flow_id)
+        iid = self.project.enqueue_intercept_sync(
+            kind, raw, reason, flow_id,
+            parent_intercept_id=parent_intercept_id,
+        )
+        # Phase 15: tag the flow so the response hook knows this is the
+        # parent of any subsequent redirect target.  ``flow`` is a
+        # mitmproxy HTTPFlow which accepts arbitrary attributes.
+        try:
+            flow._reqlore_iid = iid
+        except Exception:
+            pass
         deadline = time.monotonic() + HOLD_TIMEOUT_S
         while time.monotonic() < deadline:
             decision, edited = self.project.get_intercept_decision(iid)
@@ -342,6 +482,18 @@ class ProxyController:
         self._thread: threading.Thread | None = None
         self._master: Any = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Phase 1 — live passive scan worker. Wired by the web app at
+        # boot when the project flag ``live_scan:enabled`` is on.
+        # ``None`` means "do not enqueue"; the addon falls back to its
+        # historical no-live-scan behaviour. The attribute is public
+        # so the scanner blueprint can flip it at runtime without
+        # restarting the proxy.
+        self.live_worker: Any = None
+        # Phase 17 — Auth Matrix passive shadow worker. Same pattern
+        # as ``live_worker``: wired at boot from the web app, public
+        # so the auth-matrix blueprint can flip it at runtime, and
+        # an unset value means "do not shadow".
+        self.auth_matrix_shadow: Any = None
         ensure_ca(ca_dir)
 
     def set_intercept(self, on: bool,
@@ -389,6 +541,36 @@ class ProxyController:
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    # ----- live passive scan -----
+    def _live_enqueue(self, hid: int) -> None:
+        """Forward a history-row id to the live worker if one is
+        attached. Pulled apart from the addon so the worker can be
+        swapped at runtime (``self.live_worker = ...``) without
+        recreating the mitmproxy addon — the addon captures the bound
+        method once at startup and we keep the indirection here.
+        """
+        w = self.live_worker
+        if w is None:
+            return
+        try:
+            w.enqueue(int(hid))
+        except Exception:
+            log.exception("live worker enqueue failed for hid=%s", hid)
+
+    # ----- Auth Matrix passive shadow -----
+    def _auth_matrix_enqueue(self, hid: int) -> None:
+        """Forward a history-row id to the Auth Matrix shadow worker
+        if one is attached. Same swap-at-runtime indirection as
+        :meth:`_live_enqueue`."""
+        w = self.auth_matrix_shadow
+        if w is None:
+            return
+        try:
+            w.enqueue(int(hid))
+        except Exception:
+            log.exception(
+                "auth-matrix shadow enqueue failed for hid=%s", hid)
+
     def _run(self) -> None:
         try:
             from mitmproxy.options import Options
@@ -426,7 +608,10 @@ class ProxyController:
             self._master = self._loop.run_until_complete(_make())
         self._master.addons.add(
             _HistoryAddon(self.project, self.rules, self.sync_hold,
-                          ui_port_fn=lambda: self.ui_port))
+                          ui_port_fn=lambda: self.ui_port,
+                          live_enqueue=self._live_enqueue,
+                          auth_matrix_enqueue=self._auth_matrix_enqueue,
+                          cfg_reader=self.get_intercept_config))
         try:
             self._loop.run_until_complete(self._master.run())
         except Exception:

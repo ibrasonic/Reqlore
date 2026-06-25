@@ -30,6 +30,11 @@
     </label>
     <button type="submit" accesskey="p">Run <u>p</u>assive scan</button>
   </form>
+  <p class="dry-run-estimate" role="note">
+    <strong>Dry-run estimate:</strong>
+    {{ history_count }} requests recorded; the passive scan re-reads
+    each one but sends <strong>0</strong> outbound traffic.
+  </p>
 </section>
 
 <section aria-labelledby="active-h">
@@ -72,6 +77,125 @@
     </fieldset>
 
     <fieldset>
+      <legend>Scan profile</legend>
+      <p id="scan-preset-hint">
+        Scan profiles bundle intensity, probe budget, rate delay,
+        redirect follow and wall-clock cap into a single named
+        choice (matching Burp Suite's preset names). Pick a profile
+        and the fields above act as overrides.
+      </p>
+      <ul class="preset-bar" role="radiogroup"
+          aria-labelledby="scan-preset-hint">
+        {% for p in scan_presets %}
+        <li>
+          <label>
+            <input type="radio" name="scan_preset" value="{{ p.name }}"
+                   {% if p.name == default_scan_preset %}checked{% endif %}>
+            <span>
+              <strong>
+                {{ p.name[:1].upper() ~ p.name[1:] }}
+              </strong>
+              &mdash; {{ p.description }}
+            </span>
+          </label>
+        </li>
+        {% endfor %}
+      </ul>
+      <p id="skip-js-hint">
+        JavaScript analysis runs the AST taint analyser on every
+        JS / HTML response (Balanced profile) and additionally
+        spins up a headless browser to confirm DOM-XSS hits (Deep
+        profile). Tick the box below to skip both stages
+        regardless of profile &mdash; useful when the headless
+        browser isn't installed or the corpus is binary-heavy.
+      </p>
+      <p>
+        <input type="checkbox" id="skip_js_analysis"
+               name="skip_js_analysis" value="1"
+               aria-describedby="skip-js-hint">
+        <label for="skip_js_analysis">
+          Skip JavaScript analysis (override profile)
+        </label>
+      </p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Authentication <small>(optional)</small></legend>
+      <p id="auth-hint">
+        Run a recorded login macro before the audit starts, keep the
+        session warm by replaying it on demand, and (optionally)
+        refresh CSRF tokens from the form's parent page before each
+        write probe. Off by default. Credentials are never logged.
+      </p>
+      <p>
+        <input type="checkbox" id="auth_enabled" name="auth_enabled"
+               value="1">
+        <label for="auth_enabled">
+          <strong>Enable authenticated scan</strong>
+        </label>
+      </p>
+      <p>
+        <label for="auth_macro_id">Login macro</label>
+        <select id="auth_macro_id" name="auth_macro_id"
+                aria-describedby="auth-hint">
+          <option value="0">(none selected)</option>
+          {% for m in auth_macros %}
+          <option value="{{ m.id }}">#{{ m.id }} &mdash; {{ m.name }}</option>
+          {% endfor %}
+        </select>
+        {% if not auth_macros %}
+        <span class="hint">
+          No macros stored yet &mdash;
+          <a href="{{ url_for('macros.index') }}">create one</a>
+          first.
+        </span>
+        {% endif %}
+      </p>
+      <p>
+        <label for="auth_username">Username variable</label>
+        <input id="auth_username" name="auth_username" type="text"
+               autocomplete="off"
+               placeholder="alice (substituted into &lt;&lt;username&gt;&gt;)">
+      </p>
+      <p>
+        <label for="auth_password">Password variable</label>
+        <input id="auth_password" name="auth_password" type="password"
+               autocomplete="off"
+               placeholder="substituted into &lt;&lt;password&gt;&gt;">
+      </p>
+      <p>
+        <label for="auth_session_cookie_names">
+          Session cookie names <small>(comma-separated)</small>
+        </label>
+        <input id="auth_session_cookie_names"
+               name="auth_session_cookie_names" type="text"
+               placeholder="SID, JSESSIONID">
+      </p>
+      <p>
+        <label for="auth_validity_url">
+          Session validity probe URL <small>(optional)</small>
+        </label>
+        <input id="auth_validity_url" name="auth_validity_url"
+               type="url"
+               placeholder="https://target/me">
+      </p>
+      <p>
+        <label for="auth_revalidate_every">
+          Revalidate every N probes
+        </label>
+        <input id="auth_revalidate_every" name="auth_revalidate_every"
+               type="number" value="25" min="0" max="10000">
+      </p>
+      <p>
+        <label for="auth_csrf_token_names">
+          CSRF token field names <small>(comma-separated, optional)</small>
+        </label>
+        <input id="auth_csrf_token_names" name="auth_csrf_token_names"
+               type="text" placeholder="csrf_token, authenticity_token">
+      </p>
+    </fieldset>
+
+    <fieldset>
       <legend>Preset</legend>
       <p id="preset-hint">
         A preset picks which checks run. <em>Custom</em> uses the checkboxes
@@ -107,6 +231,61 @@
       </ul>
     </fieldset>
 
+    <fieldset class="intensity-tiers">
+      <legend>Intensity tiers</legend>
+      <p id="intensity-hint">
+        Tiers gate <em>how aggressive</em> the chosen checks are allowed to
+        be. Explicit check selection (Customise checks) always wins, so a
+        single check ticked by name still runs even if its tier is off.
+      </p>
+      <ul aria-labelledby="intensity-hint">
+        <li>
+          <input type="checkbox" id="intensity-light"
+                 name="intensity_light" value="1" checked>
+          <label for="intensity-light">
+            <strong>Light</strong> &mdash; read-only or single-shot probes
+            (CORS, JWT, open-redirect, OAuth&#8209;redirect, GraphQL
+            introspection, default-creds, cloud-blob, prototype-pollution).
+          </label>
+        </li>
+        <li>
+          <input type="checkbox" id="intensity-medium"
+                 name="intensity_medium" value="1" checked>
+          <label for="intensity-medium">
+            <strong>Medium</strong> &mdash; single-parameter mutation probes
+            (XSS, SQLi, SSTI, NoSQLi, XXE, LFI, deserialisation,
+            forced&#8209;browsing, cache deception, subdomain takeover,
+            TLS, GraphQL active).
+          </label>
+        </li>
+        <li>
+          <input type="checkbox" id="intensity-intrusive"
+                 name="intensity_intrusive" value="1"
+                 aria-describedby="intrusive-warning">
+          <label for="intensity-intrusive">
+            <strong>Intrusive</strong> &mdash; time-based, parallel, or
+            stateful probes (OS-cmd time, OAST-SSRF, HTTP smuggling,
+            stored/DOM XSS, IDOR alt-identity, race conditions).
+          </label>
+        </li>
+      </ul>
+      <p id="intrusive-warning" role="status" class="warn">
+        <span aria-hidden="true">&#9888;</span>
+        <strong>Warning &mdash; Intrusive scans</strong> send time-based
+        sleep probes, attempt to plant stored payloads, and may run
+        parallel requests that look like an attack in target logs. Only
+        enable this tier against systems you are authorised to test.
+      </p>
+      <p>
+        <input type="checkbox" id="confirm-intrusive"
+               name="confirm_intrusive" value="yes">
+        <label for="confirm-intrusive">
+          <strong>I confirm</strong> I am authorised to run intrusive
+          checks against this target. (Required if Intrusive is ticked.)
+        </label>
+      </p>
+    </fieldset>
+
     <details class="customise-checks">
       <summary>Customise checks</summary>
       {% for group in groups %}
@@ -126,6 +305,18 @@
       </fieldset>
       {% endfor %}
     </details>
+
+    <p class="dry-run-estimate" role="note">
+      <strong>Dry-run estimate:</strong>
+      Active scans are capped at
+      <strong>32 probes</strong> per (rule, request) by default. With the
+      form's default <strong>20-request</strong> limit and all 28 builtin
+      checks enabled, an upper-bound estimate is
+      <strong>20 &times; 32 = 640 outbound requests</strong>
+      (most rules send far fewer in practice — the cap is a ceiling,
+      not a target). Reduce the request limit or restrict the check
+      list below to lower the bound.
+    </p>
 
     <p><button type="submit" accesskey="a">Run <u>a</u>ctive scan</button></p>
   </form>

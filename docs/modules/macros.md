@@ -62,7 +62,17 @@ session fresh during long active scans.
                     "pattern": "csrf_token=([A-Za-z0-9]+)"}
       },
       "timeout_s": 10.0,
-      "follow_redirects": true
+      "follow_redirects": true,
+      "step_type": "login"
+    },
+    {
+      "name": "otp",
+      "method": "POST",
+      "url": "https://app.example/otp",
+      "headers": {"Cookie": "{{session}}",
+                  "Content-Type": "application/x-www-form-urlencoded"},
+      "body": "code=123456",
+      "step_type": "mfa"
     },
     {
       "name": "verify",
@@ -73,6 +83,22 @@ session fresh during long active scans.
   ]
 }
 ```
+
+### Step `step_type` tag
+
+`step_type` is an optional string on each step (default `""`). It
+tells the [Scanner](scanner.md)'s auth-flow active checks which
+step plays which role:
+
+| Value     | Used by                                | Effect                                                                     |
+|-----------|----------------------------------------|----------------------------------------------------------------------------|
+| `""`      | nothing — default for every legacy step | The check skips macros that don't tag any step.                            |
+| `"login"` | `active:session-fixation`              | The check pre-sets every captured session cookie on this step's request, replays the macro, and inspects whether the server rotates the cookie on login. |
+| `"mfa"`   | `active:mfa-bypass`                    | The check removes every step tagged `mfa` from a re-run of the macro and inspects whether the verification step still returns 2xx (proving the second factor is decorative). |
+
+Both checks need an `auth_session` configured on the active scan and
+fire at most once per scan. Legacy macros without `step_type` continue
+to load and run unchanged — the active checks simply skip them.
 
 ### Capture sources
 

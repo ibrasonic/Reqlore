@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — New Auth Matrix session{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('.sessions_list') }}">&larr; Sessions</a>
+</nav>
+<h1>New session</h1>
+
+{% if seed_hid %}
+  <section aria-labelledby="seed-h">
+    <h2 id="seed-h">Seeded from history #{{ seed_hid }}</h2>
+    <dl class="meta">
+      <dt>Method</dt><dd>{{ seed_method }}</dd>
+      <dt>URL</dt><dd><code>{{ seed_url }}</code></dd>
+    </dl>
+    <p class="help">
+      Auto-detected kind: <code>{{ suggestion.kind or 'anon' }}</code>.
+      You can change it before saving.
+    </p>
+  </section>
+{% endif %}
+
+<form method="post">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  {% if seed_hid %}
+    <input type="hidden" name="from_history" value="{{ seed_hid }}">
+  {% endif %}
+  <p>
+    <label for="f-name">Name <abbr title="required">*</abbr></label><br>
+    <input type="text" id="f-name" name="name" required maxlength="80"
+           placeholder="e.g. admin, low-priv user, anon">
+  </p>
+  <p>
+    <label for="f-kind">Kind</label><br>
+    <select id="f-kind" name="kind" required>
+      {% for k in kinds %}
+        <option value="{{ k }}"
+          {% if suggestion.kind == k %}selected{% elif not suggestion.kind and k == 'cookie' %}selected{% endif %}>
+          {{ k }}
+        </option>
+      {% endfor %}
+    </select>
+    <br><small>
+      <code>cookie</code>: full Cookie header value •
+      <code>bearer</code>: just the JWT/token •
+      <code>header</code>: one <code>Name: Value</code> line •
+      <code>multi</code>: multiple <code>Name: Value</code> lines •
+      <code>anon</code>: strip all auth headers.
+    </small>
+  </p>
+  <p>
+    <label for="f-payload">Payload</label><br>
+    <textarea id="f-payload" name="payload" rows="6" cols="80"
+              placeholder="session=abc; XSRF=xyz">{{ suggestion.payload or '' }}</textarea>
+  </p>
+  <p>
+    <button type="submit">Save session</button>
+    <a href="{{ url_for('.sessions_list') }}">Cancel</a>
+  </p>
+</form>
+{% endblock %}

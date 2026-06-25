@@ -26,10 +26,16 @@
         and messages so DOM Hunter can attribute the source.</dd>
     <dt>Scope</dt>
     <dd>
-      {% if scope %}
-        {{ scope|join(', ') }}
+      {% if effective_scope %}
+        {{ effective_scope|join(', ') }}
+        {% if inherit_sitemap and inherited_hosts %}
+          <br><small>(inheriting {{ inherited_hosts|length }} host{{ '' if inherited_hosts|length == 1 else 's' }} from sitemap scope)</small>
+        {% endif %}
       {% else %}
         every host (no scope filter set)
+        {% if inherit_sitemap %}
+          <br><small>(sitemap inheritance on, but no enabled host-include rules in the sitemap)</small>
+        {% endif %}
       {% endif %}
     </dd>
   </dl>

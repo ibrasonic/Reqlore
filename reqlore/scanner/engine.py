@@ -41,6 +41,15 @@ class ScanResult:
     rows_skipped_resume: int = 0
     last_scanned_id: int | None = None
     deadline_seconds: float = 0.0
+    # Phase 1 — scope-awareness diagnostics.
+    skipped_out_of_scope: int = 0
+    scanned_in_scope: int = 0
+    # Phase 11 — consolidation diagnostics. Zero unless the post-scan
+    # consolidation pass actually rolled or collapsed anything.
+    consolidation_directory_rollups: int = 0
+    consolidation_findings_triaged: int = 0
+    consolidation_cross_host_collapses: int = 0
+    consolidation_backend_rollups: int = 0
 
 
 def _rule_id_for(rule) -> str:
@@ -66,7 +75,8 @@ class Scanner:
 
     def scan_project(self, project, *, limit: int = 5000,
                       deadline_seconds: float | None = DEFAULT_DEADLINE_SECONDS,
-                      resume: bool = True) -> ScanResult:
+                      resume: bool = True,
+                      respect_scope: bool = True) -> ScanResult:
         """Run every rule against the most recent `limit` history rows and
         write the findings to the project file. Duplicates are suppressed via
         the per-finding dedupe_key.
@@ -82,11 +92,21 @@ class Scanner:
           processed by a previous call (tracked in ``project_state`` under
           ``scanner.passive.last_scanned_id``). Pass ``resume=False`` for a
           full re-scan (the CLI exposes this as ``--full``).
+        * ``respect_scope`` — when ``True`` (default), rows whose host is
+          out of project scope are counted in ``skipped_out_of_scope``
+          and never passed to passive rules. The active scanner has
+          always honoured scope; the passive scanner used to ignore it,
+          which surprised operators. Pass ``respect_scope=False`` for
+          unfiltered scans (CLI / tests).
         """
         t0 = time.monotonic()
         result = ScanResult()
         if deadline_seconds is not None:
             result.deadline_seconds = float(deadline_seconds)
+        # Phase 1 — load scope rules once. The helper handles older
+        # fake projects in tests that don't implement ``list_scope``.
+        from .scope_utils import host_in_scope, load_scope_rules
+        scope_rules = load_scope_rules(project) if respect_scope else []
         # B.5 — resume bookkeeping. We read the marker once before the loop;
         # we don't re-read inside it because the only writer is this method.
         resume_from = 0
@@ -122,6 +142,14 @@ class Scanner:
                     and (time.monotonic() - t0) >= deadline_seconds):
                 result.aborted_due_to_deadline = True
                 break
+            # Phase 1 — scope filter. The row counts as "scanned" only
+            # if we actually ran rules against it; skipped rows roll up
+            # into ``skipped_out_of_scope`` so the operator can see why
+            # the totals don't match the history table.
+            if respect_scope and not host_in_scope(row.host or "", scope_rules):
+                result.skipped_out_of_scope += 1
+                continue
+            result.scanned_in_scope += 1
             result.rows_scanned += 1
             if row.id > highest_id_seen:
                 highest_id_seen = row.id
@@ -143,6 +171,7 @@ class Scanner:
                         host=f.host, url=f.url,
                         request_id=f.request_id, response_id=f.response_id,
                         evidence=f.evidence, payload=f.payload,
+                        confidence=getattr(f, "confidence", "firm"),
                     )
                     if fid is not None:
                         result.findings_added += 1
@@ -179,6 +208,24 @@ class Scanner:
             # Sequencer is best-effort: a bad sample must never abort the
             # scan. Failures are intentionally silent here; the
             # rule_runs row records "no_match" which is enough.
+            pass
+        # Phase 11 — issue noise reduction. Same defensive posture as
+        # the sequencer above: a consolidation failure must never
+        # mask a successful scan, so we trap broadly and move on.
+        try:
+            from .consolidation import (
+                consolidate_frequent_findings, load_settings,
+            )
+            cs = load_settings(project)
+            if cs.enabled:
+                cres = consolidate_frequent_findings(project, settings=cs)
+                result.consolidation_directory_rollups = cres.directory_rollups
+                result.consolidation_findings_triaged = cres.findings_triaged
+                result.consolidation_cross_host_collapses = (
+                    cres.cross_host_collapses
+                )
+                result.consolidation_backend_rollups = cres.backend_rollups
+        except Exception:
             pass
         result.elapsed_ms = int((time.monotonic() - t0) * 1000)
         return result

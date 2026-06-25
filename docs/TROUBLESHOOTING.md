@@ -37,6 +37,7 @@ the *Troubleshooting* section on each [module page](modules/).
 | Localhost (`127.0.0.1`) bypasses the proxy in Firefox     | Firefox bypasses by default                                              | Reqlore's launcher sets `network.proxy.allow_hijacking_localhost=true`. Re-launch via `reqlore browser`. |
 | Match & Replace rules don't fire                         | Rule is disabled, or `host_regex` doesn't match                          | Toggle `enabled`; double-check the regex.                                                        |
 | Smuggling payload never desyncs                          | Sent via `httpx` / `curl-cffi` — both normalise TE/CL                    | Switch [Repeater](modules/repeater.md) engine to `raw`. See [engines.md](engines.md).            |
+| Intercept matches a rule but holds nothing               | `restrict_to_scope` is checked and the host is out-of-scope per Sitemap | Either add the host to your Sitemap include scope (**Settings → Scope**) or untick **Only hold requests for hosts that are in scope** on the intercept filter. Detail in [proxy.md](modules/proxy.md#intercept-rules). |
 
 ---
 
@@ -64,6 +65,38 @@ See [Browser launcher](browser-launcher.md) for full detail.
 | Match & Replace leaks API key to third parties            | No `host_regex` set                                                     | Always restrict by host.                                                                         |
 
 ---
+
+## Auth Matrix
+
+- **Shadow worker is on but no cells appear.** Open **Auth Matrix →
+  Shadow worker**. If *Skipped (out of scope)* equals *Enqueued*,
+  the host isn't in your project's include scope — broaden the
+  scope under **Settings → Scope** (or clear it). If *Processed*
+  is 0 with no skips and no enqueues, the proxy is not routing
+  responses through the shadow hook; restart `reqlore both`.
+- **Every cell verdict is `identical`.** Only one session is
+  marked *active*, so the self-baseline guard collapses every
+  comparison to the source identity. Activate a second session in
+  **Auth Matrix → Sessions**.
+- **`bypass-suspect` everywhere.** The baseline session is in the
+  compare list, or `privileged_floor` is too low. Don't include the
+  baseline in compare; bump `privileged_floor` to 95+ for noisy
+  apps. Detail in [auth-matrix.md](modules/auth-matrix.md#verdict-labels).
+- **Active run stops at `timeout`.** Hit the default 10-minute
+  watchdog cap. Split the run into smaller batches via the
+  *History rows* field, or set `inter_request_sleep_s=0` if you'd
+  bumped it.
+- **TLS handshake fails on the replayed request.** *Verify TLS* is
+  off by default; if you ticked it for a self-signed target,
+  untick and re-run.
+- **302 → /login surfaces as `bypass-suspect` instead of
+  `denied-correctly`.** *Follow redirects* is on; the runner ends
+  up at the login form (status 200) and similarity is incidentally
+  high. Untick *Follow redirects* — auth-bypass tests want to see
+  the raw 302.
+- **Issue won't go away after dismissing the cell.** Dismissal
+  updates the cell verdict only; the finding lives in the *Issues*
+  table. Close it from the Scanner / Issues view.
 
 ## Scanner
 
@@ -116,6 +149,7 @@ See [Browser launcher](browser-launcher.md) for full detail.
 | Jobs don't run after restart                              | Scheduler is stopped by default                                          | Click **Start scheduler** after each restart.                                                     |
 | Backend says `thread`, not `apscheduler`                 | `[schedule]` extra missing                                              | `pip install reqlore[schedule]` for better precision.                                            |
 | Exception in scan silently lost                          | `_thread_loop()` catches and ignores                                    | Tail Reqlore stderr; or run via `/scanner/` to surface the traceback.                            |
+| Start refused: "Scheduler is already running for this project (pid X on host Y)" | Another Reqlore process holds the cross-process lock at `project_state["sched:lock"]` | Stop the other process, or wait ≈ 30 s for its TTL to expire. Detail in [scheduler.md](modules/scheduler.md#multi-process-safety). |
 
 ---
 

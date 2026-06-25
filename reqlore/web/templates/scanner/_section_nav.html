@@ -1,11 +1,16 @@
 {# Section nav for the scanner module.
-   Pass `active` (one of: findings, run, coverage, suppressions) so we can
-   mark the right link with aria-current="page". Pure HTML + CSS, no JS. #}
+   Pass `active` (one of: findings, run, live, coverage, suppressions)
+   so we can mark the right link with aria-current="page". Pure HTML +
+   CSS, no JS. #}
 <nav class="section-nav" aria-label="Scanner sections">
   <a href="{{ url_for('scanner.index') }}"
      {% if active == 'findings' %}aria-current="page"{% endif %}>Findings</a>
+  <a href="{{ url_for('scanner.live') }}"
+     {% if active == 'live' %}aria-current="page"{% endif %}>Live</a>
   <a href="{{ url_for('scanner.run_page') }}"
      {% if active == 'run' %}aria-current="page"{% endif %}>Run scan</a>
+  <a href="{{ url_for('scanner.priority_preview') }}"
+     {% if active == 'priority' %}aria-current="page"{% endif %}>Priority preview</a>
   <a href="{{ url_for('scanner.coverage') }}"
      {% if active == 'coverage' %}aria-current="page"{% endif %}>Coverage</a>
   <a href="{{ url_for('scanner.suppressions') }}"

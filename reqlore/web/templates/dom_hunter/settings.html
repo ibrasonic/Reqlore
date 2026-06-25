@@ -28,6 +28,30 @@
     <label for="s-scope">Hosts (one per line; <code>*.example.com</code> for subdomains)</label>
     <textarea id="s-scope" name="scope" rows="4" placeholder="example.com&#10;*.example.com&#10;localhost:3001">{{ scope }}</textarea>
     <p><small>Empty = every host. Outside-of-scope tabs receive no hooks. Full URLs work too (e.g. <code>http://localhost:3001/login</code>) &mdash; the host (with port) is extracted automatically.</small></p>
+
+    <label><input type="checkbox" id="s-inherit" name="inherit_sitemap" value="1"
+                  {% if inherit_sitemap %}checked{% endif %}
+                  aria-describedby="s-inherit-hint">
+           Also include hosts from the project sitemap scope</label>
+    <p id="s-inherit-hint"><small>When on, the effective scope unions the
+       list above with the hosts you marked as <em>include</em> in
+       <a href="{{ url_for('sitemap.index') }}">Sitemap &amp; Scope</a>
+       (enabled, target&nbsp;=&nbsp;host). Off by default so the legacy
+       &ldquo;empty&nbsp;=&nbsp;every host&rdquo; contract is preserved
+       for existing projects.</small></p>
+    {% if inherit_sitemap %}
+      <details open>
+        <summary>Hosts inherited from sitemap ({{ inherited_hosts|length }})</summary>
+        {% if inherited_hosts %}
+          <ul>
+            {% for h in inherited_hosts %}<li><code>{{ h }}</code></li>{% endfor %}
+          </ul>
+        {% else %}
+          <p><small>No enabled host-target include rules in the project
+             sitemap scope &mdash; nothing to inherit yet.</small></p>
+        {% endif %}
+      </details>
+    {% endif %}
   </fieldset>
 
   <fieldset>

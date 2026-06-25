@@ -39,16 +39,25 @@
         <th scope="col">Fired</th>
         <th scope="col">Evaluated</th>
         <th scope="col">Hit rate</th>
+        <th scope="col">Last fire</th>
       </tr>
     </thead>
     <tbody>
       {% for r in summary %}
         {% set pct = (100.0 * r.fired / r.evaluated) if r.evaluated else 0 %}
+        {% set lft = last_fire.get(r.rule_id, 0) %}
         <tr>
           <td><code>{{ r.rule_id }}</code></td>
           <td>{{ r.fired }}</td>
           <td>{{ r.evaluated }}</td>
           <td>{{ "%.1f"|format(pct) }}%</td>
+          <td>
+            {% if lft %}
+              <time datetime="{{ lft|unixtime_iso }}">{{ lft|unixtime_human }}</time>
+            {% else %}
+              <em>never</em>
+            {% endif %}
+          </td>
         </tr>
       {% endfor %}
     </tbody>
@@ -68,17 +77,26 @@
         <th scope="col">Host</th>
         <th scope="col">Fired</th>
         <th scope="col">Evaluated</th>
+        <th scope="col">Last fire</th>
         <th scope="col">Why not fired</th>
       </tr>
     </thead>
     <tbody>
       {% for r in by_host %}
         {% set pair_reasons = reasons_by_pair.get((r.rule_id, r.host), []) %}
+        {% set lft = last_fire_by_host.get((r.rule_id, r.host), 0) %}
         <tr>
           <td><code>{{ r.rule_id }}</code></td>
           <td><code>{{ r.host or '(unknown)' }}</code></td>
           <td>{{ r.fired }}</td>
           <td>{{ r.evaluated }}</td>
+          <td>
+            {% if lft %}
+              <time datetime="{{ lft|unixtime_iso }}">{{ lft|unixtime_human }}</time>
+            {% else %}
+              <em>never</em>
+            {% endif %}
+          </td>
           <td>
             {% if r.fired == r.evaluated %}
               <em>fired every time</em>

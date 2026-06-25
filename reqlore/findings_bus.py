@@ -17,8 +17,14 @@ could not see them.
 3. optionally stores the raw request/response bytes via
    :meth:`Project.add_reproduction` and passes the resulting token to
    :meth:`Project.add_finding`;
-4. delegates the actual insert to :meth:`Project.add_finding`, which already
-   handles dedupe on the stable ``rule_id|host|url|sha256(evidence)[:16]`` key.
+4. (Phase 3) fingerprints the response bytes against the WAF / framework
+   error-page catalogue and demotes the finding's confidence to
+   ``"tentative"`` when a vendor block-page or debugger page is detected
+   so the finding stays in the ledger but doesn't crowd the high-severity
+   list;
+5. delegates the actual insert to :meth:`Project.add_finding`, which already
+   handles dedupe + occurrence-count bumping on the stable
+   ``rule_id|host|<normalised url>|sha256(evidence)[:16]`` key.
 
 Returns the integer finding id on success, ``None`` when suppressed.
 """
@@ -29,6 +35,33 @@ from typing import Sequence
 
 Reproduction = tuple[bytes, bytes, str, str, int, int]
 # (request_blob, response_blob, method, url, status, elapsed_ms)
+
+
+def _parse_response_for_fingerprint(
+    resp_blob: bytes | None,
+) -> tuple[bytes, list[tuple[str, str]]]:
+    """Split an HTTP/1.1 response blob into headers + body for the
+    fingerprint module. Best-effort: malformed blobs return ``(b"", [])``
+    so the caller can't be broken by a bad fixture.
+    """
+    if not resp_blob:
+        return b"", []
+    try:
+        head, _, body = resp_blob.partition(b"\r\n\r\n")
+        lines = head.split(b"\r\n")
+        headers: list[tuple[str, str]] = []
+        # Skip the status line (first entry).
+        for raw in lines[1:]:
+            try:
+                name, _, value = raw.decode("latin-1").partition(":")
+            except UnicodeDecodeError:
+                continue
+            name = name.strip()
+            if name:
+                headers.append((name, value.strip()))
+        return body, headers
+    except (ValueError, AttributeError):
+        return b"", []
 
 
 def record_finding(project, *, source: str, severity: str, title: str,
@@ -44,6 +77,9 @@ def record_finding(project, *, source: str, severity: str, title: str,
                     evidence: str = "", payload: str = "",
                     reproduction: Reproduction | None = None,
                     extra_targets: Sequence[tuple[str, str]] | None = None,
+                    confidence: str = "firm",
+                    response_body: bytes | None = None,
+                    response_headers: Sequence[tuple[str, str]] | None = None,
                     ) -> int | None:
     """Insert a finding through the bus. Returns the finding id, or ``None``
     when a suppression matches.
@@ -52,6 +88,15 @@ def record_finding(project, *, source: str, severity: str, title: str,
     avoid a circular import). ``source`` should be one of
     :attr:`Project.SOURCES`. ``rule_id`` is optional but strongly recommended:
     suppressions, dedupe quality, and rule-run telemetry all key off it.
+
+    Phase 3 additions:
+
+    * ``confidence`` \u2014 ``"tentative"`` / ``"firm"`` / ``"certain"``. Default
+      ``"firm"`` keeps older callers source-compatible.
+    * ``response_body`` / ``response_headers`` \u2014 if either is supplied (or
+      a ``reproduction`` tuple is supplied) the response is fingerprinted
+      against the WAF + framework error-page catalogue. A match demotes
+      ``confidence`` to ``"tentative"`` and attaches ``fingerprint_tags``.
     """
     if project.is_suppressed(rule_id=rule_id, host=host, url=url):
         project.record_rule_run(
@@ -68,6 +113,30 @@ def record_finding(project, *, source: str, severity: str, title: str,
             method=method, url=repro_url or url,
             status=status, elapsed_ms=elapsed_ms,
         )
+        # Phase 3 \u2014 use the reproduction's response bytes for fingerprinting
+        # when the caller didn't explicitly pass response_body. This is the
+        # common case for active checks that already produce repros.
+        if response_body is None and response_headers is None:
+            response_body, response_headers = _parse_response_for_fingerprint(
+                resp_blob
+            )
+
+    # Phase 3 \u2014 fingerprint + confidence pipeline. Defensive: any failure
+    # inside the fingerprint stage falls back to the caller's ``confidence``
+    # with no tags rather than swallowing the whole finding. Imported
+    # lazily to avoid a circular import (scanner/__init__ imports back
+    # into this module via the scan engine).
+    fingerprint_tags = ""
+    try:
+        from .scanner.fingerprints import (
+            apply_fingerprint, fingerprint_response,
+        )
+        tags = fingerprint_response(response_body, response_headers)
+        effective_confidence, fingerprint_tags = apply_fingerprint(
+            tags, base_confidence=confidence,
+        )
+    except Exception:  # noqa: BLE001 \u2014 fingerprinting must never break the bus
+        effective_confidence = confidence
 
     fid = project.add_finding(
         severity=severity, title=title, cwe=cwe, owasp=owasp,
@@ -79,6 +148,8 @@ def record_finding(project, *, source: str, severity: str, title: str,
         cvss_vector=cvss_vector, cvss_score=cvss_score,
         reproduction_token=token,
         extra_targets=list(extra_targets or []),
+        confidence=effective_confidence,
+        fingerprint_tags=fingerprint_tags,
     )
     project.record_rule_run(
         rule_id=rule_id, rule_version=rule_version,

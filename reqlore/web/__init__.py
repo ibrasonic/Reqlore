@@ -49,6 +49,94 @@ def create_app(project_path: Path, settings: Settings, *,
         if project.get_state("intercept_on", "0") == "1":
             proxy.set_intercept(True)
 
+    # Phase 1 — live passive scan worker. The worker is always
+    # *constructed* so the /scanner/live UI has something to toggle,
+    # but it only ``start()``s when the project flag is on. OFF by
+    # default (SC 3.2.5 Change on Request — user must opt in).
+    if proxy is not None:
+        from ..scanner import BUILTIN_RULES, LiveScanWorker, Scanner
+        from ..plugins import get_registry as _get_plugin_registry
+        try:
+            _extra_passive = _get_plugin_registry().active_rules()
+        except Exception:
+            _extra_passive = []
+        _live_scanner = Scanner(rules=BUILTIN_RULES,
+                                 extra_rules=list(_extra_passive))
+        _live_worker = LiveScanWorker(project, _live_scanner)
+        proxy.live_worker = _live_worker
+        app.extensions["reqlore_live_worker"] = _live_worker
+        if project.get_state("live_scan:enabled", "0") == "1":
+            _live_worker.start()
+
+        import atexit
+        atexit.register(lambda w=_live_worker: w.stop(timeout=1.0))
+
+    # Phase 14 — scheduler auto-start.  Off by default (SC 3.2.5).
+    # When the operator has previously toggled `sched:auto_start` on,
+    # boot the scheduler here so persisted jobs run without the user
+    # having to visit /schedule/ after every restart.
+    try:
+        from ..scheduler import Scheduler as _Scheduler  # local import: optional dep chain
+        if "reqlore_scheduler" not in app.extensions:
+            app.extensions["reqlore_scheduler"] = _Scheduler(project)
+        if project.get_state("sched:auto_start", "0") == "1":
+            try:
+                app.extensions["reqlore_scheduler"].start()
+            except Exception:
+                # Boot must never fail because the scheduler couldn't
+                # arm a job; the /schedule/ UI surfaces the error.
+                pass
+        import atexit as _atexit
+        _atexit.register(lambda s=app.extensions["reqlore_scheduler"]: s.stop())
+    except Exception:
+        pass
+
+    # Phase 16 — Plugin App runner. One per project; survives the
+    # whole app lifetime. Defensive: even a runner construction
+    # failure must not prevent the web UI from booting (the operator
+    # can still use everything except plugin apps).
+    try:
+        from ..plugin_runner import PluginRunner as _PluginRunner
+        if "reqlore_plugin_runner" not in app.extensions:
+            app.extensions["reqlore_plugin_runner"] = _PluginRunner(project)
+        import atexit as _atexit_pr
+        _atexit_pr.register(
+            lambda r=app.extensions["reqlore_plugin_runner"]: r.shutdown())
+    except Exception:
+        pass
+
+    # Phase 17 — Auth Matrix runner + passive shadow worker. Both are
+    # defensive: any construction failure here must not prevent the
+    # web UI from booting; the operator just sees an "unavailable"
+    # banner on the Auth Matrix pages.
+    try:
+        from ..auth_matrix import AuthMatrixRunner as _AMRunner
+        from ..auth_matrix import AuthShadowWorker as _AMShadow
+        if "reqlore_auth_matrix_runner" not in app.extensions:
+            app.extensions["reqlore_auth_matrix_runner"] = _AMRunner(project)
+        if "reqlore_auth_matrix_shadow" not in app.extensions:
+            app.extensions["reqlore_auth_matrix_shadow"] = _AMShadow(project)
+        # Hand the shadow worker to the proxy so the mitm addon can
+        # enqueue every recorded response. Without this the shadow
+        # mode can still be used by enqueueing manually from the UI
+        # but the whole point of "passive" is that it just works.
+        if proxy is not None:
+            proxy.auth_matrix_shadow = app.extensions["reqlore_auth_matrix_shadow"]
+        # Optionally auto-start the shadow worker if the operator
+        # left it enabled on the previous session.
+        try:
+            if project.get_state("auth_matrix:shadow_enabled", "") == "1":
+                app.extensions["reqlore_auth_matrix_shadow"].start()
+        except Exception:
+            pass
+        import atexit as _atexit_am
+        _atexit_am.register(
+            lambda r=app.extensions["reqlore_auth_matrix_runner"]: r.shutdown())
+        _atexit_am.register(
+            lambda s=app.extensions["reqlore_auth_matrix_shadow"]: s.stop(timeout=1.0))
+    except Exception:
+        pass
+
     # CSRF token (double-submit cookie pattern, kept simple)
     @app.before_request
     def _csrf() -> None:
@@ -109,6 +197,7 @@ def create_app(project_path: Path, settings: Settings, *,
             "cues_on": project.get_state("cues", "0") == "1",
             "findings_count": project.findings_count(),
             "dom_hunter_findings_count": project.dom_hunter_findings_count(),
+            "auth_matrix_findings_count": project.auth_matrix_findings_count(),
             "settings": settings,
             "auth_enabled": app.config.get("REQLORE_AUTH_ENABLED", False),
         }
@@ -191,6 +280,7 @@ def create_app(project_path: Path, settings: Settings, *,
     from .blueprints.param_miner_bp import bp as param_miner_bp
     from .blueprints.schedule_bp import bp as schedule_bp
     from .blueprints.dom_hunter_bp import bp as dom_hunter_bp
+    from .blueprints.auth_matrix_bp import bp as auth_matrix_bp
 
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(proxy_bp, url_prefix="/proxy")
@@ -218,6 +308,7 @@ def create_app(project_path: Path, settings: Settings, *,
     app.register_blueprint(smuggling_bp, url_prefix="/smuggling")
     app.register_blueprint(param_miner_bp, url_prefix="/param-miner")
     app.register_blueprint(schedule_bp, url_prefix="/schedule")
+    app.register_blueprint(auth_matrix_bp, url_prefix="/auth-matrix")
     app.register_blueprint(dom_hunter_bp, url_prefix="/dom-hunter")
     app.register_blueprint(settings_bp, url_prefix="/settings")
     app.register_blueprint(help_bp, url_prefix="/help")

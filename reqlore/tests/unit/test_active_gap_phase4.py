@@ -256,7 +256,10 @@ def test_dom_xss_fires_when_marker_reaches_innerHTML():
     try:
         row = _row(url=f"http://127.0.0.1:{port}/page?q=safe",
                     host="127.0.0.1")
-        opts = ActiveOptions(allow_dom_xss_probes=True)
+        opts = ActiveOptions(
+            allow_dom_xss_probes=True,
+            enabled_checks=frozenset({"xss-dom"}),
+        )
         # The sender is never used by DOMXSSCheck — Playwright drives
         # the request itself — so passing a stub is fine.
         findings = _scan_one(

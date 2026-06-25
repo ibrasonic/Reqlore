@@ -78,6 +78,9 @@ oast = [
 schedule = [
   "APScheduler>=3.10",
 ]
+js = [
+  "esprima>=4.0",
+]
 
 [project.scripts]
 reqlore = "reqlore.cli:main"
@@ -89,6 +92,7 @@ include = ["reqlore*"]
 [tool.setuptools.package-data]
 "reqlore.web" = ["templates/**/*.html", "static/**/*"]
 "reqlore.dom_hunter" = ["extension/**/*", "extension_signed/*.xpi"]
+"reqlore.builtin_plugins" = ["*.py"]
 
 [tool.ruff]
 line-length = 100

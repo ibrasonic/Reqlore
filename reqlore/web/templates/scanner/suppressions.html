@@ -11,6 +11,63 @@
   automatically — delete it here to re-enable detection.
 </p>
 
+{% if suppression_suggestions %}
+  <section aria-labelledby="sugg-h">
+    <h2 id="sugg-h">Suggested suppressions</h2>
+    <p>
+      These finding clusters share a rule, host, and URL template — likely
+      noise from a single root cause. Review the example before suppressing.
+    </p>
+    <table>
+      <caption>{{ suppression_suggestions|length }} suggested suppression(s)</caption>
+      <thead>
+        <tr>
+          <th scope="col">Rule</th>
+          <th scope="col">Host</th>
+          <th scope="col">URL template</th>
+          <th scope="col">Findings</th>
+          <th scope="col">Example</th>
+          <th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sug in suppression_suggestions %}
+          <tr>
+            <td><code>{{ sug.rule_id }}</code></td>
+            <td>{{ sug.host or '(any)' }}</td>
+            <td><code>{{ sug.url_pattern }}</code></td>
+            <td>{{ sug.count }}</td>
+            <td>
+              {% if sug.example_finding_id %}
+                <a href="{{ url_for('.show', fid=sug.example_finding_id) }}">#{{ sug.example_finding_id }}</a>
+              {% endif %}
+            </td>
+            <td>
+              <details class="confirm">
+                <summary aria-haspopup="true">Suppress&hellip;</summary>
+                <div class="confirm-body">
+                  <form method="post" action="{{ url_for('.suppressions_add') }}" class="inline">
+                    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                    <input type="hidden" name="rule_id" value="{{ sug.rule_id }}">
+                    <input type="hidden" name="host" value="{{ sug.host }}">
+                    <input type="hidden" name="url_pattern" value="{{ sug.url_pattern }}">
+                    <input type="hidden" name="reason" value="bulk: {{ sug.count }} occurrences">
+                    <p>Suppress <code>{{ sug.rule_id }}</code> for
+                      {% if sug.host %}<code>{{ sug.host }}</code>{% else %}all hosts{% endif %}
+                      matching <code>{{ sug.url_pattern }}</code>?
+                      This silences {{ sug.count }} existing finding(s).</p>
+                    <button type="submit">Yes, add suppression</button>
+                  </form>
+                </div>
+              </details>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endif %}
+
 {% if suppressions %}
   <table>
     <caption>{{ suppressions|length }} active suppression(s)</caption>

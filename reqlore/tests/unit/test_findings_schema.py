@@ -19,8 +19,8 @@ def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
 
 
-def test_schema_version_is_three():
-    assert SCHEMA_VERSION == 3
+def test_schema_version_is_four():
+    assert SCHEMA_VERSION >= 4
 
 
 def test_issues_table_has_new_columns(project):

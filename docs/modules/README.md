@@ -33,6 +33,7 @@ predict where to look:
 - [param-miner.md](param-miner.md)
 - [scanner.md](scanner.md)
 - [dom-hunter.md](dom-hunter.md)
+- [auth-matrix.md](auth-matrix.md)
 - [comparer.md](comparer.md)
 - [decoder.md](decoder.md)
 - [jwt.md](jwt.md)

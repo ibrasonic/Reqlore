@@ -9,11 +9,62 @@
 
 <dl>
   <dt>Severity</dt><dd><span class="sev sev-{{ f.severity }}" aria-label="Severity: {{ f.severity }}">{{ f.severity }}</span></dd>
+  {% set _conf = f.confidence or 'firm' %}
+  {% set _icon = {'tentative': '?', 'firm': '=', 'certain': '!'}.get(_conf, '=') %}
+  <dt>Confidence</dt>
+  <dd>
+    <span class="conf conf-{{ _conf }}"
+          aria-label="Confidence: {{ _conf }}"
+          title="Confidence: {{ _conf }}"
+    ><span aria-hidden="true">[{{ _icon }}]</span> {{ _conf }}</span>
+  </dd>
   <dt>CWE</dt><dd>{{ f.cwe or '—' }}</dd>
   <dt>OWASP</dt><dd>{{ f.owasp or '—' }}</dd>
   <dt>Host</dt><dd>{{ f.host or '—' }}</dd>
   <dt>URL</dt><dd><code class="url">{{ f.url or '—' }}</code></dd>
   <dt>Status</dt><dd>{{ f.status }}</dd>
+  <dt>Occurrences</dt>
+  <dd>
+    <strong>{{ f.occurrence_count or 1 }}</strong>
+    {% if occurrences and occurrences|length > 0 %}
+      <details>
+        <summary>Show occurrence history</summary>
+        <table>
+          <caption>Recent occurrences for finding #{{ f.id }}</caption>
+          <thead>
+            <tr>
+              <th scope="col">When</th>
+              <th scope="col">URL</th>
+              <th scope="col">Request</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for occ in occurrences %}
+              <tr>
+                <td>{{ occ.ts_iso or occ.ts }}</td>
+                <td><code class="url">{{ occ.url or '—' }}</code></td>
+                <td>
+                  {% if occ.request_id %}
+                    <a href="{{ url_for('history.show', hid=occ.request_id) }}">#{{ occ.request_id }}</a>
+                  {% else %}—{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
+    {% endif %}
+  </dd>
+  {% if f.fingerprint_tags_list %}
+    <dt>Response signals</dt>
+    <dd>
+      <ul class="fp-tags" aria-label="Response signals">
+        {% for t in f.fingerprint_tags_list %}
+          <li class="fp-tag">{{ t }}</li>
+        {% endfor %}
+      </ul>
+    </dd>
+  {% endif %}
   {% if f.request_id %}
     <dt>Originating request</dt>
     <dd><a href="{{ url_for('history.show', hid=f.request_id) }}">#{{ f.request_id }}</a></dd>

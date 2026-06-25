@@ -123,6 +123,11 @@ class InterceptConfig:
     path_regex: str = ""
     exclude_host_regex: str = DEFAULT_NOISE_HOST_REGEX
     exclude_path_regex: str = DEFAULT_NOISE_PATH_REGEX
+    # Opt-in: when True the proxy request hook consults the project's
+    # scope rules before holding. Out-of-scope hosts pass through even
+    # if they match every other filter. Default off for backwards
+    # compatibility with operators who don't use Sitemap scope.
+    restrict_to_scope: bool = False
 
     def to_rule(self) -> Rule:
         return Rule(
@@ -141,6 +146,7 @@ class InterceptConfig:
             "path_regex": self.path_regex,
             "exclude_host_regex": self.exclude_host_regex,
             "exclude_path_regex": self.exclude_path_regex,
+            "restrict_to_scope": bool(self.restrict_to_scope),
         }
 
     @classmethod
@@ -159,4 +165,5 @@ class InterceptConfig:
                 d.get("exclude_host_regex", DEFAULT_NOISE_HOST_REGEX) or ""),
             exclude_path_regex=str(
                 d.get("exclude_path_regex", DEFAULT_NOISE_PATH_REGEX) or ""),
+            restrict_to_scope=bool(d.get("restrict_to_scope", False)),
         )

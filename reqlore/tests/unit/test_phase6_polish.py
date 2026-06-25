@@ -139,7 +139,12 @@ def test_oast_ssrf_fires_when_receiver_records_token():
             return Response(status=200, headers=[], body=b"ok")
 
         scanner = ActiveScanner(checks=[OASTSSRFCheck()], sender=fake_send)
-        opts = ActiveOptions(oast=oast, oast_wait_s=1.0)
+        # OAST-SSRF is intrusive; name it explicitly so the intensity
+        # gate doesn't filter it out under default options.
+        opts = ActiveOptions(
+            oast=oast, oast_wait_s=1.0,
+            enabled_checks=["oast-ssrf"],
+        )
         findings = scanner.run_on_row(_Row(), options=opts)
         assert any(f.title.startswith("Out-of-band callback triggered") for f in findings)
         f = [x for x in findings if x.cwe == "CWE-918"][0]

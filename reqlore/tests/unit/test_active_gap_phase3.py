@@ -59,7 +59,12 @@ def _row(*, url="https://x.test/comments", host="x.test", method="POST",
 
 def _scan_one(check, row, *, sender, opts=None) -> list:
     scanner = ActiveScanner(checks=[check], sender=sender)
-    return scanner.run_on_row(row, options=opts or ActiveOptions())
+    # Naming the check explicitly bypasses the intensity gate —
+    # these tests intentionally exercise intrusive-tier checks one
+    # at a time.
+    base = opts or ActiveOptions()
+    base.enabled_checks = base.enabled_checks or [check.name]
+    return scanner.run_on_row(row, options=base)
 
 
 # ----------------------------- helper unit ----------------------------------

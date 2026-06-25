@@ -235,6 +235,44 @@ Goal: ship a new passive scanner rule.
 
 ---
 
+## 16. Access-control audit with Auth Matrix (passive + active)
+
+Goal: find any endpoint that returns privileged content to a
+lower-privileged identity, without hand-replaying every request.
+
+1. Browse the target through the proxy as your privileged user
+   (e.g. admin) so [History](modules/history.md) fills up with
+   pages worth testing.
+2. [Auth Matrix](modules/auth-matrix.md) → **Sessions → New session**.
+   Name it `admin`, kind `cookie` (or `bearer`), paste the value —
+   or *Send to → Auth Matrix → Save its credentials as a new session*
+   from any History row and let it auto-detect.
+3. Repeat for a lower-privileged identity, e.g. `user`, and an
+   `anon` session (kind `anon`, no payload). Mark all three
+   **active**.
+4. **Auth Matrix → Shadow worker → Start shadow worker**. The
+   toggle persists, so the worker auto-resumes next time you open
+   the project. Every recorded response is now silently replayed
+   under every active session in the background, scoped to your
+   project's include scope.
+5. Continue browsing as admin. Visit every admin function, every
+   privileged API endpoint, every settings page. The shadow worker
+   keeps up; if it can't, hids are dropped (visible in the *Dropped*
+   counter) rather than queueing unbounded.
+6. Open the shadow run from **Auth Matrix → Recent runs**. Filter
+   the matrix for `bypass-suspect` (high) and `denied-status-only`
+   (medium). Each is also written to the project's *Issues* table
+   with a stable dedupe key.
+7. To reproduce a finding deterministically: copy the `history_id`
+   and `session_id` from the cell URL, **Runs → New active run…**,
+   paste the hid into *History rows*, tick the same compare session,
+   leave the floors at default, **Start**. Same verdict, same
+   similarity score — clean evidence for the report.
+8. Dismiss false positives from the cell detail page; the cell
+   verdict flips to `dismissed` and stops generating findings.
+
+---
+
 ## Where to go next
 
 - Per-module deep-dive: [docs/modules/](modules/).

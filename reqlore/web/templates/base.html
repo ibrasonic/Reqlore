@@ -30,6 +30,9 @@
         <li><a href="{{ url_for('dom_hunter.index') }}" accesskey="7">
           DOM Hunter <span class="badge" aria-label="DOM XSS findings">{{ dom_hunter_findings_count }}</span>
         </a></li>
+        <li><a href="{{ url_for('auth_matrix.index') }}">
+          Auth Matrix <span class="badge" aria-label="Auth Matrix findings">{{ auth_matrix_findings_count }}</span>
+        </a></li>
         <li><a href="{{ url_for('comparer.index') }}">Comparer</a></li>
         <li><a href="{{ url_for('decoder.index') }}">Decoder</a></li>
         <li><a href="{{ url_for('jwt.index') }}" accesskey="8">JWT</a></li>

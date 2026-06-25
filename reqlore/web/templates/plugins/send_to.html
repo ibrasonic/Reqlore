@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Send to plugin app{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('history.show', hid=seed.history_id) }}">&larr; Back to history #{{ seed.history_id }}</a>
+</nav>
+<h1>Send to plugin app</h1>
+
+<section aria-labelledby="seed-h">
+  <h2 id="seed-h">Source request</h2>
+  <dl class="meta" aria-label="Source request summary">
+    <dt>History row</dt>
+    <dd>
+      <a href="{{ url_for('history.show', hid=seed.history_id) }}">#{{ seed.history_id }}</a>
+    </dd>
+    <dt>Method</dt><dd>{{ seed.method }}</dd>
+    <dt>Host</dt><dd>{{ seed.host or '(none)' }}</dd>
+    <dt>URL</dt><dd><code>{{ seed.url }}</code></dd>
+  </dl>
+  <p class="help">
+    The selected plugin opens with this request available as
+    <code>ctx.seed_request</code>. Fields named <code>url</code>,
+    <code>method</code>, or <code>host</code> are pre-filled — review
+    settings before pressing <strong>Run</strong>.
+  </p>
+</section>
+
+<section aria-labelledby="pick-h">
+  <h2 id="pick-h">Pick a plugin</h2>
+  {% if apps %}
+    <ul class="action-list" aria-label="Available plugin apps">
+      {% for app in apps %}
+        <li>
+          <a href="{{ url_for('.app_detail', slug=app.slug, from_history=seed.history_id) }}">
+            <strong>{{ app.name }}</strong>
+            <small style="font-weight:normal"><code>{{ app.slug }}</code></small>
+          </a>
+          {% if app.description %}
+            <br><span class="help">{{ app.description }}</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>
+      No plugin apps are enabled. Visit
+      <a href="{{ url_for('.index') }}">the plugins page</a> to add or
+      enable one.
+    </p>
+  {% endif %}
+</section>
+
+<p><a href="{{ url_for('history.show', hid=seed.history_id) }}">Cancel</a></p>
+{% endblock %}

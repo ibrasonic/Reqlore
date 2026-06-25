@@ -144,6 +144,16 @@ def render_docx(project_meta: dict, findings: Iterable[dict], *,
                 meta_bits.append(
                     f"CVSS: {f['cvss_score']}" + (f" ({vec})" if vec else "")
                 )
+            _conf = f.get("confidence") or "firm"
+            meta_bits.append(f"Confidence: {_conf}")
+            _occ = f.get("occurrence_count") or 1
+            if _occ and _occ > 1:
+                meta_bits.append(f"Occurrences: {int(_occ)}")
+            _tags = f.get("fingerprint_tags_list") or (
+                [t for t in (f.get("fingerprint_tags") or "").split(",") if t]
+            )
+            if _tags:
+                meta_bits.append("Response signals: " + ", ".join(_tags))
             meta_bits.append(f"Status: {f.get('status', 'open')}")
             doc.add_paragraph("    ·  ".join(meta_bits))
             if f.get("description"):

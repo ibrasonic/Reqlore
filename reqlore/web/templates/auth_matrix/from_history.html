@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Reqlore — Send history #{{ hid }} to Auth Matrix{% endblock %}
+{% block main %}
+<nav aria-label="Breadcrumb">
+  <a href="{{ url_for('history.show', hid=hid) }}">&larr; History #{{ hid }}</a>
+</nav>
+<h1>Send history #{{ hid }} to Auth Matrix</h1>
+<dl class="meta">
+  <dt>Method</dt><dd>{{ method }}</dd>
+  <dt>URL</dt><dd><code>{{ url }}</code></dd>
+  <dt>Status</dt><dd>{{ status }}</dd>
+</dl>
+
+<form method="post">
+  <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+  <p>Choose what to do with this request:</p>
+  <ul class="action-list">
+    <li>
+      <button type="submit" name="action" value="save_session">
+        Save its credentials as a new session
+      </button>
+    </li>
+    <li>
+      <button type="submit" name="action" value="new_run">
+        Start a new active run with this request
+      </button>
+    </li>
+  </ul>
+  <p><a href="{{ url_for('history.show', hid=hid) }}">Cancel</a></p>
+</form>
+{% endblock %}

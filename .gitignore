@@ -92,3 +92,6 @@ docs/CODE-QUALITY-AUDIT.md
 docs/*AUDIT*.md
 docs/*ASSESSMENT*.md
 docs/*REVIEW*.md
+
+# Local-only internal plan / design notes.
+docs/internal/

@@ -35,6 +35,16 @@
         <button type="submit">Send to Comparer (side B)</button>
       </form>
     </li>
+    {% if plugin_apps_available %}
+    <li>
+      <form method="post"
+            action="{{ url_for('history.send_to', hid=row.id, slug='plugin-app') }}"
+            class="inline-form">
+        <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+        <button type="submit" accesskey="g">Send to plu<u>g</u>in app…</button>
+      </form>
+    </li>
+    {% endif %}
     <li>
       <a href="{{ url_for('scanner.manual', request_id=row.id) }}">
         Create manual finding from this request
