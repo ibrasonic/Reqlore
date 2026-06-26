@@ -1,0 +1,64 @@
+{#
+  Shared "click-a-column-header to filter" macros, used by:
+  * history/index.html  (the original)
+  * proxy/index.html    (held-queue table)
+
+  Design notes — see history/index.html for the long-form rationale:
+  * The column toggle is a real <summary> inside <details> so the
+    pattern degrades cleanly with JS off.
+  * The whole table sits inside one <form method=get>; Apply / Enter
+    in any panel commits every column's draft state in one navigation.
+  * The JS layer (reqlore.js, "History filters: column-header popover
+    modal dialogs") upgrades each panel to role=dialog aria-modal=true
+    on open, traps focus, and roves arrows. CSP-safe (no inline JS).
+#}
+
+{% macro hist_filter_input(label, name, value, type="search", placeholder="") -%}
+  <label class="hist-filter-label">
+    <span>{{ label }}</span>
+    <input type="{{ type }}" name="{{ name }}" value="{{ value if value is not none else '' }}"
+           {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}
+           autocomplete="off" inputmode="{% if type == 'number' %}numeric{% else %}text{% endif %}">
+  </label>
+{%- endmacro %}
+
+{% macro hist_filter_checkboxes(legend, name, options, selected) -%}
+  <fieldset class="hist-filter-group">
+    <legend>{{ legend }}</legend>
+    {% for opt in options %}
+      <label class="hist-filter-check">
+        <input type="checkbox" name="{{ name }}" value="{{ opt }}"
+               {% if opt in selected %}checked{% endif %}>
+        <span>{{ opt }}</span>
+      </label>
+    {% endfor %}
+  </fieldset>
+{%- endmacro %}
+
+{% macro hist_th_filter(col_id, header, summary_label, summary_text, active=False) -%}
+  <th scope="col" class="hist-th hist-th--filter">
+    <details class="hist-col-filter" data-hist-col-filter id="hist-filter-{{ col_id }}">
+      <summary class="hist-col-filter-toggle"
+               id="hist-filter-toggle-{{ col_id }}"
+               aria-label="{{ summary_label }}{% if active %}; active: {{ summary_text }}{% endif %}">
+        <span class="hist-col-name">{{ header }}</span>
+        <span class="hist-col-filter-marker" aria-hidden="true">{% if active %}●{% else %}▾{% endif %}</span>
+      </summary>
+      <div class="hist-col-filter-panel"
+           id="hist-filter-panel-{{ col_id }}"
+           role="group"
+           aria-label="{{ header }} filter">
+        {{ caller() }}
+        <div class="hist-filter-actions">
+          <button type="submit" class="hist-filter-apply">Apply</button>
+          <button type="button" class="hist-filter-close" data-hist-filter-close>Cancel</button>
+        </div>
+        <p class="visually-hidden">
+          Press Enter or Apply to update the table.
+          Escape cancels and closes this menu.
+          Arrow up and arrow down move between options.
+        </p>
+      </div>
+    </details>
+  </th>
+{%- endmacro %}

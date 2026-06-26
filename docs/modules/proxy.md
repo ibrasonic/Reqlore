@@ -29,7 +29,7 @@ producer of almost every row you see in [History](history.md).
 | `/proxy/start`                                 | POST   | Start the listener in a background thread.                                               |
 | `/proxy/stop`                                  | POST   | Stop the listener.                                                                       |
 | `/proxy/intercept/toggle`                      | POST   | Global intercept on/off; persists to `project_state["intercept_on"]`.                    |
-| `/proxy/intercept/config`                      | POST   | Update filter (methods, host regex, path regex, excludes); persisted as JSON.            |
+| `/proxy/intercept/config`                      | POST   | Update filter; persisted as JSON. UI exposes the method checkboxes and the scope toggle; the route still accepts `host_regex` / `path_regex` / `exclude_host_regex` / `exclude_path_regex` for round-trip compatibility (state restore, external callers).            |
 | `/proxy/intercept/next`                        | GET    | Redirect to the oldest still-pending intercept, or back to the queue if none are held.    |
 | `/proxy/intercept/<iid>`                       | GET    | Detail page: raw bytes editor, Forward/Drop/Forward-edited bar, Send-to menu.            |
 | `/proxy/intercept/<iid>/forward`               | POST   | Forward as-is.                                                                            |
@@ -96,14 +96,21 @@ edited_blob (zlib, only if decision='forward_edited')
   `Kind`, `Reason`, `Actions`. Sorted newest at the bottom. The
   Method / Host / URL cells are derived per-row by parsing the held
   raw request via `_parse_raw_request()` in `proxy_bp`.
-  - **Filter form** (above the table, `class="hist-filter-form"
-    role="search"`) mirrors the History column-filter pattern:
-    Method checkboxes, Direction checkboxes (`request` / `response`),
-    Host substring, URL substring (`q`), **Apply**, and a **Clear**
-    link when any filter is active. Filtering is server-side; the
-    empty state renders `No items match the current filter.`
+  - **Per-column filter popovers** (Method, Host, URL, Kind) sit in
+    the `<th>` headers and use the shared
+    [`_macros/hist_filter.html`](../../reqlore/web/templates/_macros/hist_filter.html)
+    macros — same `<details><summary>` triangle markers, modal-dialog
+    upgrade, focus trap and arrow-key roving as the History table.
+    The wrapper `<form method="get" class="hist-filter-form"
+    role="search">` collects every popover into one Apply submit;
+    filtering is server-side and the empty state renders
+    `No items match the current filter.`
   - The queue wrapper carries `data-intercept-watch` so the global
     polling JS preserves the current filter querystring on reload.
+  - **Row Actions cell** uses the same WAI-ARIA APG menu-button
+    widget as [History](history.md#row-actions-menu-wai-aria-apg-menu-button) — see *Row Actions menu*
+    below for the form-item extension that makes Forward / Drop /
+    Send-to work as menuitems while remaining CSRF-protected POSTs.
 - **No auto-eviction.** Rows stay until you Forward / Drop or the
   sync-hold timeout fires (600 s).
 - **Async vs sync hold**:
@@ -119,6 +126,29 @@ edited_blob (zlib, only if decision='forward_edited')
   the `Task was destroyed but it is pending!` warning that previously
   appeared on Windows ProactorEventLoop when the user pressed Ctrl+C
   with requests held in the queue.
+
+## Row Actions menu
+
+The `Actions` cell on each queue row reuses the
+[History row Actions menu](history.md#row-actions-menu-wai-aria-apg-menu-button)
+widget (`data-row-actions`) — same APG menu-button pattern, same
+focus trap, type-ahead and no-JS fallback. The Proxy queue is the
+first caller where the menuitems are **CSRF-protected POSTs**
+(Forward as-is / Drop / Send to …), not plain `<a href>` links, so
+each `<li>` wraps a `<form method="post" class="row-actions-form">`
+and its `<button type="submit">` carries `role="menuitem"`. The
+widget treats `li > a` and `li > form > button[type="submit"]`
+interchangeably:
+
+- **JS on** → the `<form>` `<button>` is a menuitem; activating it
+  submits the form normally (no `event.preventDefault`), so the CSRF
+  hidden input still rides the POST.
+- **JS off** → the toggle stays `hidden`, the `<ul>` renders as a
+  flat list, and each form submits via its own button click.
+
+Keyboard contract, roving focus, Esc-closes and click-outside are
+identical to the History page; see the linked section for the full
+behaviour table.
 
 ## Action bar
 
@@ -192,14 +222,22 @@ Each Send-to:
 The single rule built from `InterceptConfig` (persisted as JSON in
 `project_state["intercept_config"]`):
 
-| Field                 | Default                                                         | Notes                                                                          |
-|-----------------------|-----------------------------------------------------------------|--------------------------------------------------------------------------------|
-| `methods`             | `["POST", "PUT", "PATCH", "DELETE"]`                            | UI checkboxes for GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS.          |
-| `host_regex`          | empty (any host)                                                | Python `re`.                                                                    |
-| `path_regex`          | empty (any path)                                                | Python `re`.                                                                    |
-| `restrict_to_scope`   | `False` (unchecked)                                             | Opt-in: when on, the proxy consults the project's [Sitemap](sitemap.md) scope rules before holding. Out-of-scope hosts pass through even if every other field matches. Useful when you want intercept to follow the same boundary as the rest of the project. |
-| `exclude_host_regex`  | `DEFAULT_NOISE_HOST_REGEX` (Mozilla telemetry etc.)             | Excludes always apply. Edit the field to broaden / narrow.                       |
-| `exclude_path_regex`  | `DEFAULT_NOISE_PATH_REGEX` (`\.(?:css|js|png|svg|woff2|...)$`)   | Static-asset blanket exclude.                                                    |
+| Field                 | Default                                                         | UI?  | Notes                                                                          |
+|-----------------------|-----------------------------------------------------------------|------|--------------------------------------------------------------------------------|
+| `methods`             | `["POST", "PUT", "PATCH", "DELETE"]`                            | yes  | Checkboxes for GET / POST / PUT / PATCH / DELETE / HEAD / OPTIONS.             |
+| `restrict_to_scope`   | `False` (unchecked)                                             | yes  | Opt-in: when on, the proxy consults the project's [Sitemap](sitemap.md) scope rules before holding. Out-of-scope hosts pass through even if every other field matches. Useful when you want intercept to follow the same boundary as the rest of the project. |
+| `host_regex`          | empty (any host)                                                | no   | Python `re`. Backend-only; ad-hoc host narrowing belongs in the per-column **Host** filter on the queue table.       |
+| `path_regex`          | empty (any path)                                                | no   | Python `re`. Backend-only; ad-hoc path narrowing belongs in the per-column **URL** filter on the queue table.        |
+| `exclude_host_regex`  | `DEFAULT_NOISE_HOST_REGEX` (Mozilla telemetry etc.)             | no   | Always-on default; the constant lives in `reqlore/proxy/rules.py`.             |
+| `exclude_path_regex`  | `DEFAULT_NOISE_PATH_REGEX` (`\.(?:css|js|png|svg|woff2|...)$`)   | no   | Static-asset blanket exclude; always-on default in the same module.             |
+
+The four regex fields stay in `InterceptConfig` (and on the
+`POST /proxy/intercept/config` route) so persisted state from earlier
+Reqlore versions round-trips intact and external callers can still
+drive them programmatically. They're no longer surfaced in the panel
+because real triage was happening in the per-column queue filters; the
+upstream rule stays minimal (methods + optional scope gate + the noise
+excludes) and the queue table handles ad-hoc host / URL slicing.
 
 Matching order on a request:
 
@@ -273,13 +311,27 @@ through; mutations queue for review.
 
 ### Quiet a noisy app
 
-Open the intercept-config form, append to `exclude_host_regex`:
+`exclude_host_regex` is no longer exposed as a text input in the panel
+(the built-in `DEFAULT_NOISE_HOST_REGEX` already covers Mozilla
+telemetry and the common offenders). To extend it for a one-off noisy
+app, either:
 
-```
-(^|\.)mozilla\.(com|net|org)$|(^|\.)telemetry\.example\.com$
-```
+- **One-shot, from the command line / a script**, POST a fuller regex
+  to `/proxy/intercept/config` (the field is still accepted and
+  persisted):
 
-Save. The noisy host is now skipped even when intercept is on.
+  ```
+  curl -X POST -d '_csrf=...&exclude_host_regex=(^|\.)mozilla\.(com|net|org)$|(^|\.)telemetry\.example\.com$' \
+       http://127.0.0.1:8787/proxy/intercept/config
+  ```
+
+- **Project-wide / persistent**, broaden `DEFAULT_NOISE_HOST_REGEX` in
+  [`reqlore/proxy/rules.py`](../../reqlore/proxy/rules.py) so every new
+  project picks it up.
+
+For ad-hoc *inspection-time* narrowing (the common case), prefer the
+per-column **Host** filter on the held-queue table instead \u2014 the rule
+stays generous, you slice the view.
 
 ### Mass-replay everything you held
 
@@ -305,7 +357,7 @@ original `req_blob` is still in the queue if you need to compare.
 | Held request cannot be **Drop**-ped                       | Decision was already taken (race with auto-forward)                    | Refresh the queue — the row should have flipped to `decision IS NOT NULL` and disappeared.       |
 | Send-to **JWT** missing                                   | No `Authorization: Bearer <jwt>` in the request                        | Use the JWT workbench's manual paste-token form instead.                                          |
 | Send-to **Decoder** missing                               | Request body is empty                                                  | Decoder operates on bodies; for URL params use the in-place query builder elsewhere.              |
-| Static assets clutter History                             | `exclude_path_regex` not filtering them at the proxy level             | Expand the regex (e.g. add `|\.map$|\.json$`) and Save.                                          |
+| Static assets still appear in the queue                   | `exclude_path_regex` no longer covers a new extension                  | Edit the constant in `reqlore/proxy/rules.py` (`DEFAULT_NOISE_PATH_REGEX`) or, programmatically, `POST /proxy/intercept/config` with a wider `exclude_path_regex`. |
 | Intercept holds nothing for in-scope hosts even though the rule matches | `restrict_to_scope` is checked and the host isn't in your Sitemap include scope | Either add the host to your Sitemap scope (**Settings → Scope**) or untick **Only hold requests for hosts that are in scope** on the intercept filter. An empty Sitemap means *every* host is in scope. |
 
 ## CLI

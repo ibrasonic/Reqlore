@@ -622,8 +622,13 @@ def test_intercept_config_round_trip_and_persistence(tmp_path):
     r = client.get("/proxy/")
     assert r.status_code == 200
     assert b'name="method" value="POST"' in r.data
-    assert b'name="host_regex"' in r.data
-    assert b'name="path_regex"' in r.data
+    # The positive / exclude host & path regex inputs have been removed
+    # from the UI — they were redundant with the scope checkbox and the
+    # built-in noise defaults. The backend still accepts them via POST
+    # for round-trip compatibility with persisted state and external
+    # callers.
+    assert b'name="host_regex"' not in r.data
+    assert b'name="path_regex"' not in r.data
     # The noise-skip checkbox is gone — always-on now.
     assert b'name="exclude_noise"' not in r.data
 

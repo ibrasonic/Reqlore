@@ -183,10 +183,14 @@
   }
 
   // History: row Actions menu button (WAI-ARIA APG Menu Button pattern).
-  // No JS: button stays [hidden]; the <ul> renders as a flat list of links.
+  // No JS: button stays [hidden]; the <ul> renders as a flat list of
+  // links / inline submit buttons (each <form> still submits on click).
   // With JS: button is shown, list is hidden until activated. We add
   // role=menu / menuitem, roving focus with arrow keys, Home/End, Esc,
   // a Tab focus-trap, click-outside-to-close, and 500ms type-ahead.
+  // Menu items can be either <a href> (used by History) or
+  // <form><button type=submit></form> (used by the Proxy held-queue,
+  // which needs CSRF-protected POSTs for Forward / Drop / Send to ...).
   (function () {
     var widgets = document.querySelectorAll("[data-row-actions]");
     if (!widgets.length) return;
@@ -194,7 +198,7 @@
 
     function items(w) {
       return Array.prototype.slice.call(
-        w.querySelectorAll('a[role="menuitem"]'));
+        w.querySelectorAll('[role="menuitem"]'));
     }
 
     function openFor(w, where) {
@@ -267,9 +271,9 @@
       list.querySelectorAll("li").forEach(function (li) {
         li.setAttribute("role", "none");
       });
-      list.querySelectorAll("li > a").forEach(function (a) {
-        a.setAttribute("role", "menuitem");
-        a.setAttribute("tabindex", "-1");
+      list.querySelectorAll('li > a, li > form > button[type="submit"]').forEach(function (el) {
+        el.setAttribute("role", "menuitem");
+        el.setAttribute("tabindex", "-1");
       });
 
       btn.addEventListener("click", function (ev) {

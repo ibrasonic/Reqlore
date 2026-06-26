@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros/hist_filter.html" import hist_filter_input, hist_filter_checkboxes, hist_th_filter %}
 {% block title %}Reqlore — Proxy{% endblock %}
 {% block main %}
 <nav aria-label="Breadcrumb">
@@ -46,9 +47,11 @@
 <section aria-labelledby="filter-h">
   <h2 id="filter-h">Intercept filter</h2>
   <p>Pick which requests count as &ldquo;interesting&rdquo; when intercept is ON.
-     Leave host / path blank to match any. Defaults hold state-changing
-     methods only and skip browser background traffic and static assets,
-     so flipping intercept on during real browsing stays manageable.</p>
+     Defaults hold state-changing methods only and skip browser background
+     traffic and static assets, so flipping intercept on during real browsing
+     stays manageable. Use the scope checkbox to scope holds to your target
+     hosts; the held-queue table below has per-column filters for ad-hoc
+     narrowing.</p>
   <form method="post" action="{{ url_for('proxy.set_intercept_config') }}">
     <input type="hidden" name="_csrf" value="{{ csrf_token }}">
     <fieldset>
@@ -62,18 +65,6 @@
       {% endfor %}
     </fieldset>
     <p>
-      <label for="host_regex">Only hold requests whose <strong>host</strong> matches (regex):</label><br>
-      <input type="text" id="host_regex" name="host_regex"
-             value="{{ intercept_cfg.host_regex }}"
-             placeholder="e.g. ^target\.example\.com$  (blank = any host)">
-    </p>
-    <p>
-      <label for="path_regex">Only hold requests whose <strong>path</strong> matches (regex):</label><br>
-      <input type="text" id="path_regex" name="path_regex"
-             value="{{ intercept_cfg.path_regex }}"
-             placeholder="e.g. ^/api/  (blank = any path)">
-    </p>
-    <p>
       <label>
         <input type="checkbox" name="restrict_to_scope" value="1"
                {% if intercept_cfg.restrict_to_scope %}checked{% endif %}>
@@ -81,19 +72,6 @@
         (per <a href="{{ url_for('sitemap.index') }}">Sitemap</a> rules)
       </label>
     </p>
-    <details>
-      <summary>Advanced excludes</summary>
-      <p>
-        <label for="exclude_host_regex">Never hold requests whose host matches:</label><br>
-        <input type="text" id="exclude_host_regex" name="exclude_host_regex"
-               value="{{ intercept_cfg.exclude_host_regex }}" size="60">
-      </p>
-      <p>
-        <label for="exclude_path_regex">Never hold requests whose path matches:</label><br>
-        <input type="text" id="exclude_path_regex" name="exclude_path_regex"
-               value="{{ intercept_cfg.exclude_path_regex }}" size="60">
-      </p>
-    </details>
     <p><button type="submit">Save filter</button></p>
   </form>
 </section>
@@ -112,48 +90,6 @@
         {{ items|length }} held item{{ '' if items|length == 1 else 's' }}.
       {% endif %}
     </p>
-    <form method="get" action="{{ url_for('proxy.index') }}"
-          class="hist-filter-form" role="search"
-          aria-label="Filter held queue">
-      <fieldset>
-        <legend>Method</legend>
-        {% for m in supported_methods %}
-        <label class="inline-check">
-          <input type="checkbox" name="method" value="{{ m }}"
-                 {% if m in filters.methods %}checked{% endif %}>
-          {{ m }}
-        </label>
-        {% endfor %}
-      </fieldset>
-      <fieldset>
-        <legend>Direction</legend>
-        <label class="inline-check">
-          <input type="checkbox" name="kind" value="request"
-                 {% if 'request' in filters.kinds %}checked{% endif %}>
-          request
-        </label>
-        <label class="inline-check">
-          <input type="checkbox" name="kind" value="response"
-                 {% if 'response' in filters.kinds %}checked{% endif %}>
-          response
-        </label>
-      </fieldset>
-      <p>
-        <label for="q-host">Host contains</label>
-        <input type="text" id="q-host" name="host" value="{{ filters.host }}"
-               size="20" autocomplete="off" placeholder="example.com">
-      </p>
-      <p>
-        <label for="q-q">URL contains</label>
-        <input type="text" id="q-q" name="q" value="{{ filters.q }}"
-               size="30" autocomplete="off" placeholder="/api/login">
-      </p>
-      <p>
-        <button type="submit">Apply filter</button>
-        {% if any_filter %}<a href="{{ url_for('proxy.index') }}" class="hist-clear-link">Clear</a>{% endif %}
-      </p>
-    </form>
-    {% if items %}
     <div class="row" role="group" aria-label="Bulk actions">
       <form method="post" action="{{ url_for('proxy.forward_all') }}" class="inline-form">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -173,51 +109,133 @@
       <em>Send all to Repeater</em> snapshots every held request into history
       for replay; flows stay held until you Forward or Drop them.
     </p>
-    <table class="hist-table">
-      <caption class="visually-hidden">Held items, newest first.</caption>
-      <thead>
-        <tr>
-          <th scope="col">#</th>
-          <th scope="col">Method</th>
-          <th scope="col">Host</th>
-          <th scope="col">URL</th>
-          <th scope="col">Kind</th>
-          <th scope="col">Reason</th>
-          <th scope="col">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for it in items %}
-        <tr>
-          <th scope="row">{{ it.id }}</th>
-          <td>{{ it.method }}</td>
-          <td>{{ it.host }}</td>
-          <td><span class="url">{{ it.url }}</span></td>
-          <td>
-            {{ it.kind }}
-            {% if it.parent_intercept_id %}
-              <a href="{{ url_for('proxy.show_intercept', iid=it.parent_intercept_id) }}"
-                 class="redirect-parent-link"
-                 aria-label="Redirect from intercept {{ it.parent_intercept_id }}">
-                &#8627; from #{{ it.parent_intercept_id }}
-              </a>
-            {% endif %}
-          </td>
-          <td>{{ it.hold_reason }}</td>
-          <td>
-            <a href="{{ url_for('proxy.show_intercept', iid=it.id) }}">View</a>
-            <form method="post" action="{{ url_for('proxy.drop_intercept', iid=it.id) }}" class="inline-form">
-              <input type="hidden" name="_csrf" value="{{ csrf_token }}">
-              <button type="submit">Drop</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p>No items match the current filter. <a href="{{ url_for('proxy.index') }}">Clear filter</a>.</p>
-    {% endif %}
+
+    <form method="get" id="proxy-q-filters" class="hist-filter-form" role="search"
+          aria-label="Held-queue filters" action="{{ url_for('proxy.index') }}">
+
+      <noscript>
+        <p><button type="submit" class="hist-apply-fallback">Apply filters</button></p>
+      </noscript>
+
+      <table id="proxy-q-table" class="hist-table" tabindex="-1">
+        <caption class="visually-hidden">
+          Held items, newest first. Each column header with a triangle
+          marker opens a filter menu — press Enter or Space to toggle.
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">#</th>
+
+            {% call hist_th_filter('method', 'Method',
+                                   'Method filter',
+                                   filters.methods|join(', '),
+                                   active=(filters.methods|length > 0)) %}
+              {{ hist_filter_checkboxes('Match any of', 'method', supported_methods, filters.methods) }}
+            {% endcall %}
+
+            {% call hist_th_filter('host', 'Host',
+                                   'Host filter',
+                                   (filters.host or '') ~ (' (' ~ filters.host_mode ~ ')' if filters.host else ''),
+                                   active=(filters.host is not none and filters.host != '')) %}
+              {{ hist_filter_input('Host name', 'host', filters.host, type='search', placeholder='example.com') }}
+              <fieldset class="hist-filter-group hist-filter-radios">
+                <legend>Match mode</legend>
+                <label class="hist-filter-check">
+                  <input type="radio" name="host_mode" value="exact" {% if filters.host_mode == 'exact' %}checked{% endif %}>
+                  <span>Exact</span>
+                </label>
+                <label class="hist-filter-check">
+                  <input type="radio" name="host_mode" value="contains" {% if filters.host_mode != 'exact' %}checked{% endif %}>
+                  <span>Contains</span>
+                </label>
+              </fieldset>
+            {% endcall %}
+
+            {% call hist_th_filter('url', 'URL',
+                                   'URL filter',
+                                   (filters.q or '') ~ (' (regex)' if filters.q_regex else ''),
+                                   active=(filters.q is not none and filters.q != '')) %}
+              {{ hist_filter_input('Search URL (substring or regex)', 'q', filters.q, type='search') }}
+              <label class="hist-filter-check">
+                <input type="checkbox" name="q_re" value="1" {% if filters.q_regex %}checked{% endif %}>
+                <span>Treat as regular expression</span>
+              </label>
+            {% endcall %}
+
+            {% call hist_th_filter('kind', 'Kind',
+                                   'Direction filter',
+                                   filters.kinds|join(', '),
+                                   active=(filters.kinds|length > 0)) %}
+              {{ hist_filter_checkboxes('Match any of', 'kind', ['request', 'response'], filters.kinds) }}
+            {% endcall %}
+
+            <th scope="col">Reason</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for it in items %}
+          <tr>
+            <th scope="row"><a href="{{ url_for('proxy.show_intercept', iid=it.id) }}">{{ it.id }}</a></th>
+            <td>{{ it.method }}</td>
+            <td>{{ it.host }}</td>
+            <td><span class="url">{{ it.url }}</span></td>
+            <td>
+              {{ it.kind }}
+              {% if it.parent_intercept_id %}
+                <a href="{{ url_for('proxy.show_intercept', iid=it.parent_intercept_id) }}"
+                   class="redirect-parent-link"
+                   aria-label="Redirect from intercept {{ it.parent_intercept_id }}">
+                  &#8627; from #{{ it.parent_intercept_id }}
+                </a>
+              {% endif %}
+            </td>
+            <td>{{ it.hold_reason }}</td>
+            <td>
+              <div class="row-actions" data-row-actions data-iid="{{ it.id }}">
+                <button type="button"
+                        class="row-actions-toggle"
+                        hidden
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                        aria-controls="row-actions-menu-{{ it.id }}"
+                        aria-label="Actions for intercept #{{ it.id }}">Actions</button>
+                <ul id="row-actions-menu-{{ it.id }}" class="row-actions-list">
+                  <li><a href="{{ url_for('proxy.show_intercept', iid=it.id) }}">View</a></li>
+                  <li>
+                    <form method="post" action="{{ url_for('proxy.forward_intercept', iid=it.id) }}" class="row-actions-form">
+                      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      <button type="submit">Forward as-is</button>
+                    </form>
+                  </li>
+                  <li>
+                    <form method="post" action="{{ url_for('proxy.drop_intercept', iid=it.id) }}" class="row-actions-form">
+                      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      <button type="submit" class="danger">Drop</button>
+                    </form>
+                  </li>
+                  {% for t in it.send_targets %}
+                  <li>
+                    <form method="post" action="{{ url_for('proxy.send_to', iid=it.id, slug=t.slug) }}" class="row-actions-form">
+                      <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      <button type="submit">Send to {{ t.label }}</button>
+                    </form>
+                  </li>
+                  {% endfor %}
+                </ul>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if not items %}
+      <p class="hist-empty">
+        No items match the current filter.
+        <a href="{{ url_for('proxy.index') }}">Clear filter</a> to see every held item.
+      </p>
+      {% endif %}
+    </form> {# /proxy-q-filters #}
   {% else %}
     <p>No held items.</p>
   {% endif %}

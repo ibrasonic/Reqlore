@@ -197,12 +197,26 @@ def index():
     # ------------------------------------------------------------------
     # Per-column filtering, matching the History page's UX so the
     # operator can narrow the queue when intercept holds dozens of
-    # requests during real browsing.
+    # requests during real browsing. Column-header click-to-filter is
+    # rendered by the shared hist_th_filter macro.
     # ------------------------------------------------------------------
     f_methods = {m.upper() for m in request.args.getlist("method") if m}
     f_kinds = {k.lower() for k in request.args.getlist("kind") if k}
-    f_host = request.args.get("host", "").strip().lower()
-    f_q = request.args.get("q", "").strip().lower()
+    f_host_raw = request.args.get("host", "").strip()
+    f_host_mode = request.args.get("host_mode", "contains").strip().lower()
+    if f_host_mode not in ("exact", "contains"):
+        f_host_mode = "contains"
+    f_q_raw = request.args.get("q", "").strip()
+    f_q_regex = request.args.get("q_re") == "1"
+    f_q_re = None
+    if f_q_raw and f_q_regex:
+        try:
+            f_q_re = re.compile(f_q_raw, re.IGNORECASE)
+        except re.error:
+            # Bad regex falls back to substring search rather than
+            # 400-ing — the URL is the user's UI, degrade gracefully.
+            f_q_re = None
+            f_q_regex = False
 
     enriched: list[dict] = []
     for it in pending:
@@ -218,6 +232,7 @@ def index():
             "hold_reason": it.hold_reason,
             "created_at": it.created_at,
             "parent_intercept_id": it.parent_intercept_id,
+            "send_targets": _available_targets(it),
         })
 
     def _keep(row: dict) -> bool:
@@ -225,14 +240,27 @@ def index():
             return False
         if f_kinds and row["kind"].lower() not in f_kinds:
             return False
-        if f_host and f_host not in row["host"].lower():
-            return False
-        if f_q and f_q not in row["url"].lower():
-            return False
+        if f_host_raw:
+            hl = (row["host"] or "").lower()
+            needle = f_host_raw.lower()
+            if f_host_mode == "exact":
+                if hl != needle:
+                    return False
+            else:
+                if needle not in hl:
+                    return False
+        if f_q_raw:
+            url = row["url"] or ""
+            if f_q_re is not None:
+                if not f_q_re.search(url):
+                    return False
+            else:
+                if f_q_raw.lower() not in url.lower():
+                    return False
         return True
 
     filtered = [r for r in enriched if _keep(r)]
-    any_filter = bool(f_methods or f_kinds or f_host or f_q)
+    any_filter = bool(f_methods or f_kinds or f_host_raw or f_q_raw)
 
     # `get_intercept_config` is missing on test stubs and older injected
     # proxies; fall back to defaults so the panel still renders.
@@ -248,8 +276,10 @@ def index():
                            filters={
                                "methods": sorted(f_methods),
                                "kinds": sorted(f_kinds),
-                               "host": f_host,
-                               "q": f_q,
+                               "host": f_host_raw or None,
+                               "host_mode": f_host_mode,
+                               "q": f_q_raw or None,
+                               "q_regex": f_q_regex,
                            },
                            intercept_cfg=cfg,
                            supported_methods=SUPPORTED_METHODS)

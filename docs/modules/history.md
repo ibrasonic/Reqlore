@@ -226,7 +226,19 @@ that, when enhanced by JS, opens an ARIA menu of:
 ### No-JS fallback
 
 If JavaScript is off the button stays `hidden` and the `<ul>` renders as a
-flat link list — every action is reachable as an ordinary anchor.
+flat list — every `<a href>` is an ordinary anchor and every wrapped
+`<form><button type="submit"></form>` still submits as a normal POST.
+
+### Form-item extension (CSRF-protected POST menuitems)
+
+History's own menuitems are all `<a href>`, but the same widget also
+recognises `<li><form method="post" class="row-actions-form"><button
+type="submit"></form></li>`. The Proxy held-queue uses this shape so
+Forward as-is / Drop / Send-to remain CSRF-protected POSTs while still
+behaving as keyboard-navigable menuitems. Activating the button
+submits its form normally (the menu JS does not `preventDefault`), so
+the hidden `_csrf` input rides the POST. See
+[Proxy → Row Actions menu](proxy.md#row-actions-menu).
 
 ## Send-to targets
 
