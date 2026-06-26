@@ -686,12 +686,27 @@ def _seed_gzip_response(project) -> int:
     )
 
 
-def test_history_detail_default_shows_raw_compressed_body(app, client):
+def test_history_detail_default_decodes_compressed_body(app, client):
+    """On a row with a compressed response the default view is decoded
+    (so operators meet readable text, not a gzipped binary smear). The
+    Body-display section still lets them flip back to raw bytes via the
+    radio group.
+    """
     hid = _seed_gzip_response(app.extensions["reqlore_project"])
     r = client.get(f"/history/{hid}")
     assert r.status_code == 200
-    assert b"Decode compressed bodies" in r.data
-    # Raw gzipped body must NOT contain the plaintext error string.
+    # Body-display section is rendered.
+    assert b"Body display" in r.data
+    assert b"Raw on-wire bytes" in r.data
+    # Default view is decoded: plaintext is present.
+    assert b"Invalid username or password" in r.data
+
+
+def test_history_detail_raw_radio_keeps_compressed_body(app, client):
+    hid = _seed_gzip_response(app.extensions["reqlore_project"])
+    r = client.get(f"/history/{hid}?decode=0")
+    assert r.status_code == 200
+    # ?decode=0 opts out of decoding; the plaintext must not appear.
     assert b"Invalid username or password" not in r.data
 
 
@@ -720,7 +735,7 @@ def test_history_detail_decode_uncompressed_hides_toggle(app, client):
     r = client.get(f"/history/{hid}?decode=1")
     assert r.status_code == 200
     assert b"hello" in r.data
-    assert b"Decode compressed bodies" not in r.data
+    assert b"Body display" not in r.data
 
 
 def test_request_only_rule_does_not_hold_responses():

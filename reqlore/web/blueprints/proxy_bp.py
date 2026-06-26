@@ -193,6 +193,47 @@ def index():
     items = g.project.list_intercept()
     # Filter to only pending (decision IS NULL) for the queue view
     pending = [i for i in items if g.project.get_intercept_decision(i.id)[0] is None]
+
+    # ------------------------------------------------------------------
+    # Per-column filtering, matching the History page's UX so the
+    # operator can narrow the queue when intercept holds dozens of
+    # requests during real browsing.
+    # ------------------------------------------------------------------
+    f_methods = {m.upper() for m in request.args.getlist("method") if m}
+    f_kinds = {k.lower() for k in request.args.getlist("kind") if k}
+    f_host = request.args.get("host", "").strip().lower()
+    f_q = request.args.get("q", "").strip().lower()
+
+    enriched: list[dict] = []
+    for it in pending:
+        method, path, host, _hdrs, _body = _parse_raw_request(it.req_blob)
+        url = f"{host}{path}" if host else (path or "/")
+        enriched.append({
+            "id": it.id,
+            "kind": it.kind,
+            "method": method,
+            "host": host,
+            "path": path,
+            "url": url,
+            "hold_reason": it.hold_reason,
+            "created_at": it.created_at,
+            "parent_intercept_id": it.parent_intercept_id,
+        })
+
+    def _keep(row: dict) -> bool:
+        if f_methods and row["method"].upper() not in f_methods:
+            return False
+        if f_kinds and row["kind"].lower() not in f_kinds:
+            return False
+        if f_host and f_host not in row["host"].lower():
+            return False
+        if f_q and f_q not in row["url"].lower():
+            return False
+        return True
+
+    filtered = [r for r in enriched if _keep(r)]
+    any_filter = bool(f_methods or f_kinds or f_host or f_q)
+
     # `get_intercept_config` is missing on test stubs and older injected
     # proxies; fall back to defaults so the panel still renders.
     cfg = InterceptConfig()
@@ -200,7 +241,16 @@ def index():
         getter = getattr(g.proxy, "get_intercept_config", None)
         if callable(getter):
             cfg = getter()
-    return render_template("proxy/index.html", items=pending,
+    return render_template("proxy/index.html",
+                           items=filtered,
+                           total_items=len(enriched),
+                           any_filter=any_filter,
+                           filters={
+                               "methods": sorted(f_methods),
+                               "kinds": sorted(f_kinds),
+                               "host": f_host,
+                               "q": f_q,
+                           },
                            intercept_cfg=cfg,
                            supported_methods=SUPPORTED_METHODS)
 

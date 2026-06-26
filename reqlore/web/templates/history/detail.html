@@ -73,25 +73,28 @@
 {% if has_encoded_body %}
 <section aria-labelledby="decode-h">
   <h2 id="decode-h">Body display</h2>
+  <p class="help" id="decode-state" aria-live="polite">
+    <strong>Request:</strong> {{ req_encoding }}{% if req_decode_note %} &rarr; {{ req_decode_note }}{% endif %}
+    &middot;
+    <strong>Response:</strong> {{ resp_encoding }}{% if resp_decode_note %} &rarr; {{ resp_decode_note }}{% endif %}
+  </p>
   <form method="get" action="{{ url_for('history.show', hid=row.id) }}"
         class="inline-form">
-    <label>
-      <input type="checkbox" name="decode" value="1"
-             onchange="this.form.submit()"
-             {% if decode %}checked{% endif %}>
-      Decode compressed bodies (gzip / deflate / br / zstd)
-    </label>
-    <noscript>
-      <button type="submit">Apply</button>
-    </noscript>
+    <fieldset>
+      <legend class="visually-hidden">Body display mode</legend>
+      <label>
+        <input type="radio" name="decode" value="1"
+               {% if decode %}checked{% endif %}>
+        Decoded (decompressed: gzip / deflate / br / zstd)
+      </label>
+      <label>
+        <input type="radio" name="decode" value="0"
+               {% if not decode %}checked{% endif %}>
+        Raw on-wire bytes
+      </label>
+    </fieldset>
+    <button type="submit">Apply</button>
   </form>
-  {% if decode and (req_decode_note or resp_decode_note) %}
-    <p class="help">
-      {% if req_decode_note %}<strong>Request:</strong> {{ req_decode_note }}{% endif %}
-      {% if req_decode_note and resp_decode_note %} · {% endif %}
-      {% if resp_decode_note %}<strong>Response:</strong> {{ resp_decode_note }}{% endif %}
-    </p>
-  {% endif %}
 </section>
 {% endif %}
 

@@ -536,7 +536,19 @@ class ProxyController:
     def stop(self) -> None:
         if self._master is None or self._loop is None:
             return
-        self._loop.call_soon_threadsafe(self._master.shutdown)
+        try:
+            self._loop.call_soon_threadsafe(self._master.shutdown)
+        except RuntimeError:
+            # Loop already closed in a race with another caller; nothing to do.
+            return
+        # Wait for the proxy thread to actually exit before returning. Without
+        # this, the main process can drop out of cmd_both while the loop is
+        # mid-cleanup, leaving the held-request sleep task and the mitmproxy
+        # accept_coro pending — Windows ProactorEventLoop then prints
+        # "Task was destroyed but it is pending!" on shutdown.
+        t = self._thread
+        if t is not None and t.is_alive():
+            t.join(timeout=5.0)
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -617,6 +629,21 @@ class ProxyController:
         except Exception:
             log.exception("proxy crashed")
         finally:
+            # Cancel any tasks still pending — the held-request poll loop in
+            # _sync_hold(), mitmproxy's IocpProactor.accept coroutine, etc. —
+            # so they don't leak as "Task was destroyed but it is pending!"
+            # warnings on Windows ProactorEventLoop when the loop closes.
+            try:
+                pending = [t for t in asyncio.all_tasks(self._loop) if not t.done()]
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    self._loop.run_until_complete(
+                        asyncio.gather(*pending, return_exceptions=True)
+                    )
+                self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+            except Exception:
+                log.exception("error while draining proxy event loop")
             try:
                 self._loop.close()
             except Exception:

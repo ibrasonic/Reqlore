@@ -182,11 +182,20 @@ def show(hid: int):
     # for rows where the toggle isn't shown.
     has_encoded_body = (_has_supported_encoding(row.req_blob)
                         or _has_supported_encoding(row.resp_blob))
-    decode = has_encoded_body and request.args.get("decode") == "1"
+    # Default ON when the section is shown: most operators want to read
+    # the body, not stare at a gzipped binary smear. Explicit `decode=0`
+    # in the query string opts back into the raw view.
+    decode_arg = request.args.get("decode")
+    if decode_arg is None:
+        decode = has_encoded_body
+    else:
+        decode = has_encoded_body and decode_arg == "1"
     req_blob, req_decode_note = _maybe_decode_blob(row.req_blob, decode)
     resp_blob, resp_decode_note = _maybe_decode_blob(row.resp_blob, decode)
     req_text = _safe_text(req_blob)
     resp_text = _safe_text(resp_blob)
+    req_encoding = _current_encoding(row.req_blob)
+    resp_encoding = _current_encoding(row.resp_blob)
 
     # Parse response headers from the raw blob for the summariser
     headers, status_line, body = _split_http(row.resp_blob)
@@ -227,6 +236,8 @@ def show(hid: int):
         has_encoded_body=has_encoded_body,
         req_decode_note=req_decode_note,
         resp_decode_note=resp_decode_note,
+        req_encoding=req_encoding,
+        resp_encoding=resp_encoding,
     )
 
 
@@ -364,6 +375,26 @@ def _has_supported_encoding(raw: bytes) -> bool:
             if tok and tok != "identity" and tok in _SUPPORTED_ENCODINGS:
                 return True
     return False
+
+
+def _current_encoding(raw: bytes) -> str:
+    """Return the Content-Encoding header value verbatim (lower-cased,
+    joined on '+' when stacked), or 'identity' when the body is plain.
+    Used by the Body-display section so the help line can show the
+    current state ("Response: gzip") even when the user has not yet
+    asked for a decode."""
+    if not raw:
+        return "identity"
+    headers, _, _ = _split_http(raw)
+    parts: list[str] = []
+    for k, v in headers:
+        if k.lower() != "content-encoding":
+            continue
+        for piece in v.split(","):
+            tok = piece.strip().lower()
+            if tok and tok != "identity":
+                parts.append(tok)
+    return " + ".join(parts) if parts else "identity"
 
 
 def _maybe_decode_blob(raw: bytes, decode: bool) -> tuple[bytes, str]:

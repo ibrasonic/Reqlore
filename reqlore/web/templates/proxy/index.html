@@ -103,8 +103,57 @@
          data-intercept-on="{{ '1' if intercept_on else '0' }}"
          data-intercept-count="{{ items|length }}">
   <h2 id="q-h">Intercept queue</h2>
-  {% if items %}
-    <p>{{ items|length }} held item{{ '' if items|length == 1 else 's' }}.</p>
+  {% if total_items %}
+    <p>
+      {% if any_filter %}
+        {{ items|length }} of {{ total_items }} held item{{ '' if total_items == 1 else 's' }} match the filter.
+        <a href="{{ url_for('proxy.index') }}">Clear filter</a>
+      {% else %}
+        {{ items|length }} held item{{ '' if items|length == 1 else 's' }}.
+      {% endif %}
+    </p>
+    <form method="get" action="{{ url_for('proxy.index') }}"
+          class="hist-filter-form" role="search"
+          aria-label="Filter held queue">
+      <fieldset>
+        <legend>Method</legend>
+        {% for m in supported_methods %}
+        <label class="inline-check">
+          <input type="checkbox" name="method" value="{{ m }}"
+                 {% if m in filters.methods %}checked{% endif %}>
+          {{ m }}
+        </label>
+        {% endfor %}
+      </fieldset>
+      <fieldset>
+        <legend>Direction</legend>
+        <label class="inline-check">
+          <input type="checkbox" name="kind" value="request"
+                 {% if 'request' in filters.kinds %}checked{% endif %}>
+          request
+        </label>
+        <label class="inline-check">
+          <input type="checkbox" name="kind" value="response"
+                 {% if 'response' in filters.kinds %}checked{% endif %}>
+          response
+        </label>
+      </fieldset>
+      <p>
+        <label for="q-host">Host contains</label>
+        <input type="text" id="q-host" name="host" value="{{ filters.host }}"
+               size="20" autocomplete="off" placeholder="example.com">
+      </p>
+      <p>
+        <label for="q-q">URL contains</label>
+        <input type="text" id="q-q" name="q" value="{{ filters.q }}"
+               size="30" autocomplete="off" placeholder="/api/login">
+      </p>
+      <p>
+        <button type="submit">Apply filter</button>
+        {% if any_filter %}<a href="{{ url_for('proxy.index') }}" class="hist-clear-link">Clear</a>{% endif %}
+      </p>
+    </form>
+    {% if items %}
     <div class="row" role="group" aria-label="Bulk actions">
       <form method="post" action="{{ url_for('proxy.forward_all') }}" class="inline-form">
         <input type="hidden" name="_csrf" value="{{ csrf_token }}">
@@ -124,16 +173,26 @@
       <em>Send all to Repeater</em> snapshots every held request into history
       for replay; flows stay held until you Forward or Drop them.
     </p>
-    <table>
+    <table class="hist-table">
       <caption class="visually-hidden">Held items, newest first.</caption>
       <thead>
-        <tr><th scope="col">#</th><th scope="col">Kind</th>
-            <th scope="col">Reason</th><th scope="col">Actions</th></tr>
+        <tr>
+          <th scope="col">#</th>
+          <th scope="col">Method</th>
+          <th scope="col">Host</th>
+          <th scope="col">URL</th>
+          <th scope="col">Kind</th>
+          <th scope="col">Reason</th>
+          <th scope="col">Actions</th>
+        </tr>
       </thead>
       <tbody>
         {% for it in items %}
         <tr>
           <th scope="row">{{ it.id }}</th>
+          <td>{{ it.method }}</td>
+          <td>{{ it.host }}</td>
+          <td><span class="url">{{ it.url }}</span></td>
           <td>
             {{ it.kind }}
             {% if it.parent_intercept_id %}
@@ -156,6 +215,9 @@
         {% endfor %}
       </tbody>
     </table>
+    {% else %}
+    <p>No items match the current filter. <a href="{{ url_for('proxy.index') }}">Clear filter</a>.</p>
+    {% endif %}
   {% else %}
     <p>No held items.</p>
   {% endif %}
