@@ -228,12 +228,24 @@
                   <li>
                     <form method="post" action="{{ url_for('proxy.forward_intercept', iid=it.id) }}" class="row-actions-form">
                       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      {# Tell the route to land us back on the queue
+                         instead of auto-advancing to the next held
+                         intercept's detail page (the auto-advance is
+                         right from the detail page, wrong from here). #}
+                      <input type="hidden" name="next" value="queue">
+                      {% if request.query_string %}
+                      <input type="hidden" name="next_qs" value="{{ request.query_string.decode() }}">
+                      {% endif %}
                       <button type="submit">Forward as-is</button>
                     </form>
                   </li>
                   <li>
                     <form method="post" action="{{ url_for('proxy.drop_intercept', iid=it.id) }}" class="row-actions-form">
                       <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+                      <input type="hidden" name="next" value="queue">
+                      {% if request.query_string %}
+                      <input type="hidden" name="next_qs" value="{{ request.query_string.decode() }}">
+                      {% endif %}
                       <button type="submit" class="danger">Drop</button>
                     </form>
                   </li>

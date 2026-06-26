@@ -114,3 +114,41 @@ def test_just_decided_intercept_is_not_picked_as_next(client, app):
     target = r.headers["Location"]
     assert not target.endswith(f"/proxy/intercept/{ids[0]}")
     assert target.endswith(f"/proxy/intercept/{ids[1]}")
+
+
+# ---------------------------------------------------------------------------
+# Queue-context override: row-actions on /proxy/ post next=queue so the
+# user lands back on the queue instead of being auto-advanced to another
+# detail page. The auto-advance is right from the detail page (operator
+# is working through the queue one at a time) but wrong from the queue
+# table (operator expects "row vanishes, focus next row").
+# ---------------------------------------------------------------------------
+
+def test_drop_with_next_queue_returns_to_index(client, app):
+    ids = _enqueue(app, 3)
+    token = _csrf(client)
+    r = client.post(f"/proxy/intercept/{ids[0]}/drop",
+                    data={"_csrf": token, "next": "queue"})
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/proxy/")
+
+
+def test_forward_with_next_queue_returns_to_index(client, app):
+    ids = _enqueue(app, 3)
+    token = _csrf(client)
+    r = client.post(f"/proxy/intercept/{ids[0]}/forward",
+                    data={"_csrf": token, "next": "queue"})
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/proxy/")
+
+
+def test_next_queue_preserves_filter_querystring(client, app):
+    ids = _enqueue(app, 2)
+    token = _csrf(client)
+    r = client.post(f"/proxy/intercept/{ids[0]}/drop",
+                    data={"_csrf": token, "next": "queue",
+                          "next_qs": "kind=request"})
+    assert r.status_code == 302
+    # The querystring round-trips so the operator's filter survives
+    # the Drop.
+    assert r.headers["Location"].endswith("/proxy/?kind=request")

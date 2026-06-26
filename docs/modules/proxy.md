@@ -156,6 +156,49 @@ Keyboard contract, roving focus, Esc-closes and click-outside are
 identical to the History page; see the linked section for the full
 behaviour table.
 
+### Queue-context redirect (`next=queue`)
+
+Forward / Drop on an intercept normally calls
+`_after_decision_redirect()` and **auto-advances to the next still-pending
+intercept's detail page** (one round-trip per decision when the operator
+is working through the queue from a detail page). That default is wrong
+when the decision was fired from the queue table itself — the operator
+expects "row vanishes, focus next row", not "land on some other
+intercept's detail page".
+
+Each row-action form on `/proxy/` therefore posts two extra hidden
+inputs to opt out of the auto-advance:
+
+```html
+<input type="hidden" name="next" value="queue">
+{% if request.query_string %}
+<input type="hidden" name="next_qs" value="{{ request.query_string.decode() }}">
+{% endif %}
+```
+
+`_after_decision_redirect()` checks `request.form.get("next") == "queue"`
+first and, when present, redirects to `url_for(".index")` with `next_qs`
+re-attached so the operator's current filter survives the Drop. The
+detail-page Forward / Drop bar does **not** send `next` so the
+auto-advance is preserved there. Tests:
+`reqlore/tests/unit/test_intercept_auto_advance.py::test_drop_with_next_queue_returns_to_index`
+and friends.
+
+### Body display (decompression toggle)
+
+The intercept detail page reuses the History detail page's
+**Body display** section via `_macros/body_display.html`. When the held
+blob carries `Content-Encoding: gzip` / `deflate` / `br` / `zstd` the
+section shows a decode/raw radio (default decoded) plus a status line
+("Response: gzip → 162 bytes"). Decoding is implemented in
+`reqlore/web/_decode_helpers.py` (`_has_supported_encoding`,
+`_current_encoding`, `_maybe_decode_blob`, `_split_http`) — one canonical
+implementation shared by both detail pages so a future fix to
+`Content-Encoding` handling ships to both at once. The section is
+hidden entirely when no supported encoding is present (radios would be
+a no-op). Tests live in
+`reqlore/tests/unit/test_proxy_decode.py`.
+
 ## Live auto-refresh
 
 The held-queue page uses the **same `[data-live-refresh]` widget** as

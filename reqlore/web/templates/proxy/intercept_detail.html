@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_find.html" import find_form, find_result %}
+{% from "_macros/body_display.html" import body_display %}
 {% block title %}Reqlore — Intercept #{{ item.id }}{% endblock %}
 {% block main %}
 <nav aria-label="Breadcrumb">
@@ -25,6 +26,13 @@
   {% endif %}
   <dt>Status</dt><dd>Pending &mdash; Forward or Drop below to release.</dd>
 </dl>
+
+{{ body_display(
+     has_encoded_body,
+     url_for('proxy.show_intercept', iid=item.id),
+     decode,
+     [(body_label, body_encoding, body_decode_note)]
+   ) }}
 
 {# Find-in-body is a SEPARATE <form method="get"> so submitting it
    never accidentally forwards or drops the held flow. Placed BEFORE

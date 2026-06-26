@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_find.html" import find_form, find_jumps, find_pane_pre %}
+{% from "_macros/body_display.html" import body_display %}
 {% block title %}Reqlore — History #{{ row.id }}{% endblock %}
 {% block main %}
 <h1>Request #{{ row.id }}</h1>
@@ -70,33 +71,13 @@
 </section>
 {% endif %}
 
-{% if has_encoded_body %}
-<section aria-labelledby="decode-h">
-  <h2 id="decode-h">Body display</h2>
-  <p class="help" id="decode-state" aria-live="polite">
-    <strong>Request:</strong> {{ req_encoding }}{% if req_decode_note %} &rarr; {{ req_decode_note }}{% endif %}
-    &middot;
-    <strong>Response:</strong> {{ resp_encoding }}{% if resp_decode_note %} &rarr; {{ resp_decode_note }}{% endif %}
-  </p>
-  <form method="get" action="{{ url_for('history.show', hid=row.id) }}"
-        class="inline-form">
-    <fieldset>
-      <legend class="visually-hidden">Body display mode</legend>
-      <label>
-        <input type="radio" name="decode" value="1"
-               {% if decode %}checked{% endif %}>
-        Decoded (decompressed: gzip / deflate / br / zstd)
-      </label>
-      <label>
-        <input type="radio" name="decode" value="0"
-               {% if not decode %}checked{% endif %}>
-        Raw on-wire bytes
-      </label>
-    </fieldset>
-    <button type="submit">Apply</button>
-  </form>
-</section>
-{% endif %}
+{{ body_display(
+     has_encoded_body,
+     url_for('history.show', hid=row.id),
+     decode,
+     [('Request',  req_encoding,  req_decode_note),
+      ('Response', resp_encoding, resp_decode_note)]
+   ) }}
 
 <section aria-labelledby="req-h">
   <h2 id="req-h">Request ({{ row.len_req }} bytes)</h2>

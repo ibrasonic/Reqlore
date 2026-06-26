@@ -14,6 +14,8 @@ from ...proxy.rules import (
     DEFAULT_NOISE_HOST_REGEX, DEFAULT_NOISE_PATH_REGEX, SUPPORTED_METHODS,
     InterceptConfig,
 )
+from .._decode_helpers import (_current_encoding, _has_supported_encoding,
+                                _maybe_decode_blob)
 
 bp = Blueprint("proxy", __name__)
 
@@ -363,11 +365,24 @@ def _next_pending_id() -> int | None:
 def _after_decision_redirect():
     """Where to send the user after they Forward / Drop an intercept.
 
-    If another request is currently held, jump straight to its detail
-    page (one round-trip per decision instead of the old two). When the
-    queue is empty fall back to ``/proxy/`` so the operator sees the
-    "no intercepts held" landing state.
+    Default: jump straight to the next still-pending intercept's detail
+    page so the operator stays in the "work through the queue" flow
+    (one round-trip per decision instead of bouncing back to the queue).
+    When the queue is empty fall back to ``/proxy/`` so the operator
+    sees the "no intercepts held" landing state.
+
+    **Queue-context override.** Row-actions on the queue table post a
+    hidden ``next=queue`` (with the current filter querystring in
+    ``next_qs``) so the user lands back on the queue — the auto-advance
+    pattern is the right default from the detail page but wrong from
+    the table, where the user expects "row gone, focus next row".
     """
+    if request.form.get("next") == "queue":
+        qs = request.form.get("next_qs", "")
+        target = url_for(".index")
+        if qs:
+            target = target + "?" + qs
+        return redirect(target)
     nxt = _next_pending_id()
     if nxt is None:
         return redirect(url_for(".index"))
@@ -520,7 +535,23 @@ def show_intercept(iid: int):
     item = g.project.get_intercept(iid)
     if item is None:
         abort(404)
-    body_text = _safe_text(item.req_blob)
+    # Body-display toggle: mirrors the History detail page so a held
+    # response with Content-Encoding: gzip / deflate / br / zstd shows
+    # readable bytes by default instead of a compressed smear. The
+    # toggle only renders when there's something to decode (otherwise
+    # the radio would be a no-op).
+    has_encoded_body = _has_supported_encoding(item.req_blob)
+    decode_arg = request.args.get("decode")
+    if decode_arg is None:
+        decode = has_encoded_body
+    else:
+        decode = has_encoded_body and decode_arg == "1"
+    display_blob, body_decode_note = _maybe_decode_blob(item.req_blob, decode)
+    body_text = _safe_text(display_blob)
+    body_encoding = _current_encoding(item.req_blob)
+    # Surface direction in the section heading so the screen reader
+    # hears "Request" vs "Response" instead of a generic "Held bytes".
+    body_label = "Response" if item.kind == "response" else "Request"
     # Server-side find — the editable textarea cannot be searched with
     # browser Ctrl+F, so this is the only AAA-clean way to point a
     # screen-reader user at a token inside a long held request.
@@ -534,6 +565,11 @@ def show_intercept(iid: int):
     )
     return render_template("proxy/intercept_detail.html", item=item,
                            body_text=body_text,
+                           body_label=body_label,
+                           body_encoding=body_encoding,
+                           body_decode_note=body_decode_note,
+                           has_encoded_body=has_encoded_body,
+                           decode=decode,
                            find_body=find_body,
                            send_targets=_available_targets(item),
                            plugin_apps_available=_plugin_apps_available())

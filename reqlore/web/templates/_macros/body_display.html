@@ -1,0 +1,50 @@
+{#
+  Body-display toggle: decode/raw radio choice, with encoding status line.
+  Used by both the History detail page (request + response) and the Proxy
+  intercept detail page (single held blob).
+
+  Args:
+    has_encoded_body : bool  -- whether to render the section at all.
+                                Pages should pre-compute this so the
+                                toggle never appears for rows where the
+                                two radios would be a no-op.
+    decode_url       : str   -- where the GET form posts back to. The
+                                same page; the radio just appends
+                                ?decode=0|1 to the URL.
+    decode           : bool  -- current decode state (drives `checked`).
+    pairs            : list  -- one (label, encoding, decode_note) tuple
+                                per blob to summarise. History passes two
+                                (Request + Response); Proxy passes one.
+                                `decode_note` may be empty string when the
+                                blob wasn't actually decoded.
+#}
+
+{% macro body_display(has_encoded_body, decode_url, decode, pairs) -%}
+{% if has_encoded_body %}
+<section aria-labelledby="decode-h">
+  <h2 id="decode-h">Body display</h2>
+  <p class="help" id="decode-state" aria-live="polite">
+    {% for label, encoding, decode_note in pairs -%}
+      <strong>{{ label }}:</strong> {{ encoding }}{% if decode_note %} &rarr; {{ decode_note }}{% endif %}
+      {%- if not loop.last %} &middot; {% endif %}
+    {%- endfor %}
+  </p>
+  <form method="get" action="{{ decode_url }}" class="inline-form">
+    <fieldset>
+      <legend class="visually-hidden">Body display mode</legend>
+      <label>
+        <input type="radio" name="decode" value="1"
+               {% if decode %}checked{% endif %}>
+        Decoded (decompressed: gzip / deflate / br / zstd)
+      </label>
+      <label>
+        <input type="radio" name="decode" value="0"
+               {% if not decode %}checked{% endif %}>
+        Raw on-wire bytes
+      </label>
+    </fieldset>
+    <button type="submit">Apply</button>
+  </form>
+</section>
+{% endif %}
+{%- endmacro %}
