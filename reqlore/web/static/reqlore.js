@@ -844,4 +844,322 @@
       menus.forEach(function (d) { if (d.open) d.open = false; });
     });
   })();
+
+  // --------------------------------------------------------------------
+  // Live polling: Plugin app run page (plugins/app_run.html)
+  //
+  // Moved out of an inline <script> so the strict CSP
+  // (script-src 'self', no 'unsafe-inline') doesn't block it.
+  // The template emits a hidden <div data-plugin-run-poll …> with the
+  // poll URL, column list and initial activity flag, plus a visible
+  // <div class="run-live-controls"> with a checkbox to start/stop
+  // auto-refresh and a "Refresh now" link. We honour the checkbox
+  // (WCAG 2.2.2 Pause, Stop, Hide — Level A; aria-live region keeps
+  // SR users informed of state changes at AAA quality).
+  // --------------------------------------------------------------------
+  (function () {
+    var cfg = document.querySelector('[data-plugin-run-poll]');
+    if (!cfg) return;
+    var pollUrl = cfg.getAttribute('data-poll-url') || '';
+    if (!pollUrl) return;
+    var serverIsRunning = cfg.getAttribute('data-is-running') === 'true';
+    var columns = [];
+    try { columns = JSON.parse(cfg.getAttribute('data-columns') || '[]'); }
+    catch (_) { columns = []; }
+
+    var STORAGE_KEY = 'reqlorePluginRunAutoRefresh';
+    var POLL_MS = 1000;
+
+    var logEl = document.getElementById('run-log');
+    var statusEl = document.getElementById('run-status');
+    var finishedEl = document.getElementById('run-finished');
+    var progEl = document.getElementById('run-progress');
+    var progTextEl = document.getElementById('run-progress-text');
+    var resTable = document.getElementById('run-results');
+    var resBody = document.getElementById('run-results-body');
+    var resCount = document.getElementById('run-results-count');
+
+    var cb = document.getElementById('run-live-cb');
+    var liveStatusEl = document.getElementById('run-live-status');
+    var refreshLink = document.getElementById('run-live-refresh');
+
+    // Load persisted preference; default = follow the server's
+    // is_running flag (ON while a run is alive, OFF after it ends).
+    var stored = null;
+    try { stored = localStorage.getItem(STORAGE_KEY); } catch (_) { /* ignore */ }
+    var enabled = (stored == null) ? serverIsRunning : (stored === 'on');
+    if (cb) cb.checked = enabled;
+    if (refreshLink) refreshLink.hidden = false;
+
+    var runDone = !serverIsRunning;
+    var pending = null;
+    var inFlight = false;
+
+    function announce(msg) {
+      if (!liveStatusEl) return;
+      // Clear first so SR re-reads even when the new text equals the old.
+      liveStatusEl.textContent = '';
+      setTimeout(function () { liveStatusEl.textContent = msg; }, 50);
+    }
+    function setBusy(b) { cfg.setAttribute('aria-busy', b ? 'true' : 'false'); }
+
+    function renderRow(row) {
+      var tr = document.createElement('tr');
+      if (columns && columns.length) {
+        columns.forEach(function (c) {
+          var td = document.createElement('td');
+          td.textContent = (row && row[c] != null) ? String(row[c]) : '';
+          tr.appendChild(td);
+        });
+      } else {
+        var td = document.createElement('td');
+        var code = document.createElement('code');
+        code.textContent = JSON.stringify(row);
+        td.appendChild(code);
+        tr.appendChild(td);
+      }
+      return tr;
+    }
+
+    function apply(data) {
+      if (!data) return;
+      if (data.log_tail && logEl) {
+        logEl.appendChild(document.createTextNode(data.log_tail));
+        logEl.setAttribute('data-log-offset', String(data.log_offset));
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+      if (data.new_results && data.new_results.length && resBody) {
+        data.new_results.forEach(function (row) { resBody.appendChild(renderRow(row)); });
+        if (resTable) resTable.setAttribute('data-results-offset', String(data.results_offset));
+        if (resCount) resCount.textContent = String(data.results_offset);
+      }
+      if (statusEl) statusEl.textContent = data.status || '';
+      if (progEl) {
+        if (data.progress_total > 0) {
+          progEl.value = data.progress_done;
+          progEl.max = data.progress_total;
+          progEl.setAttribute(
+            'aria-valuetext',
+            data.progress_done + ' of ' + data.progress_total
+              + (data.progress_msg ? ': ' + data.progress_msg : '')
+          );
+        } else {
+          progEl.removeAttribute('value');
+          progEl.setAttribute(
+            'aria-valuetext',
+            (data.progress_done || 0) + ' step(s) completed'
+              + (data.progress_msg ? ': ' + data.progress_msg : '')
+          );
+        }
+      }
+      if (progTextEl) {
+        var parts = [];
+        parts.push(String(data.progress_done || 0));
+        if (data.progress_total) parts.push('/' + data.progress_total);
+        if (data.progress_msg) parts.push(' \u2014 ' + data.progress_msg);
+        progTextEl.textContent = parts.join('');
+      }
+      if (data.finished_at && finishedEl) {
+        finishedEl.textContent = String(data.finished_at);
+      }
+      if (!data.is_running && !runDone) {
+        runDone = true;
+        if (cb) cb.disabled = true;
+        announce('Run finished — auto-refresh stopped.');
+      }
+    }
+
+    function doFetch(reason) {
+      if (inFlight) return;
+      inFlight = true;
+      var logOffset = logEl ? parseInt(logEl.getAttribute('data-log-offset') || '0', 10) : 0;
+      var resOffset = resTable ? parseInt(resTable.getAttribute('data-results-offset') || '0', 10) : 0;
+      var url = pollUrl + (pollUrl.indexOf('?') >= 0 ? '&' : '?')
+              + 'log_offset=' + logOffset + '&results_offset=' + resOffset;
+      fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(apply)
+        .catch(function () { /* swallow; retry next tick */ })
+        .finally(function () {
+          inFlight = false;
+          if (reason === 'manual') announce('Refreshed.');
+          schedule();
+        });
+    }
+
+    function schedule() {
+      if (pending) { clearTimeout(pending); pending = null; }
+      if (runDone || !cb || !cb.checked) { setBusy(false); return; }
+      setBusy(true);
+      pending = setTimeout(function () { pending = null; doFetch('auto'); }, POLL_MS);
+    }
+
+    if (cb) {
+      cb.addEventListener('change', function () {
+        try { localStorage.setItem(STORAGE_KEY, cb.checked ? 'on' : 'off'); }
+        catch (_) { /* storage may be denied; preference becomes session-only */ }
+        if (cb.checked) {
+          if (runDone) {
+            announce('Run finished — nothing to refresh.');
+          } else {
+            announce('Auto-refresh on.');
+            schedule();
+          }
+        } else {
+          announce('Auto-refresh off.');
+          if (pending) { clearTimeout(pending); pending = null; }
+          setBusy(false);
+        }
+      });
+    }
+    if (refreshLink) {
+      refreshLink.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        if (runDone) { announce('Run finished — nothing to refresh.'); return; }
+        announce('Refreshing\u2026');
+        if (pending) { clearTimeout(pending); pending = null; }
+        doFetch('manual');
+      });
+    }
+
+    if (enabled && !runDone) {
+      setBusy(true);
+      pending = setTimeout(function () { pending = null; doFetch('auto'); }, 500);
+    } else if (runDone && cb) {
+      cb.disabled = true;
+    }
+  })();
+
+  // --------------------------------------------------------------------
+  // Live polling: Auth-Matrix run detail (auth_matrix/runs_detail.html)
+  //
+  // Same UX as the plugin module: hidden config div + visible
+  // <div class="run-live-controls"> with checkbox + "Refresh now"
+  // link + aria-live status region. localStorage key is distinct so
+  // the two surfaces don't share preferences.
+  // --------------------------------------------------------------------
+  (function () {
+    var cfg = document.querySelector('[data-auth-matrix-run-poll]');
+    if (!cfg) return;
+    var pollUrl = cfg.getAttribute('data-poll-url') || '';
+    if (!pollUrl) return;
+    var serverIsRunning = cfg.getAttribute('data-is-running') === 'true';
+
+    var STORAGE_KEY = 'reqloreAuthMatrixRunAutoRefresh';
+    var POLL_MS = 1200;
+    var RELOAD_DELAY_MS = 600;
+
+    var statusEl = document.getElementById('run-status');
+    var progEl = document.getElementById('run-progress');
+    var progTextEl = document.getElementById('run-progress-text');
+    var progMsgEl = document.getElementById('run-progress-msg');
+
+    var cb = document.getElementById('run-live-cb');
+    var liveStatusEl = document.getElementById('run-live-status');
+    var refreshLink = document.getElementById('run-live-refresh');
+
+    var stored = null;
+    try { stored = localStorage.getItem(STORAGE_KEY); } catch (_) { /* ignore */ }
+    var enabled = (stored == null) ? serverIsRunning : (stored === 'on');
+    if (cb) cb.checked = enabled;
+    if (refreshLink) refreshLink.hidden = false;
+
+    var runDone = !serverIsRunning;
+    var pending = null;
+    var inFlight = false;
+
+    function announce(msg) {
+      if (!liveStatusEl) return;
+      liveStatusEl.textContent = '';
+      setTimeout(function () { liveStatusEl.textContent = msg; }, 50);
+    }
+    function setBusy(b) { cfg.setAttribute('aria-busy', b ? 'true' : 'false'); }
+
+    function apply(data) {
+      if (!data) return;
+      if (statusEl) statusEl.textContent = data.status || '';
+      if (progEl) {
+        progEl.value = data.progress_done || 0;
+        progEl.max = data.progress_total > 0 ? data.progress_total : 1;
+        progEl.setAttribute(
+          'aria-valuetext',
+          (data.progress_done || 0) + ' of ' + (data.progress_total || 0)
+            + (data.progress_msg ? ': ' + data.progress_msg : '')
+        );
+      }
+      if (progTextEl) {
+        progTextEl.textContent = (data.progress_done || 0) + ' / ' + (data.progress_total || 0);
+      }
+      if (progMsgEl) progMsgEl.textContent = data.progress_msg || '';
+      if (data.verdict_counts) {
+        Object.keys(data.verdict_counts).forEach(function (k) {
+          var el = document.querySelector('[data-verdict-count="' + k + '"]');
+          if (el) el.textContent = data.verdict_counts[k];
+        });
+      }
+      if (!data.is_running && !runDone) {
+        runDone = true;
+        if (cb) cb.disabled = true;
+        announce('Run finished — reloading to show new cells.');
+        // Reload once so freshly-recorded cells render into the table.
+        setTimeout(function () { window.location.reload(); }, RELOAD_DELAY_MS);
+      }
+    }
+
+    function doFetch(reason) {
+      if (inFlight) return;
+      inFlight = true;
+      fetch(pollUrl, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(apply)
+        .catch(function () {})
+        .finally(function () {
+          inFlight = false;
+          if (reason === 'manual') announce('Refreshed.');
+          schedule();
+        });
+    }
+
+    function schedule() {
+      if (pending) { clearTimeout(pending); pending = null; }
+      if (runDone || !cb || !cb.checked) { setBusy(false); return; }
+      setBusy(true);
+      pending = setTimeout(function () { pending = null; doFetch('auto'); }, POLL_MS);
+    }
+
+    if (cb) {
+      cb.addEventListener('change', function () {
+        try { localStorage.setItem(STORAGE_KEY, cb.checked ? 'on' : 'off'); }
+        catch (_) { /* ignore */ }
+        if (cb.checked) {
+          if (runDone) {
+            announce('Run finished — nothing to refresh.');
+          } else {
+            announce('Auto-refresh on.');
+            schedule();
+          }
+        } else {
+          announce('Auto-refresh off.');
+          if (pending) { clearTimeout(pending); pending = null; }
+          setBusy(false);
+        }
+      });
+    }
+    if (refreshLink) {
+      refreshLink.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        if (runDone) { announce('Run finished — nothing to refresh.'); return; }
+        announce('Refreshing\u2026');
+        if (pending) { clearTimeout(pending); pending = null; }
+        doFetch('manual');
+      });
+    }
+
+    if (enabled && !runDone) {
+      setBusy(true);
+      pending = setTimeout(function () { pending = null; doFetch('auto'); }, 600);
+    } else if (runDone && cb) {
+      cb.disabled = true;
+    }
+  })();
 })();

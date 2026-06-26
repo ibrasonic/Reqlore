@@ -5,16 +5,31 @@
   <a href="{{ url_for('.runs_list') }}">&larr; Runs</a>
 </nav>
 <h1>Run #{{ run.id }} — {{ run.mode }}</h1>
+<div hidden
+     data-auth-matrix-run-poll
+     data-poll-url="{{ url_for('.runs_poll', rid=run.id) }}"
+     data-is-running="{{ 'true' if is_running else 'false' }}"></div>
+
+<div class="run-live-controls" role="group" aria-label="Auto-refresh controls">
+  <label class="run-live-toggle">
+    <input type="checkbox" id="run-live-cb"{% if is_running %} checked{% endif %}>
+    Auto-refresh matrix and verdict counts
+  </label>
+  <span id="run-live-status" class="run-live-status" role="status" aria-live="polite" aria-atomic="true"></span>
+  <a id="run-live-refresh" class="run-live-refresh" href="#" hidden>Refresh now</a>
+  <noscript><em>(JavaScript disabled — press F5 to see updated cells.)</em></noscript>
+</div>
+
 <dl class="meta">
   <dt>Label</dt><dd>{{ run.label or '—' }}</dd>
-  <dt>Status</dt><dd id="run-status">{{ run.status }}</dd>
+  <dt>Status</dt><dd id="run-status" role="status" aria-live="polite">{{ run.status }}</dd>
   <dt>Progress</dt><dd>
     <progress id="run-progress"
               value="{{ run.progress_done }}"
               max="{{ run.progress_total if run.progress_total > 0 else 1 }}"
               aria-valuetext="{{ run.progress_done }} of {{ run.progress_total }}"></progress>
-    <span id="run-progress-text">{{ run.progress_done }} / {{ run.progress_total }}</span>
-    — <span id="run-progress-msg">{{ run.progress_msg }}</span>
+    <span id="run-progress-text" aria-live="polite">{{ run.progress_done }} / {{ run.progress_total }}</span>
+    — <span id="run-progress-msg" aria-live="polite">{{ run.progress_msg }}</span>
   </dd>
   {% if run.error %}
     <dt>Error</dt><dd class="flash flash-warn">{{ run.error }}</dd>
@@ -80,47 +95,4 @@
     <p>No cells recorded yet.</p>
   {% endif %}
 </section>
-
-{% if is_running %}
-<script>
-(function () {
-  var pollUrl = {{ url_for('.runs_poll', rid=run.id)|tojson }};
-  var statusEl = document.getElementById('run-status');
-  var progEl = document.getElementById('run-progress');
-  var progTextEl = document.getElementById('run-progress-text');
-  var progMsgEl = document.getElementById('run-progress-msg');
-  var stopped = false;
-  function tick() {
-    fetch(pollUrl, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (data) {
-        if (!data) return;
-        if (statusEl) statusEl.textContent = data.status;
-        if (progEl) {
-          progEl.value = data.progress_done;
-          progEl.max = data.progress_total > 0 ? data.progress_total : 1;
-        }
-        if (progTextEl) progTextEl.textContent = data.progress_done + ' / ' + data.progress_total;
-        if (progMsgEl) progMsgEl.textContent = data.progress_msg || '';
-        if (data.verdict_counts) {
-          Object.keys(data.verdict_counts).forEach(function (k) {
-            var el = document.querySelector('[data-verdict-count="' + k + '"]');
-            if (el) el.textContent = data.verdict_counts[k];
-          });
-        }
-        if (!data.is_running) {
-          stopped = true;
-          // Reload once to materialise new cells.
-          setTimeout(function () { window.location.reload(); }, 600);
-        }
-      })
-      .catch(function () {})
-      .finally(function () {
-        if (!stopped) setTimeout(tick, 1200);
-      });
-  }
-  setTimeout(tick, 600);
-})();
-</script>
-{% endif %}
 {% endblock %}

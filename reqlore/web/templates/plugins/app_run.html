@@ -9,10 +9,26 @@
 </nav>
 <h1>{{ app.name }} &mdash; run #{{ run.id }}</h1>
 
+<div hidden
+     data-plugin-run-poll
+     data-poll-url="{{ url_for('.app_run_poll', slug=app.slug, rid=run.id) }}"
+     data-columns='{{ app.columns|tojson }}'
+     data-is-running="{{ 'true' if is_running else 'false' }}"></div>
+
+<div class="run-live-controls" role="group" aria-label="Auto-refresh controls">
+  <label class="run-live-toggle">
+    <input type="checkbox" id="run-live-cb"{% if is_running %} checked{% endif %}>
+    Auto-refresh status, log and results
+  </label>
+  <span id="run-live-status" class="run-live-status" role="status" aria-live="polite" aria-atomic="true"></span>
+  <a id="run-live-refresh" class="run-live-refresh" href="#" hidden>Refresh now</a>
+  <noscript><em>(JavaScript disabled — press F5 to see new log lines and results.)</em></noscript>
+</div>
+
 <dl>
   <dt>Status</dt>
   <dd>
-    <strong id="run-status" data-status="{{ run.status }}">{{ run.status }}</strong>
+    <strong id="run-status" role="status" aria-live="polite" data-status="{{ run.status }}">{{ run.status }}</strong>
     {% if run.error %}<br><code id="run-error">{{ run.error }}</code>{% endif %}
   </dd>
   <dt>Started at</dt>
@@ -36,7 +52,7 @@
               value="{{ run.progress_done }}"
               max="{{ run.progress_total if run.progress_total > 0 else 1 }}"
               aria-valuetext="{% if run.progress_total %}{{ run.progress_done }} of {{ run.progress_total }}{% if run.progress_msg %}: {{ run.progress_msg }}{% endif %}{% else %}{{ run.progress_done }} step(s) completed{% if run.progress_msg %}: {{ run.progress_msg }}{% endif %}{% endif %}"></progress>
-    <span id="run-progress-text">
+    <span id="run-progress-text" aria-live="polite">
       {{ run.progress_done }}{% if run.progress_total %}/{{ run.progress_total }}{% endif %}
       {% if run.progress_msg %}— {{ run.progress_msg }}{% endif %}
     </span>
@@ -81,111 +97,4 @@
   <pre>{% for k, v in run.settings.items() %}{{ k }} = {{ v }}
 {% endfor %}</pre>
 </section>
-
-<script>
-  // Live updates via a small poll loop. No frameworks, no WebSockets.
-  // The endpoint returns an incremental snapshot (log_tail + new_results
-  // since the offsets we send), plus current status/progress. We stop
-  // polling once the server says the run is no longer active.
-  (function () {
-    var slug = {{ app.slug|tojson }};
-    var rid = {{ run.id }};
-    var columns = {{ app.columns|tojson }};
-    var pollUrl = {{ url_for('.app_run_poll', slug=app.slug, rid=run.id)|tojson }};
-    var logEl = document.getElementById("run-log");
-    var statusEl = document.getElementById("run-status");
-    var finishedEl = document.getElementById("run-finished");
-    var progEl = document.getElementById("run-progress");
-    var progTextEl = document.getElementById("run-progress-text");
-    var resBody = document.getElementById("run-results-body");
-    var resCount = document.getElementById("run-results-count");
-    var initialActive = {{ "true" if is_running else "false" }};
-
-    function escapeText(s) {
-      var d = document.createElement("div");
-      d.textContent = s == null ? "" : String(s);
-      return d.innerHTML;
-    }
-    function renderRow(row) {
-      var tr = document.createElement("tr");
-      if (columns && columns.length) {
-        columns.forEach(function (c) {
-          var td = document.createElement("td");
-          td.textContent = (row && row[c] != null) ? String(row[c]) : "";
-          tr.appendChild(td);
-        });
-      } else {
-        var td = document.createElement("td");
-        var code = document.createElement("code");
-        code.textContent = JSON.stringify(row);
-        td.appendChild(code);
-        tr.appendChild(td);
-      }
-      return tr;
-    }
-
-    var stopped = !initialActive;
-    function tick() {
-      var logOffset = parseInt(logEl.getAttribute("data-log-offset") || "0", 10);
-      var resOffset = parseInt(
-        document.getElementById("run-results").getAttribute("data-results-offset") || "0",
-        10
-      );
-      var url = pollUrl + "?log_offset=" + logOffset + "&results_offset=" + resOffset;
-      fetch(url, {credentials: "same-origin", headers: {"Accept": "application/json"}})
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (data) {
-          if (!data) return;
-          if (data.log_tail) {
-            logEl.appendChild(document.createTextNode(data.log_tail));
-            logEl.setAttribute("data-log-offset", String(data.log_offset));
-            logEl.scrollTop = logEl.scrollHeight;
-          }
-          if (data.new_results && data.new_results.length) {
-            data.new_results.forEach(function (row) {
-              resBody.appendChild(renderRow(row));
-            });
-            document.getElementById("run-results")
-              .setAttribute("data-results-offset", String(data.results_offset));
-            resCount.textContent = String(data.results_offset);
-          }
-          if (statusEl) statusEl.textContent = data.status;
-          if (progEl && data.progress_total > 0) {
-            progEl.value = data.progress_done;
-            progEl.max = data.progress_total;
-            progEl.setAttribute(
-              "aria-valuetext",
-              data.progress_done + " of " + data.progress_total
-              + (data.progress_msg ? ": " + data.progress_msg : "")
-            );
-          } else if (progEl) {
-            progEl.removeAttribute("value");
-            progEl.setAttribute(
-              "aria-valuetext",
-              data.progress_done + " step(s) completed"
-              + (data.progress_msg ? ": " + data.progress_msg : "")
-            );
-          }
-          if (progTextEl) {
-            var parts = [];
-            parts.push(String(data.progress_done));
-            if (data.progress_total) parts.push("/" + data.progress_total);
-            if (data.progress_msg) parts.push(" — " + data.progress_msg);
-            progTextEl.textContent = parts.join("");
-          }
-          if (data.finished_at && finishedEl) {
-            finishedEl.textContent = String(data.finished_at);
-          }
-          if (!data.is_running) {
-            stopped = true;
-          }
-        })
-        .catch(function () { /* swallow; retry next tick */ })
-        .finally(function () {
-          if (!stopped) setTimeout(tick, 1000);
-        });
-    }
-    if (initialActive) setTimeout(tick, 500);
-  })();
-</script>
 {% endblock %}

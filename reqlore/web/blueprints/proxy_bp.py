@@ -46,6 +46,7 @@ _SEND_TARGETS: list[tuple[str, str, str]] = [
     ("poc",      "PoC builder",       "b"),
     ("jwt",      "JWT workbench",     "j"),
     ("decoder",  "Decoder",           "o"),
+    ("auth-matrix", "Auth Matrix",    "x"),
 ]
 
 

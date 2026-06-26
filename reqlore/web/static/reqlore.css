@@ -936,6 +936,48 @@ html[data-theme="high-contrast"] .login-error {
   color: var(--accent, #ffae00);
 }
 
+/* Live (auto-refresh) controls on long-running pages
+   (plugins/app_run.html, auth_matrix/runs_detail.html).
+   Mirrors .hist-live so users get the same affordances
+   on every polling surface. WCAG 2.2.2 (Pause, Stop, Hide)
+   AAA: the user can stop auto-refresh and request a refresh
+   on demand; preference persists per surface in localStorage. */
+.run-live-controls {
+  margin: 0.4rem 0 0.8rem 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.run-live-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+.run-live-status {
+  font-weight: bold;
+}
+.run-live-refresh {
+  display: inline-block;
+  min-height: 44px;
+  padding: 0.55rem 0.9rem;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  text-decoration: none;
+  font-weight: 600;
+}
+.run-live-refresh:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+.run-live-refresh[hidden] { display: none; }
+
 /* Comparer view toggle (request / response / both). */
 .cmp-view {
   margin: 0.5rem 0 1rem 0;
