@@ -92,8 +92,18 @@ decision (NULL | 'forward' | 'drop' | 'forward_edited')
 edited_blob (zlib, only if decision='forward_edited')
 ```
 
-- Queue view at `/proxy/`. Columns: `#`, `Kind`, `Reason`, `Actions`.
-  Sorted newest at the bottom.
+- Queue view at `/proxy/`. Columns: `#`, `Method`, `Host`, `URL`,
+  `Kind`, `Reason`, `Actions`. Sorted newest at the bottom. The
+  Method / Host / URL cells are derived per-row by parsing the held
+  raw request via `_parse_raw_request()` in `proxy_bp`.
+  - **Filter form** (above the table, `class="hist-filter-form"
+    role="search"`) mirrors the History column-filter pattern:
+    Method checkboxes, Direction checkboxes (`request` / `response`),
+    Host substring, URL substring (`q`), **Apply**, and a **Clear**
+    link when any filter is active. Filtering is server-side; the
+    empty state renders `No items match the current filter.`
+  - The queue wrapper carries `data-intercept-watch` so the global
+    polling JS preserves the current filter querystring on reload.
 - **No auto-eviction.** Rows stay until you Forward / Drop or the
   sync-hold timeout fires (600 s).
 - **Async vs sync hold**:
@@ -102,6 +112,13 @@ edited_blob (zlib, only if decision='forward_edited')
   - **Sync** — flow blocks in the mitmproxy event loop until you decide;
     100 ms poll, 600 s ceiling. Used when the filter rule is marked
     `sync`.
+- **Graceful Ctrl+C** — `_ProxyController.stop()` joins the proxy
+  thread, and `_run()` cancels every pending asyncio task, gathers
+  them with `return_exceptions=True`, runs
+  `loop.shutdown_asyncgens()`, then closes the loop. This suppresses
+  the `Task was destroyed but it is pending!` warning that previously
+  appeared on Windows ProactorEventLoop when the user pressed Ctrl+C
+  with requests held in the queue.
 
 ## Action bar
 

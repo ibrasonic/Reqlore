@@ -311,6 +311,24 @@ unhidden with `href` set to the current URL.
   matching is always case-insensitive). See
   [ACCESSIBILITY.md §
   Find-in-body](../ACCESSIBILITY.md#find-in-body-no-js-aaa-clean).
+- **Body display** — always renders a one-line encoding state:
+  `Request: <enc> · Response: <enc> → <N> bytes.` (or
+  `decode failed (br): {ExceptionName}` /
+  `zstd decoder not installed (pip install zstandard)` when
+  applicable). When the request OR response carries a recognised
+  Content-Encoding (`gzip`, `deflate`, `br`, `zstd`), the page
+  additionally renders a CSP-safe GET-only `<form>` with a
+  `<fieldset>` of two `<input type="radio" name="decode">` buttons
+  — **Decoded** (`value="1"`) and **Raw on-wire** (`value="0"`) —
+  plus an **Apply** `<button>`. There is no inline `onchange`, so
+  the toggle works identically with or without JS under
+  `script-src 'self'`. Default: when at least one side is encoded
+  the page loads with `decode=1` so plaintext is visible
+  immediately; `?decode=0` shows the raw on-wire bytes. For
+  requests where neither side is encoded only the state line is
+  shown (the radio form is omitted). The current encoding is
+  derived by the `_current_encoding(raw)` helper in
+  [reqlore/web/blueprints/history.py](../../reqlore/web/blueprints/history.py).
 - **Back to history** link at the foot.
 
 ## Storage
