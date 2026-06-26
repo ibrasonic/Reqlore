@@ -160,28 +160,6 @@
     });
   }
 
-  // Proxy queue: when intercept is ON, poll a cheap JSON endpoint and
-  // reload the page ONLY when the held-count changes. This avoids a
-  // chatty meta-refresh that re-announces the whole page to screen
-  // readers every few seconds.
-  var watch = document.querySelector("[data-intercept-watch]");
-  if (watch && watch.getAttribute("data-intercept-on") === "1") {
-    var baseline = parseInt(watch.getAttribute("data-intercept-count") || "0", 10);
-    var poll = function () {
-      fetch("/proxy/intercept/count", { credentials: "same-origin" })
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (j) {
-          if (!j) return;
-          if (j.count !== baseline) {
-            announce("Intercept queue changed (" + j.count + ").");
-            window.location.reload();
-          }
-        })
-        .catch(function () { /* network blip; try again next tick */ });
-    };
-    setInterval(poll, 2000);
-  }
-
   // History: row Actions menu button (WAI-ARIA APG Menu Button pattern).
   // No JS: button stays [hidden]; the <ul> renders as a flat list of
   // links / inline submit buttons (each <form> still submits on click).
@@ -437,18 +415,42 @@
     });
   })();
 
-  // History: live auto-refresh.
-  // Polls /history/latest.json every few seconds. When new requests are
-  // recorded (matching the current filters), either reloads the page (if
-  // the Auto-refresh checkbox is on) or shows a "N new — Refresh" link
-  // (if the checkbox is off). Polling pauses while the tab is hidden.
-  (function () {
-    var root = document.querySelector("[data-history-live]");
-    if (!root) return;
-    var url = root.getAttribute("data-latest-url") || "/history/latest.json";
+  // Live auto-refresh widget (shared by History and Proxy).
+  // Each instance is opted in via [data-live-refresh] on a wrapper
+  // element that carries its own config in data-* attributes:
+  //   data-latest-url       poll URL (server should mirror page filters)
+  //   data-since             initial "since" cursor (highest id on screen)
+  //   data-count-field       JSON key holding the new-count (default "new")
+  //   data-storage-key       localStorage key for the opt-in checkbox
+  //   data-checkbox-id       id of the opt-in checkbox (default hist-live-cb)
+  //   data-status-id         id of the role="status" live region
+  //   data-refresh-id        id of the "Refresh now" link
+  //   data-focus-target      css selector to stash for focus-restore on reload
+  //   data-noun-singular     prose noun for count == 1 (default "request")
+  //   data-noun-plural       prose noun for count != 1 (default "requests")
+  //
+  // Polls the URL every few seconds; when the server reports new items
+  // matching the current filters, either reloads the page (if the
+  // checkbox is on — SC 3.2.5 Change on Request, default OFF) or shows
+  // a "N new — Refresh now" affordance. Polling pauses while the tab
+  // is hidden and while the user is busy (form focus, open row-actions
+  // menu, or open column-filter popover) so the page never yanks out
+  // from under the user mid-interaction.
+  document.querySelectorAll("[data-live-refresh]").forEach(function (root) {
+    var url = root.getAttribute("data-latest-url") || "";
+    if (!url) return;
     var since = parseInt(root.getAttribute("data-since") || "0", 10) || 0;
-    var cb = document.getElementById("hist-live-cb");
-    var status = document.getElementById("hist-live-status");
+    var countField = root.getAttribute("data-count-field") || "new";
+    var STORAGE_KEY = root.getAttribute("data-storage-key") || "";
+    var cbId = root.getAttribute("data-checkbox-id") || "hist-live-cb";
+    var statusId = root.getAttribute("data-status-id") || "hist-live-status";
+    var refreshId = root.getAttribute("data-refresh-id") || "hist-live-refresh";
+    var focusTarget = root.getAttribute("data-focus-target") || "";
+    var nounSingular = root.getAttribute("data-noun-singular") || "request";
+    var nounPlural = root.getAttribute("data-noun-plural") || "requests";
+
+    var cb = document.getElementById(cbId);
+    var status = document.getElementById(statusId);
     var POLL_MS = 2500;
     var RELOAD_DELAY_MS = 600;
     var timer = null;
@@ -460,16 +462,15 @@
     // the server still settles the UI without speaking.
     var lastAnnouncedCount = -1;
 
-    var STORAGE_KEY = "reqloreHistoryAutoRefresh";
-    try {
-      // Default OFF (WCAG SC 3.2.5 Change on Request, AAA): the first
-      // reload must be user-initiated. Users who flip the toggle ON have
-      // their preference remembered across page loads.
-      var saved = localStorage.getItem(STORAGE_KEY);
-      if (saved === "on") cb.checked = true;
-    } catch (_) { /* ignore */ }
+    if (cb && STORAGE_KEY) {
+      try {
+        // Default OFF (WCAG SC 3.2.5 Change on Request, AAA): the first
+        // reload must be user-initiated. Users who flip the toggle ON
+        // have their preference remembered across page loads.
+        var saved = localStorage.getItem(STORAGE_KEY);
+        if (saved === "on") cb.checked = true;
+      } catch (_) { /* ignore */ }
 
-    if (cb) {
       cb.addEventListener("change", function () {
         try {
           localStorage.setItem(STORAGE_KEY, cb.checked ? "on" : "off");
@@ -485,15 +486,19 @@
 
     function userIsBusy() {
       // Don't yank the page out from under the user mid-interaction.
-      // Skip the auto-reload if focus is in a form control or any
-      // row-actions menu is open; the "N new — Refresh" link stays
-      // visible so the user can reload on their own terms.
+      // Skip the auto-reload if focus is in a form control, any
+      // row-actions menu is open, or any column-filter <details> popover
+      // is open; the "N new — Refresh" link stays visible so the user
+      // can reload on their own terms.
       var ae = document.activeElement;
       if (ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return true;
-      var openMenu = document.querySelector(
-        '[data-row-actions] [aria-expanded="true"]'
-      );
-      return !!openMenu;
+      if (document.querySelector('[data-row-actions] [aria-expanded="true"]')) {
+        return true;
+      }
+      if (document.querySelector('[data-hist-col-filter][open]')) {
+        return true;
+      }
+      return false;
     }
 
     function scheduleReload() {
@@ -507,10 +512,10 @@
         }
         // Preserve the user's current URL (filters, page, hash) AND
         // SR position on reload — after the new HTML lands, focus is
-        // restored inside #hist-table so the screen reader resumes
-        // reading the data, not from the top of the page.
-        if (window.Reqlore && window.Reqlore.stashFocusTarget) {
-          window.Reqlore.stashFocusTarget("#hist-table");
+        // restored at the configured target so the screen reader
+        // resumes reading the data, not from the top of the page.
+        if (focusTarget && window.Reqlore && window.Reqlore.stashFocusTarget) {
+          window.Reqlore.stashFocusTarget(focusTarget);
         }
         window.location.reload();
       }, RELOAD_DELAY_MS);
@@ -529,22 +534,22 @@
       // (see template). The status text holds only the prose count;
       // the link's label never enters the live region, so AT speak
       // the count change cleanly.
-      var refresh = document.getElementById("hist-live-refresh");
+      var refresh = document.getElementById(refreshId);
       if (newCount > 0) {
-        var noun = newCount === 1 ? "request" : "requests";
+        var noun = newCount === 1 ? nounSingular : nounPlural;
         status.classList.add("has-new");
         status.textContent = newCount + " new " + noun + ".";
         if (refresh) {
           refresh.hidden = false;
           refresh.href = window.location.href;
           // Refresh-now click also stashes a focus target so the
-          // screen reader lands inside #hist-table after navigation
+          // screen reader lands inside the table after navigation
           // instead of jumping back to <body>.
           if (!refresh._reqloreFocusWired) {
             refresh._reqloreFocusWired = true;
             refresh.addEventListener("click", function () {
-              if (window.Reqlore && window.Reqlore.stashFocusTarget) {
-                window.Reqlore.stashFocusTarget("#hist-table");
+              if (focusTarget && window.Reqlore && window.Reqlore.stashFocusTarget) {
+                window.Reqlore.stashFocusTarget(focusTarget);
               }
             });
           }
@@ -565,7 +570,7 @@
       fetch(u, { credentials: "same-origin", headers: { "Accept": "application/json" } })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
-          if (data && typeof data.new === "number") paint(data.new);
+          if (data && typeof data[countField] === "number") paint(data[countField]);
         })
         .catch(function () { /* network blips: silent, try again next tick */ })
         .then(function () { schedule(); });
@@ -585,7 +590,7 @@
     });
 
     schedule();
-  })();
+  });
 
   // History per-column filter menus (the <details> dropdowns under
   // each filterable <th>). Native <details> already gives us toggle

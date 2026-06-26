@@ -266,9 +266,17 @@ If any plugin registered `copy_as()` handlers, they show up as
 The page wraps the toggle in:
 
 ```html
-<div class="hist-live" data-history-live
+<div class="hist-live" data-live-refresh
      data-latest-url="/history/latest.json?method=GET,POST&status=2xx&…"
-     data-since="<max_id>">
+     data-since="<max_id>"
+     data-count-field="new"
+     data-storage-key="reqloreHistoryAutoRefresh"
+     data-checkbox-id="hist-live-cb"
+     data-status-id="hist-live-status"
+     data-refresh-id="hist-live-refresh"
+     data-focus-target="#hist-table"
+     data-noun-singular="request"
+     data-noun-plural="requests">
   <label class="hist-live-toggle">
     <input type="checkbox" id="hist-live-cb"> Auto-refresh when new requests arrive
   </label>
@@ -277,6 +285,11 @@ The page wraps the toggle in:
   <noscript>(JavaScript disabled — press F5 to see new requests.)</noscript>
 </div>
 ```
+
+The `[data-live-refresh]` selector is shared with the Proxy held-queue
+view — every `data-*` attribute above is read by the same JS
+initializer in `reqlore.js`, so any fix to the polling, dedup, or
+focus-restore logic benefits both pages in lockstep.
 
 Crucially, the **Refresh now** link is a *sibling* of the
 `role="status"` element, **not a child**. Only the count text lives
@@ -473,7 +486,9 @@ Active scanning over history is handled by `reqlore scan`; see [Scanner](scanner
 
 - `count_history_after` empty / cursor / filter behaviour.
 - `/history/latest.json` shape, filter passthrough, bad-`since` tolerated.
-- Index page renders the live root with `data-history-live`, `data-latest-url`, `hist-live-cb`, `hist-live-status`.
+- Index page renders the live root with `data-live-refresh`,
+  `data-latest-url`, `data-storage-key="reqloreHistoryAutoRefresh"`,
+  `hist-live-cb`, `hist-live-status`.
 - `data-since` reflects the current max id.
 - Filter params round-trip into `data-latest-url`.
 - **AAA toggle defaults off** (`test_history_live_toggle_defaults_off_for_aaa`).

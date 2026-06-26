@@ -537,22 +537,32 @@ def test_proxy_intercept_drop_all_clears_pending(client, app):
 
 
 def test_proxy_intercept_count_endpoint_and_watch_attrs(client, app):
-    """The Proxy panel exposes a cheap JSON count for client-side polling
-    and marks the queue section with data-intercept-* attrs so the
-    reqlore.js poller knows when to reload.
+    """The Proxy panel exposes a filter-aware JSON poll endpoint for
+    client-side live-refresh and wraps the queue section with a
+    [data-live-refresh] widget (same JS path as History).
     """
-    # JSON endpoint returns 0 when nothing is held.
+    # JSON endpoint returns the new live-refresh shape when nothing is held.
     r = client.get("/proxy/intercept/count")
     assert r.status_code == 200
-    assert r.get_json() == {"count": 0}
+    payload = r.get_json()
+    assert payload["count"] == 0
+    assert payload["new"] == 0
+    assert payload["max_id"] == 0
+    assert payload["since"] == 0
 
-    # Page is marked as not-watching when intercept is OFF.
+    # Page renders the shared live-refresh wrapper, not the old polling attrs.
     r = client.get("/proxy/")
-    assert b'data-intercept-watch' in r.data
-    assert b'data-intercept-on="0"' in r.data
-    assert b'data-intercept-count="0"' in r.data
-    # And no meta-refresh (we want the JS poller, not a screen-reader spam).
+    assert b'data-live-refresh' in r.data
+    assert b'id="proxy-live-cb"' in r.data
+    assert b'id="proxy-live-status"' in r.data
+    assert b'id="proxy-live-refresh"' in r.data
+    assert b'data-storage-key="reqloreProxyAutoRefresh"' in r.data
+    # Old meta-refresh / chatty polling attrs must not have come back.
     assert b'http-equiv="refresh"' not in r.data
+    assert b'data-intercept-watch' not in r.data
+    # WCAG 3.2.5 (Change on Request, AAA): the auto-refresh checkbox
+    # must start UNchecked \u2014 only persisted user opt-in turns it on.
+    assert b'id="proxy-live-cb" checked' not in r.data
 
 
 def test_intercept_config_filters_by_method_path_and_excludes():

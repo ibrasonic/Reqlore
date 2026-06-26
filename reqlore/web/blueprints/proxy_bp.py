@@ -188,18 +188,9 @@ def _send_redirect(item, slug: str):
     return redirect(target)
 
 
-@bp.route("/")
-def index():
-    items = g.project.list_intercept()
-    # Filter to only pending (decision IS NULL) for the queue view
-    pending = [i for i in items if g.project.get_intercept_decision(i.id)[0] is None]
-
-    # ------------------------------------------------------------------
-    # Per-column filtering, matching the History page's UX so the
-    # operator can narrow the queue when intercept holds dozens of
-    # requests during real browsing. Column-header click-to-filter is
-    # rendered by the shared hist_th_filter macro.
-    # ------------------------------------------------------------------
+def _parse_queue_filters() -> dict:
+    """Parse the held-queue filter querystring into a dict shared by the
+    index view and the live-refresh count endpoint."""
     f_methods = {m.upper() for m in request.args.getlist("method") if m}
     f_kinds = {k.lower() for k in request.args.getlist("kind") if k}
     f_host_raw = request.args.get("host", "").strip()
@@ -214,9 +205,75 @@ def index():
             f_q_re = re.compile(f_q_raw, re.IGNORECASE)
         except re.error:
             # Bad regex falls back to substring search rather than
-            # 400-ing — the URL is the user's UI, degrade gracefully.
+            # 400-ing \u2014 the URL is the user's UI, degrade gracefully.
             f_q_re = None
             f_q_regex = False
+    return {
+        "methods": f_methods,
+        "kinds": f_kinds,
+        "host_raw": f_host_raw,
+        "host_mode": f_host_mode,
+        "q_raw": f_q_raw,
+        "q_regex": f_q_regex,
+        "q_re": f_q_re,
+    }
+
+
+def _filter_pending_for_count(pending: list, f: dict) -> list[dict]:
+    """Lean enrichment + filtering used by ``/intercept/count``.
+
+    Returns a list of ``{"id": int, "kind": str}`` dicts (only the
+    fields the count endpoint actually inspects) so we skip the more
+    expensive ``send_targets`` lookup the table view does.
+    """
+    out: list[dict] = []
+    for it in pending:
+        method, path, host, _hdrs, _body = _parse_raw_request(it.req_blob)
+        url = f"{host}{path}" if host else (path or "/")
+        if f["methods"] and method.upper() not in f["methods"]:
+            continue
+        if f["kinds"] and it.kind.lower() not in f["kinds"]:
+            continue
+        if f["host_raw"]:
+            hl = (host or "").lower()
+            needle = f["host_raw"].lower()
+            if f["host_mode"] == "exact":
+                if hl != needle:
+                    continue
+            else:
+                if needle not in hl:
+                    continue
+        if f["q_raw"]:
+            if f["q_re"] is not None:
+                if not f["q_re"].search(url):
+                    continue
+            else:
+                if f["q_raw"].lower() not in url.lower():
+                    continue
+        out.append({"id": it.id, "kind": it.kind})
+    return out
+
+
+@bp.route("/")
+def index():
+    items = g.project.list_intercept()
+    # Filter to only pending (decision IS NULL) for the queue view
+    pending = [i for i in items if g.project.get_intercept_decision(i.id)[0] is None]
+
+    # ------------------------------------------------------------------
+    # Per-column filtering, matching the History page's UX so the
+    # operator can narrow the queue when intercept holds dozens of
+    # requests during real browsing. Column-header click-to-filter is
+    # rendered by the shared hist_th_filter macro.
+    # ------------------------------------------------------------------
+    filters = _parse_queue_filters()
+    f_methods = filters["methods"]
+    f_kinds = filters["kinds"]
+    f_host_raw = filters["host_raw"]
+    f_host_mode = filters["host_mode"]
+    f_q_raw = filters["q_raw"]
+    f_q_regex = filters["q_regex"]
+    f_q_re = filters["q_re"]
 
     enriched: list[dict] = []
     for it in pending:
@@ -261,6 +318,10 @@ def index():
 
     filtered = [r for r in enriched if _keep(r)]
     any_filter = bool(f_methods or f_kinds or f_host_raw or f_q_raw)
+    # Highest pending-and-matching id, used by the live-refresh widget's
+    # `data-since` cursor so the next poll only counts arrivals newer
+    # than what the user already has on screen.
+    max_id = max((r["id"] for r in filtered), default=0)
 
     # `get_intercept_config` is missing on test stubs and older injected
     # proxies; fall back to defaults so the panel still renders.
@@ -273,6 +334,7 @@ def index():
                            items=filtered,
                            total_items=len(enriched),
                            any_filter=any_filter,
+                           max_id=max_id,
                            filters={
                                "methods": sorted(f_methods),
                                "kinds": sorted(f_kinds),
@@ -324,14 +386,46 @@ def next_intercept():
 
 @bp.route("/intercept/count")
 def intercept_count():
-    """Cheap polling endpoint: how many requests are currently held.
-    The Proxy panel polls this when intercept is ON and reloads the
-    page only when the number changes — quieter for screen readers
-    than a meta-refresh."""
+    """Live-refresh poll endpoint.
+
+    Honours the same per-column queue filters as the index view
+    (``method`` / ``kind`` / ``host`` / ``host_mode`` / ``q`` / ``q_re``)
+    so the count reflects what the operator is actually looking at — a
+    filter to ``kind=response`` won't surprise-reload the page when an
+    unrelated request-side hold arrives.
+
+    ``since`` (default ``0``) is the highest intercept id the client
+    already has on screen; ``new`` counts only matching pending items
+    with ``id > since`` and is what the JS uses to decide whether to
+    paint the "N new — Refresh now" affordance / schedule an opt-in
+    auto-reload.
+
+    Response shape::
+
+        {"count":  <total matching pending now>,
+         "new":    <matching pending with id > since>,
+         "max_id": <highest matching pending id, 0 if empty>,
+         "since":  <echoed input>}
+
+    ``count`` is retained for backward compatibility with older callers
+    that only need the queue size.
+    """
+    try:
+        since = max(0, int(request.args.get("since", "0")))
+    except ValueError:
+        since = 0
     items = g.project.list_intercept()
-    pending = sum(1 for i in items
-                  if g.project.get_intercept_decision(i.id)[0] is None)
-    return jsonify({"count": pending})
+    pending = [i for i in items
+               if g.project.get_intercept_decision(i.id)[0] is None]
+    enriched = _filter_pending_for_count(pending, _parse_queue_filters())
+    new_count = sum(1 for r in enriched if r["id"] > since)
+    max_id = max((r["id"] for r in enriched), default=0)
+    return jsonify({
+        "count": len(enriched),
+        "new": new_count,
+        "max_id": max_id,
+        "since": since,
+    })
 
 
 @bp.route("/start", methods=["POST"])

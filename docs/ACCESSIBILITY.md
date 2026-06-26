@@ -325,6 +325,15 @@ patterns below.
   link is rendered as a *sibling* of the `role="status"` element, not
   inside it, so the link's label never enters the live region. See
   [history.md § Live auto-refresh](modules/history.md#live-auto-refresh).
+- **Proxy held-queue live region** (`/proxy/` "*N new intercept(s)*"
+  indicator) uses the **same `[data-live-refresh]` widget** as History
+  \u2014 same dedup, same sibling-link structure, same opt-in checkbox
+  default OFF. The `/proxy/intercept/count` endpoint mirrors the page's
+  active column filters and accepts a `since` cursor so a `kind=response`
+  view never re-announces unrelated request-side holds. Replaces the
+  earlier `data-intercept-watch` poller that reloaded the page on every
+  count change with no opt-in and no live-region announcement. See
+  [proxy.md \u00a7 Live auto-refresh](modules/proxy.md#live-auto-refresh).
 
 ### 2.3.3 Animation from Interactions
 

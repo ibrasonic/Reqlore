@@ -105,8 +105,14 @@ edited_blob (zlib, only if decision='forward_edited')
     role="search">` collects every popover into one Apply submit;
     filtering is server-side and the empty state renders
     `No items match the current filter.`
-  - The queue wrapper carries `data-intercept-watch` so the global
-    polling JS preserves the current filter querystring on reload.
+  - The queue wrapper carries the shared `data-live-refresh` widget
+    (same JS path as History) so new arrivals are announced via a
+    `role="status" aria-live="polite"` region instead of an
+    unannounced page reload. The auto-refresh checkbox defaults OFF
+    (WCAG 2.2 SC 3.2.5 AAA) and the poll URL carries the current
+    filter querystring so a `kind=response` view isn't surprised by
+    request-side holds. See *Live auto-refresh* below for the full
+    contract.
   - **Row Actions cell** uses the same WAI-ARIA APG menu-button
     widget as [History](history.md#row-actions-menu-wai-aria-apg-menu-button) — see *Row Actions menu*
     below for the form-item extension that makes Forward / Drop /
@@ -149,6 +155,57 @@ interchangeably:
 Keyboard contract, roving focus, Esc-closes and click-outside are
 identical to the History page; see the linked section for the full
 behaviour table.
+
+## Live auto-refresh
+
+The held-queue page uses the **same `[data-live-refresh]` widget** as
+History — same JS initializer, same opt-in checkbox, same dedup,
+same `userIsBusy()` guard. The Proxy template just hands it a
+different config:
+
+```html
+<div class="hist-live" data-live-refresh
+     data-latest-url="/proxy/intercept/count?<current-filter-qs>"
+     data-since="<max_iid_currently_shown>"
+     data-count-field="new"
+     data-storage-key="reqloreProxyAutoRefresh"
+     data-checkbox-id="proxy-live-cb"
+     data-status-id="proxy-live-status"
+     data-refresh-id="proxy-live-refresh"
+     data-focus-target="#q-h"
+     data-noun-singular="intercept"
+     data-noun-plural="intercepts">
+  …
+</div>
+```
+
+Contract:
+
+- **Default OFF (WCAG 2.2 SC 3.2.5 AAA Change on Request).** The
+  checkbox is never `checked` on server render; only `localStorage`
+  (`reqloreProxyAutoRefresh = "on"`) flips it back on after the user
+  opts in once. Toggle preference is page-scoped — flipping it on for
+  Proxy does NOT also opt History in.
+- **`/proxy/intercept/count` is filter-aware.** It accepts the same
+  `method` / `kind` / `host` / `host_mode` / `q` / `q_re` querystring
+  as the index view and returns `{count, new, max_id, since}` where
+  `new` only counts *pending* intercepts with `id > since`. Decided
+  (forwarded / dropped) items are skipped. The `count` field is the
+  total matching the filter now, retained for backward compatibility.
+- **`since` cursor.** The page template seeds `data-since` with the
+  highest id currently on screen so the first poll never re-announces
+  what the user already sees. The JS advances the cursor as new arrivals
+  are announced via the `role="status" aria-live="polite"` region.
+- **Quiet for screen readers.** Live region only updates when the
+  count *actually changes* (`lastAnnouncedCount` guard), the "Refresh
+  now" link is a sibling of the live region (so its label never enters
+  the announcement), polling pauses while the tab is hidden, and the
+  600 ms reload is skipped while focus is in a form control, a row
+  Actions menu is open, or a column-filter `<details>` popover is open.
+- **No more `data-intercept-watch` meta-poll.** The legacy
+  `data-intercept-watch / data-intercept-on / data-intercept-count`
+  attrs are gone; tests assert they don't come back (see
+  `test_proxy_live.py::test_proxy_index_no_legacy_intercept_watch_attrs`).
 
 ## Action bar
 

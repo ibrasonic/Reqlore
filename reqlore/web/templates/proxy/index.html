@@ -76,11 +76,34 @@
   </form>
 </section>
 
-<section aria-labelledby="q-h"
-         data-intercept-watch
-         data-intercept-on="{{ '1' if intercept_on else '0' }}"
-         data-intercept-count="{{ items|length }}">
+<section aria-labelledby="q-h">
   <h2 id="q-h">Intercept queue</h2>
+
+  {# Live-refresh widget. Mirrors the History page's pattern (same JS,
+     same opt-in default-OFF behaviour, same role="status" live region)
+     so screen-reader users get a quiet "N new intercept(s)" cue
+     instead of a chatty meta-refresh that re-reads the whole queue
+     every couple of seconds. WCAG 2.2 SC 2.2.4, 3.2.5, 4.1.3. #}
+  <div class="hist-live"
+       data-live-refresh
+       data-latest-url="{{ url_for('proxy.intercept_count') }}{{ '?' ~ request.query_string.decode() if request.query_string else '' }}"
+       data-since="{{ max_id }}"
+       data-count-field="new"
+       data-storage-key="reqloreProxyAutoRefresh"
+       data-checkbox-id="proxy-live-cb"
+       data-status-id="proxy-live-status"
+       data-refresh-id="proxy-live-refresh"
+       data-focus-target="#q-h"
+       data-noun-singular="intercept"
+       data-noun-plural="intercepts">
+    <label class="hist-live-toggle">
+      <input type="checkbox" id="proxy-live-cb">
+      Auto-refresh when new intercepts arrive
+    </label>
+    <span id="proxy-live-status" class="hist-live-status" role="status" aria-live="polite" aria-atomic="true"></span>
+    <a id="proxy-live-refresh" class="hist-live-refresh" href="" hidden>Refresh now</a>
+    <noscript><em>(JavaScript disabled — press F5 to see new intercepts.)</em></noscript>
+  </div>
   {% if total_items %}
     <p>
       {% if any_filter %}

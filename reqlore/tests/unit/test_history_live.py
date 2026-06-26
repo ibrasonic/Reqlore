@@ -105,7 +105,8 @@ def test_history_index_renders_live_root(client, project):
     r = client.get("/history/")
     assert r.status_code == 200
     body = r.data.decode("utf-8", "replace")
-    assert "data-history-live" in body
+    assert "data-live-refresh" in body
+    assert 'data-storage-key="reqloreHistoryAutoRefresh"' in body
     assert "data-latest-url=" in body
     assert "/history/latest.json" in body
     assert 'id="hist-live-cb"' in body

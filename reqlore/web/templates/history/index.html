@@ -45,9 +45,17 @@
 <p>{{ total }} total records. Showing page {{ page }} ({{ rows|length }} item{{ '' if rows|length == 1 else 's' }}).</p>
 
 <div class="hist-live"
-     data-history-live
+     data-live-refresh
      data-latest-url="{{ url_for('history.latest') }}{{ '?' ~ request.query_string.decode() if request.query_string else '' }}"
-     data-since="{{ max_id }}">
+     data-since="{{ max_id }}"
+     data-count-field="new"
+     data-storage-key="reqloreHistoryAutoRefresh"
+     data-checkbox-id="hist-live-cb"
+     data-status-id="hist-live-status"
+     data-refresh-id="hist-live-refresh"
+     data-focus-target="#hist-table"
+     data-noun-singular="request"
+     data-noun-plural="requests">
   <label class="hist-live-toggle">
     <input type="checkbox" id="hist-live-cb">
     Auto-refresh when new requests arrive
