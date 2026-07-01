@@ -72,6 +72,26 @@ def new():
         "stop_on_match": "",
         "stop_on_status": "",
     }
+    # Per-position source config for pitchfork / cluster-bomb attacks.
+    # Set 1 uses the un-suffixed fields above (backward-compatible). Sets
+    # 2-4 each carry a full copy of the source-selector inputs so a
+    # multi-position attack can pair, e.g., a text list with a number
+    # range (IDOR + username fuzz). Empty ``source_setN`` means "skip
+    # this set" for non-text sources, or "fall back to reading
+    # payloads_setN as text" so the pre-existing text-only workflow
+    # keeps working. See _collect_payload_sets below.
+    for n in (2, 3, 4):
+        form.update({
+            f"source_set{n}": "",
+            f"num_start_set{n}": "0",
+            f"num_end_set{n}": "100",
+            f"num_step_set{n}": "1",
+            f"brute_alphabet_set{n}": "abc",
+            f"brute_min_set{n}": "1",
+            f"brute_max_set{n}": "3",
+            f"wordlist_name_set{n}": "common_passwords",
+            f"wordlist_path_set{n}": "",
+        })
     error = ""
     # Pre-fill the request template from a History row when arriving via
     # "Send to Intruder" from another panel (Proxy queue, History, etc.).
@@ -148,65 +168,130 @@ def _collect_payload_sets(form: dict) -> list:
     source except ``wordlist_path``) or a ``{"kind": "path", "path": str}``
     dict for the streaming server-path source. Both shapes round-trip
     through ``intruder.build_sources_from_storage`` at run time.
+
+    For Sniper / Battering Ram only Set 1 (the un-suffixed source +
+    input fields) is consumed. For Pitchfork / Cluster Bomb every set
+    with a non-empty source_setN (or a filled payloads_setN textarea
+    when the global source is ``text``) contributes an independent
+    payload source, so a two-position attack can pair a text list with
+    a number range and a three-position attack can add a wordlist on
+    top -- one dropdown per marker, each with the full source menu.
     """
-    src = form.get("source", "text")
+    attack_type = form["attack_type"]
+    set1 = _collect_one_set(form, form.get("source", "text"), suffix="")
+    if attack_type in ("sniper", "battering"):
+        return [set1] if set1 is not None else []
+
+    sets: list = []
+    if set1 is not None:
+        sets.append(set1)
+    global_src = form.get("source", "text")
+    for n in (2, 3, 4):
+        suffix = f"_set{n}"
+        per_set_src = (form.get(f"source_set{n}") or "").strip()
+        if per_set_src:
+            one = _collect_one_set(form, per_set_src, suffix=suffix)
+        elif global_src == "text":
+            # Backward-compat: an operator on the "text" global source
+            # who just fills payloads_set2/3/4 keeps the pre-existing
+            # multi-text-set workflow (docs and tests rely on this).
+            text = (form.get(f"payloads{suffix}") or "").strip()
+            one = payloads_from_text(text) if text else None
+        else:
+            # Non-text global source, no per-set override: skip this
+            # set. The operator must pick a per-set source explicitly
+            # to add a Set N when Set 1 is anything other than text.
+            one = None
+        if one is not None:
+            sets.append(one)
+    return sets
+
+
+def _collect_one_set(form: dict, src: str, *, suffix: str):
+    """Materialise a single payload set for the given ``src`` and ``suffix``.
+
+    ``suffix`` is ``""`` for Set 1 (un-suffixed field names) or
+    ``"_set2"`` / ``"_set3"`` / ``"_set4"`` for the extra pitchfork /
+    cluster-bomb positions. Returns ``list[str]`` for inline sources,
+    ``{"kind": "path", "path": str}`` for streaming, or ``None`` when
+    a text set is empty (skipped by the caller). Raises ``ValueError``
+    on user input problems so the blueprint can surface them inline.
+    """
+    set_label = "set 1" if not suffix else "set " + suffix.rsplit("_set", 1)[1]
+
+    if src == "text":
+        # Set 1 uses ``payloads_text``; Sets 2-4 use ``payloads_set{n}``
+        # (kept for backward compat with the pre-existing text-only
+        # multi-set UI and tests).
+        key = "payloads_text" if not suffix else f"payloads{suffix}"
+        s = (form.get(key) or "").strip()
+        if not s:
+            # Set 1 empty -> return empty list so the "Payload set is
+            # empty" guard in ``new()`` fires. Sets 2-4 empty -> None
+            # so the caller skips them.
+            return [] if not suffix else None
+        return payloads_from_text(s)
+
     if src == "numbers":
-        return [payloads_numbers(int(form["num_start"]), int(form["num_end"]),
-                                  int(form["num_step"]))]
+        return payloads_numbers(
+            int(form.get(f"num_start{suffix}") or 0),
+            int(form.get(f"num_end{suffix}") or 0),
+            int(form.get(f"num_step{suffix}") or 1),
+        )
+
     if src == "brute":
         # cap brute force to avoid runaway clusterbombs in the UI
-        return [list(_capped(payloads_brute(form["brute_alphabet"],
-                                              int(form["brute_min"]),
-                                              int(form["brute_max"])), 50_000))]
+        return list(_capped(payloads_brute(
+            form.get(f"brute_alphabet{suffix}", ""),
+            int(form.get(f"brute_min{suffix}") or 1),
+            int(form.get(f"brute_max{suffix}") or 1),
+        ), 50_000))
+
     if src == "common_pw":
-        return [COMMON_PASSWORDS]
+        return list(COMMON_PASSWORDS)
+
     if src == "wordlist":
-        name = form.get("wordlist_name", "")
+        name = form.get(f"wordlist_name{suffix}", "")
         wl = WORDLISTS.get(name)
         if wl is None:
-            raise ValueError(f"Unknown built-in wordlist: {name!r}")
-        return [list(wl)]
+            raise ValueError(f"Unknown built-in wordlist for {set_label}: {name!r}")
+        return list(wl)
+
     if src == "wordlist_file":
         # The UI uploads the file as multipart/form-data so the operator
         # never has to type a server-side path. CLI/spec users still get
         # `load_wordlist_file(path)` via reqlore.intruder.
-        upload = request.files.get("wordlist_upload")
+        field = "wordlist_upload" if not suffix else f"wordlist_upload{suffix}"
+        upload = request.files.get(field)
         if upload is None or not upload.filename:
-            raise ValueError("No wordlist file selected.")
-        data = upload.read()
-        return [load_wordlist_bytes(data)]
+            raise ValueError(f"No wordlist file selected for {set_label}.")
+        return load_wordlist_bytes(upload.read())
+
     if src == "wordlist_path":
         # Streaming source: store only the absolute path, never read the
         # file into memory. The runner opens it fresh on each pass via
         # ``from_path`` so even rockyou-class wordlists stay O(1) RAM.
-        raw = (form.get("wordlist_path") or "").strip()
+        raw = (form.get(f"wordlist_path{suffix}") or "").strip()
         if not raw:
             raise ValueError(
-                "Server path is required for the streaming wordlist source.")
+                f"Server path is required for the streaming wordlist source ({set_label}).")
         p = Path(raw)
         if not p.is_absolute():
             raise ValueError(
-                "Server path must be absolute (e.g. /usr/share/wordlists/rockyou.txt).")
+                f"Server path must be absolute for {set_label} "
+                f"(e.g. /usr/share/wordlists/rockyou.txt).")
         if not p.is_file():
-            raise ValueError(f"File not found: {raw}")
+            raise ValueError(f"File not found for {set_label}: {raw}")
         if not os.access(p, os.R_OK):
-            raise ValueError(f"File not readable by the Reqlore process: {raw}")
-        # Pre-count lines so the progress UI shows N/total even though the
-        # source streams. A 100 MB file counts in ~300 ms.
+            raise ValueError(
+                f"File not readable by the Reqlore process for {set_label}: {raw}")
         try:
             count_wordlist_lines(p)
         except OSError as exc:
-            raise ValueError(f"Cannot read server path: {exc}") from exc
-        return [{"kind": "path", "path": str(p)}]
-    # 'text' — up to 4 sets for pitchfork/clusterbomb
-    sets: list[list[str]] = []
-    for key in ("payloads_text", "payloads_set2", "payloads_set3", "payloads_set4"):
-        s = (form.get(key) or "").strip()
-        if s:
-            sets.append(payloads_from_text(s))
-    if form["attack_type"] in ("sniper", "battering"):
-        return sets[:1]
-    return sets
+            raise ValueError(f"Cannot read server path for {set_label}: {exc}") from exc
+        return {"kind": "path", "path": str(p)}
+
+    raise ValueError(f"Unknown payload source for {set_label}: {src!r}")
 
 
 def _capped(gen, n: int) -> list[str]:

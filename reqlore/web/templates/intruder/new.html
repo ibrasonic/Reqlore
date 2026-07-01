@@ -1,5 +1,110 @@
 {% extends "base.html" %}
 {% block title %}Reqlore — New Intruder attack{% endblock %}
+
+{#
+  Payload-source config for one Pitchfork / Cluster Bomb position.
+  Set 1 (below) keeps its original un-suffixed markup for backward
+  compatibility with tests and any bookmarked deep-links; Sets 2-4
+  are rendered by this macro so each § marker gets its own full
+  Source dropdown with all seven source types, plus the matching
+  inputs. Field names are namespaced with ``_set{n}`` (``num_start_set2``,
+  ``wordlist_upload_set3``, etc.) and every scoped input group carries
+  ``data-source-scope="set{n}"`` so the reqlore.js source-toggle listener
+  only shows/hides the inputs for THAT set when its own dropdown changes.
+#}
+{% macro payload_set_block(n, form, wordlists) -%}
+{% set s = "_set" ~ n %}
+{% set scope = "set" ~ n %}
+{% set cur = form["source_set" ~ n] %}
+<fieldset class="payload-set-block" data-payload-set="{{ n }}">
+  <legend>Set {{ n }}</legend>
+  <div>
+    <label for="i-src-{{ scope }}">Set {{ n }} — Source</label>
+    <select id="i-src-{{ scope }}" name="source_set{{ n }}"
+            data-source-select="{{ scope }}"
+            aria-describedby="i-src-{{ scope }}-help">
+      <option value=""            {% if cur == '' %}selected{% endif %}>(unused — leave this position empty)</option>
+      <option value="text"        {% if cur == 'text' %}selected{% endif %}>Text (one per line)</option>
+      <option value="numbers"     {% if cur == 'numbers' %}selected{% endif %}>Number range</option>
+      <option value="brute"       {% if cur == 'brute' %}selected{% endif %}>Brute force (alphabet × length)</option>
+      <option value="common_pw"   {% if cur == 'common_pw' %}selected{% endif %}>Common passwords (built-in)</option>
+      <option value="wordlist"    {% if cur == 'wordlist' %}selected{% endif %}>Built-in wordlist</option>
+      <option value="wordlist_file" {% if cur == 'wordlist_file' %}selected{% endif %}>Wordlist from file (upload)</option>
+      <option value="wordlist_path" {% if cur == 'wordlist_path' %}selected{% endif %}>Wordlist from server path (stream)</option>
+    </select>
+    <p id="i-src-{{ scope }}-help" class="muted">
+      Independent of Set 1. Leave as <em>unused</em> if this position
+      isn't needed. When empty and Set 1 is <strong>text</strong>, the
+      Set {{ n }} textarea below still contributes (legacy behaviour).
+    </p>
+  </div>
+
+  <div data-source-group="text" data-source-scope="{{ scope }}"
+       role="group" aria-labelledby="tg-{{ scope }}-label"
+       {% if cur != 'text' %}hidden{% endif %}>
+    <p id="tg-{{ scope }}-label" class="muted">Text source for Set {{ n }} — one payload per line.</p>
+    <label for="i-pl-{{ scope }}">Set {{ n }} — one payload per line</label>
+    <textarea id="i-pl-{{ scope }}" name="payloads{{ s }}" rows="4" autocomplete="off">{{ form["payloads" ~ s] }}</textarea>
+  </div>
+
+  <div class="row" data-source-group="numbers" data-source-scope="{{ scope }}"
+       role="group" {% if cur != 'numbers' %}hidden{% endif %}>
+    <div><label for="i-ns-{{ scope }}">Number start</label>
+      <input id="i-ns-{{ scope }}" name="num_start{{ s }}" value="{{ form['num_start' ~ s] }}" inputmode="numeric"></div>
+    <div><label for="i-ne-{{ scope }}">Number end</label>
+      <input id="i-ne-{{ scope }}" name="num_end{{ s }}" value="{{ form['num_end' ~ s] }}" inputmode="numeric"></div>
+    <div><label for="i-nst-{{ scope }}">Step</label>
+      <input id="i-nst-{{ scope }}" name="num_step{{ s }}" value="{{ form['num_step' ~ s] }}" inputmode="numeric"></div>
+  </div>
+
+  <div class="row" data-source-group="brute" data-source-scope="{{ scope }}"
+       role="group" {% if cur != 'brute' %}hidden{% endif %}>
+    <div><label for="i-ba-{{ scope }}">Brute alphabet</label>
+      <input id="i-ba-{{ scope }}" name="brute_alphabet{{ s }}" value="{{ form['brute_alphabet' ~ s] }}"></div>
+    <div><label for="i-bmin-{{ scope }}">Min length</label>
+      <input id="i-bmin-{{ scope }}" name="brute_min{{ s }}" value="{{ form['brute_min' ~ s] }}" inputmode="numeric"></div>
+    <div><label for="i-bmax-{{ scope }}">Max length</label>
+      <input id="i-bmax-{{ scope }}" name="brute_max{{ s }}" value="{{ form['brute_max' ~ s] }}" inputmode="numeric"></div>
+  </div>
+
+  <div data-source-group="common_pw" data-source-scope="{{ scope }}"
+       role="group" {% if cur != 'common_pw' %}hidden{% endif %}>
+    <p class="muted">Common passwords source — built-in list, no extra input.</p>
+  </div>
+
+  <div class="row" data-source-group="wordlist" data-source-scope="{{ scope }}"
+       role="group" {% if cur != 'wordlist' %}hidden{% endif %}>
+    <div>
+      <label for="i-wln-{{ scope }}">Built-in wordlist</label>
+      <select id="i-wln-{{ scope }}" name="wordlist_name{{ s }}">
+        {% for name in wordlists %}
+        <option value="{{ name }}" {% if form['wordlist_name' ~ s] == name %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div class="row" data-source-group="wordlist_file" data-source-scope="{{ scope }}"
+       role="group" {% if cur != 'wordlist_file' %}hidden{% endif %}>
+    <div class="grow">
+      <label for="i-wlf-{{ scope }}">Wordlist file</label>
+      <input id="i-wlf-{{ scope }}" name="wordlist_upload{{ s }}" type="file"
+             accept=".txt,.lst,.dic,text/plain">
+    </div>
+  </div>
+
+  <div class="row" data-source-group="wordlist_path" data-source-scope="{{ scope }}"
+       role="group" {% if cur != 'wordlist_path' %}hidden{% endif %}>
+    <div class="grow">
+      <label for="i-wlp-{{ scope }}">Server-side path</label>
+      <input id="i-wlp-{{ scope }}" name="wordlist_path{{ s }}"
+             value="{{ form['wordlist_path' ~ s] }}"
+             placeholder="/usr/share/wordlists/rockyou.txt" autocomplete="off">
+    </div>
+  </div>
+</fieldset>
+{%- endmacro %}
+
 {% block main %}
 <h1>New Intruder attack</h1>
 <p>Mark insertion points in the raw request template by wrapping them with the marker character
@@ -89,29 +194,30 @@
         <label for="i-pl">Set 1 — one payload per line</label>
         <textarea id="i-pl" name="payloads_text" rows="6" autocomplete="off">{{ form.payloads_text }}</textarea>
       </div>
+    </div>
 
-      {% set multi = form.attack_type in ('pitchfork', 'clusterbomb') %}
-      <details {% if multi %}open{% endif %}>
-        <summary>Sets 2–4 (used only by Pitchfork / Cluster Bomb)</summary>
-        {% if not multi %}
-        <p class="muted">
-          Current attack type is <strong>{{ form.attack_type }}</strong>, which uses only Set 1.
-          Anything entered below is kept for later but ignored on this submission.
-        </p>
-        {% endif %}
-        <div>
-          <label for="i-pl2">Set 2</label>
-          <textarea id="i-pl2" name="payloads_set2" rows="4" autocomplete="off">{{ form.payloads_set2 }}</textarea>
-        </div>
-        <div>
-          <label for="i-pl3">Set 3</label>
-          <textarea id="i-pl3" name="payloads_set3" rows="4" autocomplete="off">{{ form.payloads_set3 }}</textarea>
-        </div>
-        <div>
-          <label for="i-pl4">Set 4</label>
-          <textarea id="i-pl4" name="payloads_set4" rows="4" autocomplete="off">{{ form.payloads_set4 }}</textarea>
-        </div>
-      </details>
+    {# Per-position payload sources for Pitchfork / Cluster Bomb.
+       Each Set 2/3/4 block carries its OWN Source dropdown with every
+       source type (text, numbers, brute, common_pw, wordlist,
+       wordlist_file, wordlist_path). This is the fix for the "only
+       one dropdown for all positions" bug: N markers → N independent
+       dropdowns, each with the full menu. Sniper / Battering Ram
+       consume only Set 1 (the un-suffixed block above), so this
+       wrapper is hidden for them via ``data-multi-only``. #}
+    {% set multi = form.attack_type in ('pitchfork', 'clusterbomb') %}
+    <div data-multi-only {% if not multi %}hidden{% endif %}
+         aria-labelledby="multiset-label">
+      <p id="multiset-label" class="muted">
+        <strong>Sets 2–4</strong> — Pitchfork and Cluster Bomb use up to
+        four payload sources, one per <code>{{ marker }}</code> marker.
+        Each set below has its own Source dropdown so you can pair, e.g.,
+        a text list with a number range or a wordlist. Leave a set's
+        Source on <em>unused</em> to skip it. Fill exactly as many sets
+        as you have markers.
+      </p>
+      {{ payload_set_block(2, form, wordlists) }}
+      {{ payload_set_block(3, form, wordlists) }}
+      {{ payload_set_block(4, form, wordlists) }}
     </div>
 
     <div class="row" data-source-group="numbers" role="group" aria-labelledby="numgroup-label"

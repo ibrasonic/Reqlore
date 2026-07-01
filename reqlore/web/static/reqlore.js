@@ -397,21 +397,60 @@
   // source dropdown changes — `hidden` removes the element from the
   // accessibility tree per spec, so screen readers don't get the
   // noisy alternatives either.
-  (function () {
-    var sel = document.querySelector("[data-source-select]");
-    if (!sel) return;
-    var groups = document.querySelectorAll("[data-source-group]");
+  //
+  // Per-set scoping: the Intruder new-attack form has one
+  // <select data-source-select> for Set 1 (default scope) plus
+  // <select data-source-select="set2/3/4"> for the extra Pitchfork /
+  // Cluster Bomb positions. Each scoped select controls only the
+  // groups that opt in via a matching data-source-scope attribute
+  // (default scope = no attribute). This lets one form host N
+  // independent source dropdowns without them stepping on each
+  // other's hidden state.
+  document.querySelectorAll("[data-source-select]").forEach(function (sel) {
+    var scope = sel.getAttribute("data-source-select") || "";
+    var groups = Array.prototype.filter.call(
+      document.querySelectorAll("[data-source-group]"),
+      function (g) { return (g.getAttribute("data-source-scope") || "") === scope; }
+    );
     if (!groups.length) return;
     function apply(src) {
       groups.forEach(function (g) {
         var keys = (g.getAttribute("data-source-group") || "").split(/\s+/);
-        g.hidden = keys.indexOf(src) === -1;
+        // A per-set select with value "" means "this position unused" —
+        // hide every group so no stray inputs get posted for it.
+        g.hidden = src === "" ? true : keys.indexOf(src) === -1;
       });
     }
     apply(sel.value);
     sel.addEventListener("change", function () {
       apply(sel.value);
-      announce("Showing inputs for source: " + sel.value + ".");
+      var label = scope ? scope.replace(/^set/, "set ") : "set 1";
+      var val = sel.value || "unused";
+      announce("Showing inputs for " + label + " source: " + val + ".");
+    });
+  });
+
+  // Intruder attack-type <-> multi-set-visibility.
+  // Sniper / Battering Ram consume only Set 1; Pitchfork / Cluster
+  // Bomb consume up to 4. Toggle the [data-multi-only] wrapper live
+  // so the operator doesn't have to submit the form once to see the
+  // extra source blocks appear.
+  (function () {
+    var atype = document.getElementById("i-type");
+    if (!atype) return;
+    var multiHosts = document.querySelectorAll("[data-multi-only]");
+    if (!multiHosts.length) return;
+    function apply() {
+      var isMulti = atype.value === "pitchfork" || atype.value === "clusterbomb";
+      multiHosts.forEach(function (el) { el.hidden = !isMulti; });
+    }
+    apply();
+    atype.addEventListener("change", function () {
+      apply();
+      var isMulti = atype.value === "pitchfork" || atype.value === "clusterbomb";
+      announce(isMulti
+        ? "Attack type uses multiple payload sets; Sets 2 to 4 are now available."
+        : "Attack type uses only Set 1; Sets 2 to 4 are hidden.");
     });
   })();
 

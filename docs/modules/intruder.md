@@ -46,17 +46,24 @@ pipeline that includes per-payload JWT signing.
 | `pitchfork`   | Pitchfork — N sets advance in lockstep              | up to 4 (stops at shortest)         |
 | `clusterbomb` | Cluster Bomb — every combination (cartesian)        | up to 4 (cartesian product)         |
 
-Sets 2-4 are hidden in a `<details>` element on the form, opened by default
-only when you pick Pitchfork or Cluster Bomb. The form itself preserves any
-text you typed across the page (so switching attack type doesn't wipe the
-textareas in your current browser tab), but **on submit only the sets the
-attack type actually consumes are saved** with the attack:
+Sets 2-4 are hidden inside a `data-multi-only` wrapper on the form,
+revealed live (via [reqlore.js](../../reqlore/web/static/reqlore.js)) only
+when you pick Pitchfork or Cluster Bomb; each of Sets 2-4 carries its own
+**Source** dropdown so a multi-position attack can pair, e.g., a text
+list with a number range or a wordlist (see *Per-position payload
+sources* below). The form itself preserves any text you typed across the
+page (so switching attack type doesn't wipe the textareas in your
+current browser tab), but **on submit only the sets the attack type
+actually consumes are saved** with the attack:
 
-- `sniper` / `battering` keep Set 1 only — anything in Sets 2-4 is
-  silently dropped by `_payload_sources_from_form` (`return sets[:1]`).
-  It is **not** stored on the attack record and **not** available if you
-  later edit / clone the attack.
-- `pitchfork` / `clusterbomb` keep every non-empty set, up to four.
+- `sniper` / `battering` keep Set 1 only — any `source_set2/3/4` or
+  `payloads_set2/3/4` values the operator accidentally filled are
+  silently dropped by `_collect_payload_sets`. They are **not** stored
+  on the attack record and **not** available if you later edit / clone
+  the attack.
+- `pitchfork` / `clusterbomb` keep every set whose per-set Source is
+  set (or, when Set 1's global source is `text`, every non-empty
+  `payloads_setN` textarea), up to four.
 
 If you typed something into Set 2 and then changed your mind about the
 attack type, switch to Pitchfork or Cluster Bomb before clicking
@@ -82,6 +89,52 @@ everything (so you fill in just the matching inputs).
 > is re-opened per attack iteration and read lazily, so memory stays flat no
 > matter the file size. The path must be absolute and readable by the
 > Reqlore process.
+
+## Per-position payload sources (Pitchfork / Cluster Bomb)
+
+When the attack type is **Pitchfork** or **Cluster Bomb** each `§` marker
+gets its **own independent Source dropdown** with the full seven-source
+menu (`text` / `numbers` / `brute` / `common_pw` / `wordlist` /
+`wordlist_file` / `wordlist_path`). Pair, for example, a text list at
+position 1 with a number range at position 2 for an IDOR + username fuzz:
+
+```
+Template:  GET /users/§id§?name=§username§ HTTP/1.1
+Set 1:     source = numbers, num_start=1, num_end=1000  → IDOR probe
+Set 2:     source = wordlist, wordlist_name = common_usernames
+Attack:    pitchfork
+Result:
+  GET /users/1?name=admin
+  GET /users/2?name=root
+  GET /users/3?name=guest
+  …
+```
+
+Form field naming (POST):
+
+| Set | Source select    | Text field         | Numbers                                     | Brute                                                | Wordlist              | Upload                     | Server path              |
+|-----|------------------|--------------------|---------------------------------------------|------------------------------------------------------|-----------------------|----------------------------|--------------------------|
+| 1   | `source`         | `payloads_text`    | `num_start` / `num_end` / `num_step`        | `brute_alphabet` / `brute_min` / `brute_max`         | `wordlist_name`       | `wordlist_upload`          | `wordlist_path`          |
+| 2   | `source_set2`    | `payloads_set2`    | `num_start_set2` / `num_end_set2` / `num_step_set2` | `brute_alphabet_set2` / `brute_min_set2` / `brute_max_set2` | `wordlist_name_set2`  | `wordlist_upload_set2`     | `wordlist_path_set2`     |
+| 3   | `source_set3`    | `payloads_set3`    | `num_start_set3` / …                        | …                                                    | `wordlist_name_set3`  | `wordlist_upload_set3`     | `wordlist_path_set3`     |
+| 4   | `source_set4`    | `payloads_set4`    | `num_start_set4` / …                        | …                                                    | `wordlist_name_set4`  | `wordlist_upload_set4`     | `wordlist_path_set4`     |
+
+Rules `_collect_payload_sets` applies:
+
+- **Empty `source_setN`** — Set N is skipped, *unless* Set 1's global
+  `source` is `text`, in which case a non-empty `payloads_setN`
+  textarea still contributes (preserves the pre-fix text-only
+  workflow so existing scripts / docs / screenshots keep working).
+- **`source_setN = ""` explicit "unused"** — same as empty above:
+  the position is skipped. Fill it only when you actually have that
+  many `§` markers.
+- **Error messages are labelled per set** ("No wordlist file selected
+  for set 2.") so the operator knows which position to fix (WCAG 3.3.1
+  Error Identification, applied per input group).
+
+CLI / spec users already had this via `payloads:` being a list of dicts
+with independent `source:` values — the web form now matches. See
+[intruder_spec.py](../../reqlore/intruder_spec.py) `_payload_set_from_entry`.
 
 ## Engines
 
