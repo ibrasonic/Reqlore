@@ -78,7 +78,9 @@ Source: `templates/intruder/index.html` L7.
 |----------|----------------------|
 | `Alt+C`  | Create attack       |
 
-Source: `templates/intruder/new.html` L215.
+Source: `templates/intruder/new.html` L321 (grew from L215 when the
+per-set payload-source macro was added; see `docs/modules/intruder.md`
+→ Per-position payload sources).
 
 ## Intruder detail (`/intruder/<id>/`)
 

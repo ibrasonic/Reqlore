@@ -264,12 +264,24 @@ promote each hit to a Finding.
 
 - All form controls have explicit `<label for>` and grouped under
   `<fieldset><legend>` blocks (Basics, Request template, Payload source,
-  Options). Number inputs use `inputmode="numeric"` for mobile.
-- Source switcher is `<select data-source-select>`; the JS listener toggles
-  `hidden` on `<div data-source-group>` blocks. The `<noscript>` block
-  reveals every group (CSS rule `[data-source-group][hidden] { display: revert !important; }`)
-  so keyboard-only / JS-disabled users can fill any source by ignoring the
-  groups they do not want.
+  Options). Pitchfork / Cluster Bomb add three extra fieldsets —
+  `<fieldset class="payload-set-block">` for Set 2, Set 3, Set 4 —
+  each with its own `<legend>Set N</legend>` so a screen reader
+  hears which position it's configuring. Number inputs use
+  `inputmode="numeric"` for mobile.
+- The Source switcher supports multiple **scopes** so the four Set
+  dropdowns don't collide. Set 1's `<select data-source-select>` (no
+  value = default scope) toggles groups without a `data-source-scope`
+  attribute; each per-set `<select data-source-select="setN">`
+  toggles only groups carrying `data-source-scope="setN"`. The JS
+  listener announces changes per scope: *"Showing inputs for set 2
+  source: numbers."* The `<noscript>` block reveals every group
+  (CSS rule `[data-source-group][hidden] { display: revert !important; }`)
+  so keyboard-only / JS-disabled users can fill any source by ignoring
+  the groups they do not want. Attack-type changes toggle the
+  `data-multi-only` wrapper and announce *"Attack type uses multiple
+  payload sets; Sets 2 to 4 are now available."* / *"… uses only
+  Set 1; Sets 2 to 4 are hidden."*
 - Status updates live in `role="status"` (polite). The progress bar uses a
   native `<progress>` with `aria-label` and `aria-valuetext`.
 - Sort links carry `aria-current="true"` on the active column with an

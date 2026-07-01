@@ -40,7 +40,11 @@ Goal: fuzz a JSON API behind a login that expires after ~5 minutes.
 3. In Intruder's attack form, set the engine to `httpx` (default) and
    wire up [Macro](modules/macros.md) `login-and-refresh` via the
    scanner-style `replay_macro` (see [login.md](login.md)).
-4. Mark insertion points; pick a payload set; **Start** (Alt+S).
+4. Mark insertion points; pick a payload source per position (Pitchfork /
+   Cluster Bomb show one Source dropdown per `§` marker so you can pair,
+   e.g., a username list with a number range — see
+   [modules/intruder.md](modules/intruder.md#per-position-payload-sources-pitchfork--cluster-bomb));
+   **Start** (Alt+S).
 5. Every Nth probe re-runs the login macro — `Cookie` stays fresh.
 6. Filter results table for `status != baseline` (Alt+A) and triage.
 
