@@ -430,28 +430,106 @@
     });
   });
 
-  // Intruder attack-type <-> multi-set-visibility.
-  // Sniper / Battering Ram consume only Set 1; Pitchfork / Cluster
-  // Bomb consume up to 4. Toggle the [data-multi-only] wrapper live
-  // so the operator doesn't have to submit the form once to see the
-  // extra source blocks appear.
+  // Intruder attack-type + position-count <-> per-set visibility.
+  //
+  // Sniper / Battering Ram consume only Set 1. Pitchfork / Cluster
+  // Bomb consume one set per § marker in the request template, up to
+  // the 4 sets the form renders. We count paired markers live so the
+  // operator sees exactly as many Set N dropdowns as they have
+  // positions -- no empty extras cluttering the form.
+  //
+  // Detection rules:
+  //   * marker char comes from #i-marker (defaults to "§" if empty)
+  //   * position count = floor(occurrences_in_template / 2)
+  //     (each insertion point is wrapped by a pair of markers)
+  //   * multi-only wrapper is shown when attack type is pitchfork /
+  //     clusterbomb AND positions >= 2 (a single position never needs
+  //     Sets 2-4 -- pitchfork with 1 marker is effectively sniper)
+  //   * within the wrapper, each <fieldset[data-payload-set="N"]> is
+  //     shown iff N <= positions (capped at 4 by the rendered DOM)
+  //
+  // Announcements are debounced against rapid typing but fire
+  // immediately on attack-type or marker changes.
   (function () {
     var atype = document.getElementById("i-type");
+    var tpl = document.getElementById("i-tpl");
+    var mchar = document.getElementById("i-marker");
     if (!atype) return;
     var multiHosts = document.querySelectorAll("[data-multi-only]");
     if (!multiHosts.length) return;
-    function apply() {
-      var isMulti = atype.value === "pitchfork" || atype.value === "clusterbomb";
-      multiHosts.forEach(function (el) { el.hidden = !isMulti; });
+    var setBlocks = document.querySelectorAll("[data-payload-set]");
+    var MAX_SETS = 4;
+    var lastAnnouncedPositions = -1;
+    var lastAnnouncedMulti = null;
+    var debounceTimer = null;
+
+    function currentMarker() {
+      var v = mchar && mchar.value ? mchar.value : "";
+      // Only single-char markers count; empty falls back to §.
+      return v.length ? v.charAt(0) : "\u00a7";
     }
-    apply();
-    atype.addEventListener("change", function () {
-      apply();
+
+    function countPositions() {
+      if (!tpl) return 0;
+      var text = tpl.value || "";
+      var m = currentMarker();
+      if (!m) return 0;
+      var count = 0;
+      for (var i = 0; i < text.length; i++) {
+        if (text.charAt(i) === m) count++;
+      }
+      return Math.floor(count / 2);
+    }
+
+    function apply(shouldAnnounce) {
       var isMulti = atype.value === "pitchfork" || atype.value === "clusterbomb";
-      announce(isMulti
-        ? "Attack type uses multiple payload sets; Sets 2 to 4 are now available."
-        : "Attack type uses only Set 1; Sets 2 to 4 are hidden.");
-    });
+      var positions = countPositions();
+      // With 0 or 1 positions the "extra sets" block is never useful,
+      // even for pitchfork/clusterbomb -- those degenerate to sniper.
+      var showWrapper = isMulti && positions >= 2;
+      multiHosts.forEach(function (el) { el.hidden = !showWrapper; });
+      // Hide/show each Set N fieldset based on the live position count.
+      // Sets numbered above `positions` stay hidden so the operator
+      // isn't asked to configure payload sources they don't need.
+      setBlocks.forEach(function (block) {
+        var n = parseInt(block.getAttribute("data-payload-set"), 10);
+        if (!n) return;
+        block.hidden = !showWrapper || n > positions;
+      });
+      if (!shouldAnnounce) return;
+      // Two independent announcements: attack-type transitions and
+      // position-count transitions. Both are throttled by tracking
+      // the last announced values so typing one marker doesn't spam.
+      if (isMulti !== lastAnnouncedMulti) {
+        lastAnnouncedMulti = isMulti;
+        announce(isMulti
+          ? "Attack type uses multiple payload sets; extra sets will follow the marker count."
+          : "Attack type uses only Set 1; extra sets are hidden.");
+      }
+      if (isMulti && positions !== lastAnnouncedPositions) {
+        lastAnnouncedPositions = positions;
+        if (positions === 0) {
+          announce("No markers detected in template; add pairs of the marker character to create positions.");
+        } else if (positions === 1) {
+          announce("One position detected; only Set 1 is needed.");
+        } else if (positions > MAX_SETS) {
+          announce(positions + " positions detected; the form supports up to " + MAX_SETS + " -- extra positions will reuse Set 1's source.");
+        } else {
+          announce(positions + " positions detected; showing Set 1 to Set " + positions + ".");
+        }
+      }
+    }
+    apply(false);
+    atype.addEventListener("change", function () { apply(true); });
+    if (tpl) {
+      tpl.addEventListener("input", function () {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function () { apply(true); }, 250);
+      });
+    }
+    if (mchar) {
+      mchar.addEventListener("input", function () { apply(true); });
+    }
   })();
 
   // Live auto-refresh widget (shared by History and Proxy).

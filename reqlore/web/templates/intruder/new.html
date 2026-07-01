@@ -131,7 +131,7 @@
             <option value="{{ k }}" {% if form.attack_type == k %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
-        <p id="i-type-help" class="muted">Sniper / Battering use 1 set; Pitchfork &amp; Cluster Bomb use up to 4.</p>
+        <p id="i-type-help" class="muted">Sniper / Battering use 1 set; Pitchfork &amp; Cluster Bomb show one Set per <code>{{ marker }}</code> marker in the request template (up to 4).</p>
       </div>
       <div>
         <label for="i-engine">Engine</label>
@@ -208,12 +208,13 @@
     <div data-multi-only {% if not multi %}hidden{% endif %}
          aria-labelledby="multiset-label">
       <p id="multiset-label" class="muted">
-        <strong>Sets 2–4</strong> — Pitchfork and Cluster Bomb use up to
-        four payload sources, one per <code>{{ marker }}</code> marker.
-        Each set below has its own Source dropdown so you can pair, e.g.,
-        a text list with a number range or a wordlist. Leave a set's
-        Source on <em>unused</em> to skip it. Fill exactly as many sets
-        as you have markers.
+        <strong>Extra payload sets</strong> — Pitchfork and Cluster Bomb
+        show one Source dropdown per <code>{{ marker }}</code> marker in
+        the request template, up to four. The form auto-hides sets you
+        don't need: two markers → Set 2 appears, three → Sets 2–3, and
+        so on. Each set has its own Source dropdown so you can pair,
+        e.g., a text list with a number range or a wordlist. Leave a
+        set's Source on <em>unused</em> to skip that position.
       </p>
       {{ payload_set_block(2, form, wordlists) }}
       {{ payload_set_block(3, form, wordlists) }}

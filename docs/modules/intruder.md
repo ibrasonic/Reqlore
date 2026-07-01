@@ -48,13 +48,19 @@ pipeline that includes per-payload JWT signing.
 
 Sets 2-4 are hidden inside a `data-multi-only` wrapper on the form,
 revealed live (via [reqlore.js](../../reqlore/web/static/reqlore.js)) only
-when you pick Pitchfork or Cluster Bomb; each of Sets 2-4 carries its own
-**Source** dropdown so a multi-position attack can pair, e.g., a text
-list with a number range or a wordlist (see *Per-position payload
-sources* below). The form itself preserves any text you typed across the
-page (so switching attack type doesn't wipe the textareas in your
-current browser tab), but **on submit only the sets the attack type
-actually consumes are saved** with the attack:
+when you pick Pitchfork or Cluster Bomb **and** the request template
+contains at least two `§` (marker) pairs. The JS counts marker pairs in
+the `#i-tpl` textarea (respecting a custom marker char typed into
+`#i-marker`, debounced 250 ms against typing) and shows exactly as many
+Set N fieldsets as the operator marked positions -- two markers reveal
+Set 2, three reveal Sets 2–3, four reveal Sets 2–4. Extra empty
+dropdowns never appear, so nothing has to be set to *unused* by hand.
+Each revealed set carries its own **Source** dropdown so a multi-position
+attack can pair, e.g., a text list with a number range or a wordlist
+(see *Per-position payload sources* below). The form itself preserves
+any text you typed across the page (so switching attack type doesn't
+wipe the textareas in your current browser tab), but **on submit only
+the sets the attack type actually consumes are saved** with the attack:
 
 - `sniper` / `battering` keep Set 1 only — any `source_set2/3/4` or
   `payloads_set2/3/4` values the operator accidentally filled are
@@ -95,8 +101,14 @@ everything (so you fill in just the matching inputs).
 When the attack type is **Pitchfork** or **Cluster Bomb** each `§` marker
 gets its **own independent Source dropdown** with the full seven-source
 menu (`text` / `numbers` / `brute` / `common_pw` / `wordlist` /
-`wordlist_file` / `wordlist_path`). Pair, for example, a text list at
-position 1 with a number range at position 2 for an IDOR + username fuzz:
+`wordlist_file` / `wordlist_path`). The form only renders as many Set N
+blocks as you have marker pairs — two `§...§` pairs reveal Set 2,
+three reveal Sets 2–3, four reveal Sets 2–4. If you mark more than
+four positions the extras will re-use Set 1's payload source (the form
+cap is announced via `role="status"`; use a CLI spec file for larger
+cartesian products — see [intruder_spec.py](../../reqlore/intruder_spec.py)).
+Pair, for example, a text list at position 1 with a number range at
+position 2 for an IDOR + username fuzz:
 
 ```
 Template:  GET /users/§id§?name=§username§ HTTP/1.1
@@ -278,10 +290,15 @@ promote each hit to a Finding.
   source: numbers."* The `<noscript>` block reveals every group
   (CSS rule `[data-source-group][hidden] { display: revert !important; }`)
   so keyboard-only / JS-disabled users can fill any source by ignoring
-  the groups they do not want. Attack-type changes toggle the
-  `data-multi-only` wrapper and announce *"Attack type uses multiple
-  payload sets; Sets 2 to 4 are now available."* / *"… uses only
-  Set 1; Sets 2 to 4 are hidden."*
+  the groups they do not want. Attack-type and template edits both
+  drive the `data-multi-only` wrapper and per-set fieldset visibility:
+  paired `§` markers are counted live (debounced 250 ms) and each
+  `<fieldset[data-payload-set="N"]>` is hidden when `N > positions`.
+  Screen-reader announcements: *"Attack type uses multiple payload
+  sets; extra sets will follow the marker count."* / *"Attack type
+  uses only Set 1; extra sets are hidden."* / *"3 positions detected;
+  showing Set 1 to Set 3."* / *"No markers detected in template; add
+  pairs of the marker character to create positions."*
 - Status updates live in `role="status"` (polite). The progress bar uses a
   native `<progress>` with `aria-label` and `aria-valuetext`.
 - Sort links carry `aria-current="true"` on the active column with an
