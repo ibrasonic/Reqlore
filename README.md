@@ -2,7 +2,7 @@
 
 Professional-grade web application pentesting suite. Python-native. Accessible-first. Local web UI.
 
-> **Status:** Active development past Phase 9. Full unit suite: **1368 passed, 239 skipped**. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> **Status:** Active development past Phase 9. Full unit suite: **2883 passed, 368 skipped**. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## What it is
 
@@ -14,7 +14,7 @@ A local web app on `http://127.0.0.1:8787` that gives you:
 - An Intruder (sniper / battering ram / pitchfork / cluster bomb) — same six engines.
 - A Param miner, GraphQL / WebSocket / SAML / HTTP-2 / smuggling workbenches.
 - A passive + active scanner (with built-in OAST-SSRF check), a Sequencer, a Macro engine.
-- A Decoder/Encoder, JWT workbench, Comparer, Sitemap, Match-and-replace, Reporter.
+- A Decoder/Encoder, JWT workbench (decode / sign / alg-switch / RS→HS key confusion with smart PEM/JWK/JWKS/URL input), Comparer, Sitemap, Match-and-replace, Reporter.
 - A Scheduler for recurring passive scans (APScheduler optional, thread fallback).
 - A HAR importer (`reqlore import-har`), an opt-in update check, a plugin API.
 - A Settings page with themes (light / dark / high-contrast), verbosity profiles, audio cues, and a remappable keyboard map.
@@ -69,7 +69,7 @@ cd Reqlore
 py -m venv .venv
 .venv\Scripts\Activate.ps1            # Linux/macOS: source .venv/bin/activate
 py -m pip install -e ".[dev]"         # editable install + test/lint tools
-py -m pytest reqlore/tests/unit -q    # should be 1368 passed, 239 skipped
+py -m pytest reqlore/tests/unit -q    # should be 2883 passed, 368 skipped
 reqlore init demo.rlr
 reqlore both --project demo.rlr
 ```
@@ -132,7 +132,6 @@ Start with [`docs/USAGE.md`](docs/USAGE.md) — it indexes everything else.
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model of the tool itself. |
 | [`docs/PLUGINS.md`](docs/PLUGINS.md) | Plugin API. |
 | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Dev workflow. |
-| [`docs/internal/`](docs/internal/) | Historical dev plans (scanner gaps, reliability matrix, intruder enhancements). Not user-facing. |
 
 ## License
 
