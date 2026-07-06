@@ -104,12 +104,20 @@ Removes the pipx-installed `reqlore` and/or the local `.venv/`. Does **not** rem
 ## Run with Docker
 
 ```powershell
-docker compose up --build
-# UI:    http://127.0.0.1:8787
+# 1. set a UI login password once (Compose auto-reads .env):
+echo REQLORE_PASSWORD=your-strong-password > .env
+# 2. build + start:
+docker compose up -d --build
+# UI:    http://127.0.0.1:8787   (log in with that password)
 # Proxy: 127.0.0.1:8080
 ```
 
-Project file persists in `./data/my.rlr`. Both listeners are pinned to loopback on the host. Details: [`docs/USAGE.md`](docs/USAGE.md#docker).
+The password is hashed (argon2id) on first start and stored in
+`./data/.reqlore-auth` — the plaintext never touches disk, and later launches
+reuse the hash (you can delete `.env` afterwards). Prefer an interactive prompt
+over a file? Skip `.env` and run `docker compose run --rm reqlore set-password`
+once. Project file persists in `./data/my.rlr`; both listeners are pinned to
+loopback on the host. Details: [`docs/USAGE.md`](docs/USAGE.md#docker).
 
 ## Documentation
 

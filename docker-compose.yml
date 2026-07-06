@@ -1,12 +1,24 @@
 # Reqlore — UI + MITM proxy in a single container.
 #
-# Usage:
-#   docker compose up --build
-#   then point your browser at  http://127.0.0.1:8787
-#   and set its HTTP proxy to   127.0.0.1:8080
+# Quickstart (no separate command needed):
+#   1. Put a UI password in a .env file next to this one:
+#        echo REQLORE_PASSWORD=your-strong-password > .env
+#   2. Build + start:
+#        docker compose up -d --build
+#      then open  http://127.0.0.1:8787   (log in with that password)
+#      and set your browser's HTTP proxy to  127.0.0.1:8080
 #
-# The project file lives in ./data/my.rlr on the host. On first run the
-# `init` service creates it; subsequent `up`s reuse it.
+# The password is hashed (argon2id) on first start and stored in
+# ./data/.reqlore-auth -- the plaintext never touches disk. On later launches
+# the stored hash is reused, so you can even delete the .env afterwards. To
+# change the password later, either edit .env and delete ./data/.reqlore-auth,
+# or run:  docker compose run --rm reqlore set-password
+#
+# Prefer not to keep the password in a file? Skip the .env and set it
+# interactively once:  docker compose run --rm reqlore set-password
+#
+# The project file lives in ./data/my.rlr on the host; on first run the
+# `init` service creates it.
 
 services:
   init:
@@ -33,6 +45,22 @@ services:
       - "--proxy-port"
       - "8080"
       - "--unsafe-bind"
+      # The container must bind 0.0.0.0 so Docker's port-forward works, which
+      # trips Reqlore's "--unsafe-bind requires a password" guard. The
+      # entrypoint wrapper satisfies it by loading the argon2id hash you set
+      # with `docker compose run --rm reqlore set-password` (stored in
+      # ./data/.reqlore-auth). The host ports below are pinned to 127.0.0.1,
+      # so the UI is only reachable from your own machine AND is now gated by
+      # a login password for any client that isn't loopback.
+    environment:
+      # Seeds the UI password on first start (hashed + persisted, then the
+      # plaintext is dropped). Compose auto-loads this from a .env file. Leave
+      # unset to use the interactive `set-password` flow instead.
+      REQLORE_PASSWORD: "${REQLORE_PASSWORD:-}"
+    # Allow the first-run password prompt to attach a terminal when you use
+    # `docker compose run --rm reqlore set-password`.
+    stdin_open: true
+    tty: true
     ports:
       # Pinned to loopback on the host: container binds 0.0.0.0 (needed for the
       # port forward) but the listener is still only reachable from your box.

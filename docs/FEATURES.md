@@ -24,7 +24,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | HAR 1.2 importer (`reqlore import-har`) | ✅ | stdlib-only parser. |
 | Scheduled passive scans | ✅ | Optional `[schedule]` extra (APScheduler), thread fallback otherwise. See [scheduler.md](modules/scheduler.md). |
 | Opt-in update check | ✅ | Off by default; manual GET only. |
-| Docker image | ✅ | `docker compose up --build`. Loopback-bound. |
+| Docker image | ✅ | `docker compose up -d --build`. Loopback-bound, argon2id login gate (`.env` or `set-password`). |
 
 ## Proxy & interception
 

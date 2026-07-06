@@ -10,7 +10,7 @@ Reqlore is itself a high-privilege tool: it sees plaintext of all proxied traffi
 | Local browser tab on the same machine | Can hit `127.0.0.1:8787` and try CSRF | UI CSRF tokens on every form (itsdangerous). Strict `Content-Type` checks on JSON endpoints. Origin/Referer enforcement. |
 | Pentest target server | Returns crafted HTML/JS that lands in our UI | All rendered target HTML is shown in a sandboxed `<iframe sandbox>`. Response bodies are escaped before insertion into UI templates. No raw `\| safe` on user-influenced data. |
 | Pentest target server (XSS in proxy) | Tries to break out of "rendered for preview" | Same iframe sandbox. CSP `default-src 'self'` on the UI itself. |
-| Network attacker on LAN | Tries to reach `:8787` or `:8080` | Default bind 127.0.0.1 only. To expose, user must pass `--unsafe-bind` and set a password. |
+| Network attacker on LAN | Tries to reach `:8787` or `:8080` | Default bind 127.0.0.1 only. To expose, user must pass `--unsafe-bind` and set a password. The Docker image binds 0.0.0.0 *inside* the container (needed for the port-forward) but publishes only to `127.0.0.1` on the host, and its entrypoint persists an argon2id login-password hash in the data volume so the `/login` gate is always active. |
 | Untrusted plugin | Tries to read project file / exfil | Plugins run in-process (Python has no real sandbox). We warn loudly before enabling unsigned plugins. Optional Ed25519 signing for published plugins. |
 
 ## Hard rules

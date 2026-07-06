@@ -62,6 +62,11 @@ RUN pip install --upgrade pip \
  && pip install "reqlore[report,yaml,schedule]" \
  && rm -rf /tmp/*.whl /root/.cache
 
+# Password-managing entrypoint wrapper (persists an argon2id hash in /data
+# so the UI login gate is always active despite the internal 0.0.0.0 bind).
+COPY docker/entrypoint.sh /usr/local/bin/reqlore-entrypoint
+RUN chmod 0755 /usr/local/bin/reqlore-entrypoint
+
 USER reqlore
 WORKDIR /data
 VOLUME ["/data"]
@@ -71,5 +76,6 @@ VOLUME ["/data"]
 EXPOSE 8787 8080
 
 # tini reaps zombies (helps the proxy + UI sub-processes shut down cleanly).
-ENTRYPOINT ["/usr/bin/tini", "--", "reqlore"]
+# The wrapper loads the persisted UI password, then execs `reqlore`.
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/reqlore-entrypoint"]
 CMD ["--help"]

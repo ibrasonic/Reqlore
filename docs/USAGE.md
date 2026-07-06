@@ -146,7 +146,7 @@ CLI flag > env var > project setting > user config > defaults.
 | `REQLORE_UI_PORT`       | `--port` / `--ui-port`             | Default `8787`.                                                       |
 | `REQLORE_PROXY_HOST`    | (proxy bind host)                  | Always `127.0.0.1`; setting otherwise is unsupported.                 |
 | `REQLORE_PROXY_PORT`    | `--port` (proxy) / `--proxy-port`  | Default `8080`.                                                       |
-| `REQLORE_PASSWORD`      | (UI password, plaintext)           | argon2id-hashed once at startup.                                      |
+| `REQLORE_PASSWORD`      | (UI password, plaintext)           | argon2id-hashed once at startup. In Docker it is hashed + persisted to `./data/.reqlore-auth` on first run (see [Docker](#docker)). |
 | `REQLORE_PASSWORD_HASH` | (UI password, pre-hashed)          | Use in systemd / container secrets so plaintext never lives in env.   |
 | `REQLORE_SESSION_MAX_AGE` | (login cookie lifetime, seconds) | Default `28800` (8h). Min `60`.                                       |
 | `REQLORE_VERBOSE`       | `-v` / `--verbose`                 | `1` to enable INFO logging globally.                                  |
@@ -160,6 +160,62 @@ CLI flag > env var > project setting > user config > defaults.
 ```powershell
 py -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('your-passphrase'))"
 ```
+
+---
+
+## Docker
+
+The bundled [`docker-compose.yml`](../docker-compose.yml) runs the UI + MITM
+proxy in one container. The project file persists in `./data/my.rlr` on the
+host, and both listeners are published **only** to `127.0.0.1` on the host, so
+nothing is reachable off your machine.
+
+### Why a login password is required in Docker
+
+Inside a container, `127.0.0.1` means *the container's own loopback*, not your
+PC's — so the process must bind `0.0.0.0` for Docker's host port-forward to
+deliver traffic. Reqlore therefore starts with `--unsafe-bind`, which requires
+a UI password (see [`login.md`](login.md)). The container entrypoint manages
+that password for you and persists it as an **argon2id hash** in
+`./data/.reqlore-auth` — the plaintext is never written to disk.
+
+### Quickstart (`.env`, no separate command)
+
+```powershell
+# 1. set a UI password once — Compose auto-loads .env:
+echo REQLORE_PASSWORD=your-strong-password > .env
+# 2. build + start (init creates ./data/my.rlr automatically):
+docker compose up -d --build
+```
+
+Open `http://127.0.0.1:8787`, log in, and set your browser's HTTP proxy to
+`127.0.0.1:8080`. On first start the password is hashed and stored; later
+launches reuse the hash, so you may delete `.env` afterwards. See
+[`.env.example`](../.env.example). `.env` is git-ignored so your password is
+never committed.
+
+### Alternative: interactive prompt (nothing in a file)
+
+```powershell
+docker compose build
+docker compose run --rm reqlore set-password   # prompts twice, hidden
+docker compose up -d
+```
+
+### Changing the password later
+
+Re-run `docker compose run --rm reqlore set-password`, or delete
+`./data/.reqlore-auth` (and update `.env`) and start again.
+
+### Everyday commands
+
+| Command | Does |
+| --- | --- |
+| `docker compose up -d` | Start in the background. |
+| `docker compose down` | Stop and remove the containers. |
+| `docker compose logs -f reqlore` | Follow the UI/proxy logs. |
+| `docker compose run --rm reqlore scan --project /data/my.rlr` | One-off CLI command (note the in-container `/data/` path). |
+| `docker compose run --rm reqlore set-password` | Set / change the UI password. |
 
 ---
 
