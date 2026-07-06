@@ -30,8 +30,7 @@ Returns the integer finding id on success, ``None`` when suppressed.
 """
 from __future__ import annotations
 
-from typing import Sequence
-
+from collections.abc import Sequence
 
 Reproduction = tuple[bytes, bytes, str, str, int, int]
 # (request_blob, response_blob, method, url, status, elapsed_ms)
@@ -129,7 +128,8 @@ def record_finding(project, *, source: str, severity: str, title: str,
     fingerprint_tags = ""
     try:
         from .scanner.fingerprints import (
-            apply_fingerprint, fingerprint_response,
+            apply_fingerprint,
+            fingerprint_response,
         )
         tags = fingerprint_response(response_body, response_headers)
         effective_confidence, fingerprint_tags = apply_fingerprint(

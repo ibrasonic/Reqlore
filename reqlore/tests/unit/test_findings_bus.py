@@ -23,9 +23,9 @@ def test_record_finding_returns_id_on_first_call(project):
 
 
 def test_record_finding_is_idempotent(project):
-    kwargs = dict(source="scanner", rule_id="passive:csp", severity="medium",
-                  title="Missing CSP", host="h", url="https://h/x",
-                  evidence="response without CSP header")
+    kwargs = {"source": "scanner", "rule_id": "passive:csp", "severity": "medium",
+                  "title": "Missing CSP", "host": "h", "url": "https://h/x",
+                  "evidence": "response without CSP header"}
     a = record_finding(project, **kwargs)
     b = record_finding(project, **kwargs)
     assert a == b

@@ -22,20 +22,20 @@ Public surface::
 from __future__ import annotations
 
 import base64
-import fnmatch
+import contextlib
 import json
 import secrets
 import ssl
 import time
 import urllib.parse as up
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable
+from typing import Any
 
 import httpx
 
-from ..engines import Request, Response
-from ..engines import httpx_engine
-from .findings import Finding
+from ..engines import Request, Response, httpx_engine
+from .findings import Finding, Severity
 from .passive import _split_http  # reuse
 from .rules import RuleMeta
 
@@ -267,7 +267,7 @@ class ActiveContext:
     #   (request_blob, response_blob, method, url, status, elapsed_ms)
     last_probe_repro: tuple | None = None
 
-    def claim_probe(self, opts: "ActiveOptions", rule_id: str,
+    def claim_probe(self, opts: ActiveOptions, rule_id: str,
                      location: str, key: str) -> bool:
         """Reserve a probe slot. Returns True if allowed."""
         per_target = self.probes_per_target.get((rule_id, location, key), 0)
@@ -284,7 +284,7 @@ class ActiveContext:
         return self.probes_per_check.get(rule_id, 0)
 
     @classmethod
-    def from_row(cls, row) -> "ActiveContext":
+    def from_row(cls, row) -> ActiveContext:
         rs, rh, rb = _split_http(row.req_blob)
         ss, sh, sb = _split_http(row.resp_blob)
         base = row.url.split("?", 1)[0]
@@ -299,8 +299,13 @@ class ActiveContext:
         parts = self.full_url.split("?", 1)
         if len(parts) < 2:
             return []
-        return [tuple(p.split("=", 1)) if "=" in p else (p, "")
-                for p in parts[1].split("&") if p]
+        out: list[tuple[str, str]] = []
+        for p in parts[1].split("&"):
+            if not p:
+                continue
+            k, _, v = p.partition("=")
+            out.append((k, v))
+        return out
 
     def form_pairs(self) -> list[tuple[str, str]]:
         """Best-effort form parsing for application/x-www-form-urlencoded bodies."""
@@ -314,8 +319,13 @@ class ActiveContext:
             text = self.req_body.decode("utf-8", errors="replace")
         except Exception:
             return []
-        return [tuple(p.split("=", 1)) if "=" in p else (p, "")
-                for p in text.split("&") if p]
+        out: list[tuple[str, str]] = []
+        for p in text.split("&"):
+            if not p:
+                continue
+            k, _, v = p.partition("=")
+            out.append((k, v))
+        return out
 
 
 # ---- check base ----
@@ -333,7 +343,8 @@ class ActiveCheck:
     description: str = ""
 
     def run(self, ctx: ActiveContext,
-             send: Callable[[Request], ProbeResult]) -> Iterable[Finding]:
+             send: Callable[[Request], ProbeResult],
+             *, opts: ActiveOptions | None = None) -> Iterable[Finding]:
         raise NotImplementedError
 
 
@@ -350,7 +361,8 @@ def _replace_query_value(url: str, key: str, new: str) -> str:
     replaced = False
     for k, v in pairs:
         if k == key and not replaced:
-            out.append((k, new)); replaced = True
+            out.append((k, new))
+            replaced = True
         else:
             out.append((k, v))
     return up.urlunparse(pr._replace(query=up.urlencode(out, doseq=True)))
@@ -660,12 +672,12 @@ class ReflectedXSSCheck(ActiveCheck):
                     yield Finding(
                         severity="high", title="Reflected XSS probe echoed unescaped",
                         description=(
-                            "A marker payload sent in the '{p}' {l} parameter "
+                            f"A marker payload sent in the '{key}' {loc} parameter "
                             "appears verbatim in the response body, which "
                             "indicates the input is not HTML-encoded. An "
                             "attacker could turn this into a stored or "
                             "reflected cross-site-scripting attack."
-                        ).format(p=key, l=loc),
+                        ),
                         remediation=("HTML-encode the value on output, or use a "
                                      "templating engine that auto-escapes."),
                         cwe="CWE-79", owasp="A03:2021-Injection",
@@ -720,11 +732,10 @@ class SQLiErrorCheck(ActiveCheck):
                     yield Finding(
                         severity="high",
                         title=f"SQL error triggered by quote injection ({engine})",
-                        description=("Appending a single quote to the '{p}' "
-                                     "{l} parameter produced a {e} database "
+                        description=(f"Appending a single quote to the '{key}' "
+                                     f"{loc} parameter produced a {engine} database "
                                      "error in the response. This is a strong "
-                                     "indicator of SQL injection.").format(
-                                     p=key, l=loc, e=engine),
+                                     "indicator of SQL injection."),
                         remediation=("Use parameterised queries / prepared "
                                      "statements. Never concatenate user "
                                      "input into SQL text."),
@@ -778,11 +789,11 @@ class OpenRedirectCheck(ActiveCheck):
                     if self.PROBE.rstrip("/") in loc_h:
                         yield Finding(
                             severity="medium", title="Open redirect confirmed",
-                            description=("The '{p}' {l} parameter controls the "
+                            description=(f"The '{key}' {loc} parameter controls the "
                                          "redirect Location. An attacker can "
                                          "send users to any site they choose "
                                          "via a trusted link."
-                                         ).format(p=key, l=loc),
+                                         ),
                             remediation=("Validate redirect targets against a "
                                          "server-side allowlist."),
                             cwe="CWE-601", owasp="A01:2021-Broken Access Control",
@@ -836,29 +847,29 @@ class SSTICheck(ActiveCheck):
                         break
                     req = _mutated(ctx, key, probe, loc)
                     pr = send(req)
-                    if expected.encode() in pr.response.body[:200_000]:
-                        # avoid the case where the literal already existed
-                        if expected.encode() not in ctx.resp_body[:200_000]:
-                            yield Finding(
-                                severity="critical",
-                                title=f"SSTI: template expression evaluated ({engine})",
-                                description=(
-                                    "The '{p}' {l} parameter was rendered by a "
-                                    "{e} template engine. The probe '{pr}' "
-                                    "evaluated to {ex}. Server-side template "
-                                    "injection typically allows remote code "
-                                    "execution."
-                                ).format(p=key, l=loc, e=engine, pr=probe, ex=expected),
-                                remediation=("Never render untrusted input as a "
-                                             "template. Use safe rendering APIs "
-                                             "that treat input as plain text."),
-                                cwe="CWE-1336", owasp="A03:2021-Injection",
-                                host=ctx.host, url=ctx.full_url,
-                                request_id=ctx.history_id,
-                                payload=probe,
-                                evidence=f"{engine} output contains {expected}",
-                            )
-                            return
+                    # avoid the case where the literal already existed
+                    if (expected.encode() in pr.response.body[:200_000]
+                            and expected.encode() not in ctx.resp_body[:200_000]):
+                        yield Finding(
+                            severity="critical",
+                            title=f"SSTI: template expression evaluated ({engine})",
+                            description=(
+                                f"The '{key}' {loc} parameter was rendered by a "
+                                f"{engine} template engine. The probe '{probe}' "
+                                f"evaluated to {expected}. Server-side template "
+                                "injection typically allows remote code "
+                                "execution."
+                            ),
+                            remediation=("Never render untrusted input as a "
+                                         "template. Use safe rendering APIs "
+                                         "that treat input as plain text."),
+                            cwe="CWE-1336", owasp="A03:2021-Injection",
+                            host=ctx.host, url=ctx.full_url,
+                            request_id=ctx.history_id,
+                            payload=probe,
+                            evidence=f"{engine} output contains {expected}",
+                        )
+                        return
 
 
 class TimeBasedOSCommandCheck(ActiveCheck):
@@ -914,12 +925,11 @@ class TimeBasedOSCommandCheck(ActiveCheck):
                     yield Finding(
                         severity="critical",
                         title=f"Time-based OS command injection ({kind})",
-                        description=("Appending a sleep payload to the '{p}' {l} "
-                                     "parameter made the response take {t} ms "
-                                     "(baseline {b} ms). This delay strongly "
+                        description=(f"Appending a sleep payload to the '{key}' {loc} "
+                                     f"parameter made the response take {pr.elapsed_ms} ms "
+                                     f"(baseline {base_ms} ms). This delay strongly "
                                      "suggests the input is being executed as a "
-                                     "shell command.").format(
-                                     p=key, l=loc, t=pr.elapsed_ms, b=base_ms),
+                                     "shell command."),
                         remediation=("Never pass user input to a shell. Use the "
                                      "subprocess argv form with no shell, and "
                                      "validate input against a strict allowlist."),
@@ -1161,10 +1171,10 @@ class ReflectedHeaderXSSCheck(ActiveCheck):
                 yield Finding(
                     severity="high",
                     title="Reflected XSS via request header",
-                    description=("A marker payload sent in the '{h}' request "
+                    description=(f"A marker payload sent in the '{hdr}' request "
                                  "header was echoed verbatim in the response "
                                  "body, suggesting headers are reflected without "
-                                 "HTML encoding.").format(h=hdr),
+                                 "HTML encoding."),
                     remediation=("HTML-encode header-derived values before "
                                  "rendering them in responses."),
                     cwe="CWE-79", owasp="A03:2021-Injection",
@@ -1187,10 +1197,10 @@ class ReflectedHeaderXSSCheck(ActiveCheck):
                 yield Finding(
                     severity="high",
                     title="Reflected XSS via cookie value",
-                    description=("A marker payload placed in the '{n}' cookie "
+                    description=(f"A marker payload placed in the '{name}' cookie "
                                  "value was echoed verbatim in the response "
                                  "body. Cookie-borne XSS often bypasses "
-                                 "request-body sanitisation.").format(n=name),
+                                 "request-body sanitisation."),
                     remediation=("Encode cookie-derived values before "
                                  "rendering; consider HttpOnly cookies."),
                     cwe="CWE-79", owasp="A03:2021-Injection",
@@ -1257,11 +1267,11 @@ class PathTraversalCheck(ActiveCheck):
                         yield Finding(
                             severity="high",
                             title=f"Path traversal exposed file ({kind})",
-                            description=("A traversal probe sent in the '{p}' "
-                                         "{l} parameter caused the response to "
+                            description=(f"A traversal probe sent in the '{key}' "
+                                         f"{loc} parameter caused the response to "
                                          "include the contents of a sensitive "
                                          "OS file. This is local file inclusion."
-                                         ).format(p=key, l=loc),
+                                         ),
                             remediation=("Resolve user-supplied paths against a "
                                          "whitelisted base directory and reject "
                                          "any input containing `..` or "
@@ -1349,14 +1359,13 @@ class NoSQLInjectionCheck(ActiveCheck):
                 yield Finding(
                     severity="high",
                     title="Possible NoSQL injection (MongoDB $ne)",
-                    description=("Replacing the JSON field '{p}' with the "
-                                 "Mongo operator `{{\"$ne\": null}}` produced a "
-                                 "differential response (baseline status={bs} "
-                                 "len={bl}; probe status={ns} len={nl}). The "
+                    description=(f"Replacing the JSON field '{key}' with the "
+                                 "Mongo operator `{\"$ne\": null}` produced a "
+                                 f"differential response (baseline status={base_status} "
+                                 f"len={base_len}; probe status={new_status} len={new_len}). The "
                                  "operator was likely passed to the database "
                                  "driver unfiltered."
-                                 ).format(p=key, bs=base_status, bl=base_len,
-                                          ns=new_status, nl=new_len),
+                                 ),
                     remediation=("Reject Mongo operator keys ($ne, $gt, $regex, "
                                  "…) in untrusted JSON, or coerce values to "
                                  "strings before passing them to the driver."),
@@ -1507,11 +1516,11 @@ class ActiveCORSCheck(ActiveCheck):
                     severity="high",
                     title=f"CORS reflects {kind} origin with credentials",
                     description=("The server echoed the attacker-controlled "
-                                 "Origin '{o}' in its Access-Control-Allow-Origin "
+                                 f"Origin '{origin}' in its Access-Control-Allow-Origin "
                                  "header and sent Access-Control-Allow-Credentials: "
                                  "true. An attacker page can issue authenticated "
                                  "cross-origin requests and read the responses."
-                                 ).format(o=origin),
+                                 ),
                     remediation=("Validate the Origin against a strict server-side "
                                  "allowlist; never combine credentials with a "
                                  "wildcard or reflected origin."),
@@ -1672,7 +1681,7 @@ class ForcedBrowsingCheck(ActiveCheck):
         ),
         tags=("forced-browsing", "info-leak"),
     )
-    WORDLIST: tuple[tuple[str, str, str], ...] = (
+    WORDLIST: tuple[tuple[str, Severity, str], ...] = (
         # (path, severity, why)
         ("/.git/HEAD",      "high",   "Git repository exposed"),
         ("/.env",           "high",   "Environment file exposed"),
@@ -2014,9 +2023,7 @@ class OAuthRedirectURICheck(ActiveCheck):
         if not val:
             return False
         v = val.strip()
-        if v.startswith(("http://", "https://", "//")):
-            return True
-        return False
+        return bool(v.startswith(("http://", "https://", "//")))
 
     def _swap_host(self, val: str, attacker: str) -> str | None:
         try:
@@ -2392,14 +2399,14 @@ def _tls_inspect(host: str, port: int = 443, *,
     info = _TLSInfo()
     try:
         ctx = ssl.create_default_context()
-        with socket.create_connection((host, port), timeout=timeout) as sock:
-            with ctx.wrap_socket(sock, server_hostname=host) as ssock:
-                cipher = ssock.cipher() or ("", "", 0)
-                info.cipher_name = cipher[0] or ""
-                info.cipher_bits = int(cipher[2] or 0)
-                info.protocol = ssock.version() or ""
-                cert = ssock.getpeercert() or {}
-                info.not_after = str(cert.get("notAfter") or "")
+        with (socket.create_connection((host, port), timeout=timeout) as sock,
+              ctx.wrap_socket(sock, server_hostname=host) as ssock):
+            cipher = ssock.cipher() or ("", "", 0)
+            info.cipher_name = cipher[0] or ""
+            info.cipher_bits = int(cipher[2] or 0)
+            info.protocol = ssock.version() or ""
+            cert = ssock.getpeercert() or {}
+            info.not_after = str(cert.get("notAfter") or "")
         return info
     except ssl.SSLCertVerificationError as exc:
         info.error = "verify_failed"
@@ -2425,9 +2432,7 @@ def _is_weak_protocol(name: str) -> bool:
         return False
     if name in _WEAK_PROTOCOLS:
         return True
-    if name == "TLSv1.0":
-        return True
-    return False
+    return name == "TLSv1.0"
 
 
 def _is_weak_cipher(name: str, bits: int) -> bool:
@@ -2436,7 +2441,7 @@ def _is_weak_cipher(name: str, bits: int) -> bool:
     upper = name.upper()
     if any(tok in upper for tok in _WEAK_CIPHER_TOKENS):
         return True
-    return bits and bits < 128
+    return bool(bits) and bits < 128
 
 
 def _parse_cert_expiry(not_after: str) -> int | None:
@@ -2616,7 +2621,7 @@ class ActiveTLSCheck(ActiveCheck):
 
 
 # Each entry: (service_label, fingerprint_bytes, severity).
-_TAKEOVER_FINGERPRINTS: tuple[tuple[str, bytes, str], ...] = (
+_TAKEOVER_FINGERPRINTS: tuple[tuple[str, bytes, Severity], ...] = (
     ("GitHub Pages", b"There isn't a GitHub Pages site here", "high"),
     ("Heroku",       b"No such app",                          "high"),
     ("Heroku",       b"herokucdn.com/error-pages/no-such-app", "high"),
@@ -2891,7 +2896,7 @@ class DefaultCredsSprayCheck(ActiveCheck):
                                          f"{username}:{password}"):
                     return
                 token = base64.b64encode(
-                    f"{username}:{password}".encode("utf-8")).decode("ascii")
+                    f"{username}:{password}".encode()).decode("ascii")
                 headers = [(k, v) for k, v in _scrub_headers(ctx.req_headers)
                             if k.lower() != "authorization"]
                 headers.append(("Authorization", f"Basic {token}"))
@@ -3100,13 +3105,13 @@ class StoredXSSCheck(ActiveCheck):
                         severity="high",
                         title="Stored XSS marker reflected on re-fetch",
                         description=(
-                            "A marker payload sent in the '{p}' {l} "
-                            "parameter of a {m} request was still "
+                            f"A marker payload sent in the '{key}' {loc} "
+                            f"parameter of a {ctx.method.upper()} request was still "
                             "present in the body returned by a clean "
                             "GET of the same URL afterwards. The input "
                             "is being persisted and rendered without "
                             "HTML-encoding."
-                        ).format(p=key, l=loc, m=ctx.method.upper()),
+                        ),
                         remediation=(
                             "HTML-encode persisted user input on output, "
                             "or use an auto-escaping templating engine."
@@ -3197,11 +3202,11 @@ class IDORAltIdentityCheck(ActiveCheck):
             description=(
                 "The recorded request returned 200 under the original "
                 "identity. Resending it with the alt-identity headers "
-                "({k}) also returned 200, and the bodies are {pct}% "
-                "similar (>= {thr}%). The resource is not enforcing "
-                "per-user authorisation."
-            ).format(k=alt_keys, pct=int(sim * 100),
-                     thr=int(self.SIMILARITY_THRESHOLD * 100)),
+                f"({alt_keys}) also returned 200, and the bodies are "
+                f"{int(sim * 100)}% similar "
+                f"(>= {int(self.SIMILARITY_THRESHOLD * 100)}%). "
+                "The resource is not enforcing per-user authorisation."
+            ),
             remediation=(
                 "Enforce per-user authorisation on every access to an "
                 "object identified by a guessable parameter; reject "
@@ -3301,12 +3306,12 @@ class RaceConditionCheck(ActiveCheck):
             severity="high",
             title="Race condition: parallel duplicates accepted",
             description=(
-                "{n} parallel copies of the recorded {m} request produced "
-                "{k} sub-400 responses ({creates}). The endpoint accepted "
+                f"{self._PARALLEL} parallel copies of the recorded "
+                f"{ctx.method.upper()} request produced "
+                f"{len(successes)} sub-400 responses ({creates}). The endpoint accepted "
                 "concurrent state changes that the single-request baseline "
-                "(status {b}) only allowed one of."
-            ).format(n=self._PARALLEL, m=ctx.method.upper(),
-                     k=len(successes), creates=creates, b=ctx.resp_status),
+                f"(status {ctx.resp_status}) only allowed one of."
+            ),
             remediation=(
                 "Serialise state-changing operations with a unique "
                 "database constraint, row-level lock, or idempotency "
@@ -3439,11 +3444,11 @@ class CloudBlobMisconfigCheck(ActiveCheck):
             severity="high",
             title=f"{service} container/bucket allows anonymous listing",
             description=(
-                "An unauthenticated GET to {url} returned a {svc} "
+                f"An unauthenticated GET to {probe_url} returned a {service} "
                 "listing envelope. The container exposes its object "
                 "names without authentication, which often precedes "
                 "credential or PII exfiltration."
-            ).format(url=probe_url, svc=service),
+            ),
             remediation=(
                 "Disable anonymous list permission on the bucket / "
                 "container; require signed URLs or IAM credentials."
@@ -3586,7 +3591,7 @@ class DOMXSSCheck(ActiveCheck):
                                        wait_until="load")
                         except _SAFE_NETWORK_EXC:
                             continue
-                        except Exception:                       # noqa: BLE001
+                        except Exception:                       # noqa: BLE001,S112  # Playwright raises arbitrary browser/JS errors on navigation; skip this probe URL and continue with remaining params
                             continue
                         try:
                             sinks = page.evaluate(
@@ -3594,7 +3599,7 @@ class DOMXSSCheck(ActiveCheck):
                             )
                         except _SAFE_NETWORK_EXC:
                             continue
-                        except Exception:                       # noqa: BLE001
+                        except Exception:                       # noqa: BLE001,S112  # Playwright evaluate raises arbitrary JS errors; skip this probe and continue with remaining params
                             continue
                         if not sinks:
                             continue
@@ -3604,13 +3609,13 @@ class DOMXSSCheck(ActiveCheck):
                             title=("DOM XSS sink reached by "
                                     f"URL-controlled '{key}'"),
                             description=(
-                                "A unique marker placed in the '{p}' "
-                                "query parameter of {u} landed in the "
+                                f"A unique marker placed in the '{key}' "
+                                f"query parameter of {ctx.full_url} landed in the "
                                 "following DOM sink(s) after the page "
-                                "rendered: {s}. An attacker controlling "
+                                f"rendered: {sink_list}. An attacker controlling "
                                 "this parameter can execute arbitrary "
                                 "script in the victim's browser."
-                            ).format(p=key, u=ctx.full_url, s=sink_list),
+                            ),
                             remediation=(
                                 "Encode URL-derived data before "
                                 "inserting it into the DOM; prefer "
@@ -3625,20 +3630,14 @@ class DOMXSSCheck(ActiveCheck):
                             evidence=f"DOM sinks reached: {sink_list}",
                         )
                     finally:
-                        try:
+                        with contextlib.suppress(*_SAFE_NETWORK_EXC):
                             page.close()
-                        except _SAFE_NETWORK_EXC:
-                            pass
             finally:
-                try:
+                with contextlib.suppress(*_SAFE_NETWORK_EXC):
                     browser.close()
-                except _SAFE_NETWORK_EXC:
-                    pass
         finally:
-            try:
+            with contextlib.suppress(*_SAFE_NETWORK_EXC):
                 pw_ctx.stop()
-            except _SAFE_NETWORK_EXC:
-                pass
 
 
 BUILTIN_ACTIVE_CHECKS.append(CloudBlobMisconfigCheck())
@@ -3747,14 +3746,12 @@ class AccountEnumTimingCheck(ActiveCheck):
             severity="medium",
             title="Account enumeration via response-time delta",
             description=(
-                "The login endpoint at {u} responds noticeably slower for "
-                "{slower} usernames than the other case (median {slow} ms "
-                "vs {fast} ms across {n} samples each side). An attacker "
+                f"The login endpoint at {ctx.full_url} responds noticeably slower for "
+                f"{slower} usernames than the other case (median {slow_med} ms "
+                f"vs {fast_med} ms across {self.SAMPLES_PER_SIDE} samples each side). An attacker "
                 "can use this timing oracle to enumerate valid accounts "
                 "without ever needing a valid password."
-            ).format(u=ctx.full_url, slower=slower,
-                     fast=fast_med, slow=slow_med,
-                     n=self.SAMPLES_PER_SIDE),
+            ),
             remediation=(
                 "Make the login path constant-time with respect to whether "
                 "the supplied account exists. Always run the password hash "
@@ -3910,7 +3907,7 @@ BUILTIN_ACTIVE_CHECKS.append(CSRFTokenValidationCheck())
 # ---- Phase 26 -- auth-flow active checks built on MacroStep.step_type ----
 
 
-def _macro_from_opts(opts: "ActiveOptions"):
+def _macro_from_opts(opts: ActiveOptions):
     """Return the auth macro attached to opts, or None.
 
     Pulled out so both Phase 26 checks share the gate logic and so a
@@ -4007,7 +4004,7 @@ class MFABypassCheck(ActiveCheck):
 
     _SENTINEL = "_reqlore_mfa_bypass_checked"
 
-    def run(self, ctx, send, *, opts: "ActiveOptions | None" = None):
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
         opts = opts or ActiveOptions()
         rule_id = self.meta.id
 
@@ -4033,10 +4030,8 @@ class MFABypassCheck(ActiveCheck):
         auth = opts.auth_session
         if getattr(auth, self._SENTINEL, False):
             return
-        try:
+        with contextlib.suppress(Exception):
             setattr(auth, self._SENTINEL, True)
-        except Exception:  # noqa: BLE001
-            pass
 
         if not ctx.claim_probe(opts, rule_id, "macro", "mfa"):
             return
@@ -4076,16 +4071,13 @@ class MFABypassCheck(ActiveCheck):
                   "without the MFA step",
             description=(
                 "After re-running the configured auth macro with the "
-                "{n} step(s) tagged step_type=\"mfa\" removed, the "
-                "verification step '{vs}' returned {s} from {u}. "
+                f"{len(mfa_indices)} step(s) tagged step_type=\"mfa\" removed, the "
+                f"verification step '{verify.step}' returned {verify.status} from {verify_url}. "
                 "The server therefore hands out a full authenticated "
                 "session after just the password step -- an attacker "
                 "who captures the password alone can replay the same "
                 "partial flow and pivot straight to the protected "
                 "endpoints."
-            ).format(
-                n=len(mfa_indices), vs=verify.step,
-                s=verify.status, u=verify_url,
             ),
             remediation=(
                 "Treat MFA as atomic: do not issue an authenticated "
@@ -4166,7 +4158,7 @@ class SessionFixationActiveCheck(ActiveCheck):
     FIXATION_VALUE = "reqlore_fixated_session_zzz"
     _SENTINEL = "_reqlore_session_fixation_checked"
 
-    def run(self, ctx, send, *, opts: "ActiveOptions | None" = None):
+    def run(self, ctx, send, *, opts: ActiveOptions | None = None):
         opts = opts or ActiveOptions()
         rule_id = self.meta.id
 
@@ -4198,10 +4190,8 @@ class SessionFixationActiveCheck(ActiveCheck):
         auth = opts.auth_session
         if getattr(auth, self._SENTINEL, False):
             return
-        try:
+        with contextlib.suppress(Exception):
             setattr(auth, self._SENTINEL, True)
-        except Exception:  # noqa: BLE001
-            pass
 
         if not ctx.claim_probe(opts, rule_id, "macro", "login"):
             return
@@ -4411,7 +4401,7 @@ class ActiveScanner:
     def _send_factory(self, opts: ActiveOptions, counter: list[int],
                        result: ActiveScanResult | None = None,
                        project: object | None = None,
-                       ctx: "ActiveContext | None" = None):
+                       ctx: ActiveContext | None = None):
         def _raw_send(req: Request) -> Response:
             # Lowest-level outgoing call. Used both by the probe path
             # below and by the Phase 10 ``AuthSession`` (which needs
@@ -4432,12 +4422,10 @@ class ActiveScanner:
             # recursively apply auth or count against the probe
             # budget.
             if opts.auth_session is not None:
-                try:
+                with contextlib.suppress(*_SAFE_NETWORK_EXC):
                     req = opts.auth_session.apply_to_request(
                         req, sender=_raw_send,
                     )
-                except _SAFE_NETWORK_EXC:
-                    pass
             # B.0.3 — if a refresh macro is configured, periodically re-run it
             # and merge the returned headers/cookies into the next request.
             if (opts.replay_macro is not None and project is not None
@@ -4582,10 +4570,8 @@ class ActiveScanner:
         # macro_failures stat.
         if opts.auth_session is not None and not getattr(
                 opts.auth_session, "primed", False):
-            try:
+            with contextlib.suppress(*_SAFE_NETWORK_EXC):
                 opts.auth_session.prime(sender=self._sender)
-            except _SAFE_NETWORK_EXC:
-                pass
         rows = project.list_history(limit=limit, host=host)
         # Phase 12 — optional audit prioritisation. When enabled we
         # re-order the row list using the same insertion-point
@@ -4599,6 +4585,8 @@ class ActiveScanner:
             try:
                 from .prioritise import (
                     ScoringWeights as _Weights,
+                )
+                from .prioritise import (
                     prioritise_queue as _prioritise,
                 )
                 ranked = _prioritise(
@@ -4617,7 +4605,7 @@ class ActiveScanner:
                     _, top = ranked[0]
                     result.top_score = float(top.score)
                     result.top_history_id = int(top.history_id)
-            except Exception:  # noqa: BLE001 — never block a scan
+            except Exception:  # noqa: BLE001,S110 — never block a scan; prioritiser is best-effort ranking, leave rows in id-DESC order if scoring fails
                 # Leave rows in their original id-DESC order if
                 # scoring blew up. ``prioritised`` stays False so
                 # the operator can tell the prioritiser was
@@ -4769,7 +4757,7 @@ class ActiveScanner:
                                     result.by_severity.get(
                                         jf.severity, 0) + 1
                                 )
-                except Exception:  # noqa: BLE001 — never block a scan
+                except Exception:  # noqa: BLE001,S110 — never block a scan; JS-pipeline finding emission is best-effort and its failure must not abort the scan
                     pass
         result.elapsed_ms = int((time.monotonic() - t0) * 1000)
         # Phase 10 — mirror the auth-session counters into the result

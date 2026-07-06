@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 from .. import _safe_regex
 
-
 # H-5: hard cap on match-replace output size to neutralise rules whose
 # replacement explodes the body (deliberate or accidental). 100 MiB is
 # more than any sane HTTP message; if a rule produces more, we drop the

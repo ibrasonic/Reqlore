@@ -2,17 +2,14 @@
 from __future__ import annotations
 
 import base64
-import json
 import zlib
-
-import pytest
 
 from reqlore.engines import Request, Response
 from reqlore.graphql import parse_schema
-from reqlore.macros import Macro, MacroStep, run as run_macro
+from reqlore.macros import Macro, MacroStep
+from reqlore.macros import run as run_macro
 from reqlore.poc import clickjacking_poc, csrf_fetch_poc, csrf_form_poc
 from reqlore.saml import inspect as saml_inspect
-
 
 # ---- GraphQL ----
 

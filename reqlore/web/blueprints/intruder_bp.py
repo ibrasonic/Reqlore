@@ -6,19 +6,37 @@ import io
 import json
 import os
 import re as _re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import (
-    Blueprint, Response, abort, flash, g, jsonify, redirect, render_template,
-    request, url_for,
+    Blueprint,
+    Response,
+    abort,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
 from ...intruder import (
-    AttackRunner, DEFAULT_MARKER, COMMON_PASSWORDS, WORDLISTS,
-    count_wordlist_lines, find_positions, iterate, load_wordlist_bytes,
-    load_wordlist_file, payloads_brute, payloads_from_text, payloads_numbers,
-    get_runner, processor_names, register, wordlist_names,
+    COMMON_PASSWORDS,
+    DEFAULT_MARKER,
+    WORDLISTS,
+    AttackRunner,
+    count_wordlist_lines,
+    find_positions,
+    get_runner,
+    load_wordlist_bytes,
+    payloads_brute,
+    payloads_from_text,
+    payloads_numbers,
+    processor_names,
+    register,
+    wordlist_names,
 )
 
 bp = Blueprint("intruder", __name__)
@@ -136,7 +154,10 @@ def new():
                     "concurrency": int(form["concurrency"] or 4),
                     "delay_ms": int(form["delay_ms"] or 0),
                     "max_requests": int(form["max_requests"] or 1000),
-                    "processors": [p.strip() for p in (form["processors"] or "").split(",") if p.strip()],
+                    "processors": [
+                        p.strip() for p in (form["processors"] or "").split(",")
+                        if p.strip()
+                    ],
                     "grep": [g for g in (form["grep"] or "").splitlines() if g.strip()],
                     "retries": max(0, int(form["retries"] or 0)),
                     "stop_on_match": bool(form.get("stop_on_match")),
@@ -335,7 +356,7 @@ def _parse_filters(args) -> dict:
 
     def _int_or_none(s: str | None):
         try:
-            return int(s) if s not in (None, "") else None
+            return int(s) if s is not None and s != "" else None
         except ValueError:
             return None
 
@@ -356,14 +377,22 @@ def _apply_filters(rows: list[dict], f: dict) -> tuple[list[dict], int]:
     dedup_hidden = 0
     for r in rows:
         s = r["status"]
-        if f["sc"] == "2xx" and not (200 <= s < 300): continue
-        if f["sc"] == "3xx" and not (300 <= s < 400): continue
-        if f["sc"] == "4xx" and not (400 <= s < 500): continue
-        if f["sc"] == "5xx" and not (500 <= s < 600): continue
-        if f["len_min"] is not None and r["len_resp"] < f["len_min"]: continue
-        if f["len_max"] is not None and r["len_resp"] > f["len_max"]: continue
-        if f["matched"] == "yes" and not r["matched"]: continue
-        if f["matched"] == "no" and r["matched"]: continue
+        if f["sc"] == "2xx" and not (200 <= s < 300):
+            continue
+        if f["sc"] == "3xx" and not (300 <= s < 400):
+            continue
+        if f["sc"] == "4xx" and not (400 <= s < 500):
+            continue
+        if f["sc"] == "5xx" and not (500 <= s < 600):
+            continue
+        if f["len_min"] is not None and r["len_resp"] < f["len_min"]:
+            continue
+        if f["len_max"] is not None and r["len_resp"] > f["len_max"]:
+            continue
+        if f["matched"] == "yes" and not r["matched"]:
+            continue
+        if f["matched"] == "no" and r["matched"]:
+            continue
         if f["q"]:
             hay = " ".join([*(str(p) for p in r["payloads"]), r["grep_hits"]]).lower()
             if f["q"].lower() not in hay:
@@ -467,7 +496,7 @@ def export_json(aid: int):
             "engine": attack["engine"],
             "status": attack["status"],
         },
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "total": len(all_rows),
         "exported": len(rows),
         "filters": filters,

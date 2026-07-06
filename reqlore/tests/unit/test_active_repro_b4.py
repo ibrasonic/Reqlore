@@ -24,7 +24,6 @@ from reqlore.scanner.active import (
 )
 from reqlore.storage import Project
 
-
 # ----------------------------- helpers ---------------------------------------
 
 

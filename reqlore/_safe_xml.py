@@ -18,6 +18,8 @@ fallback path is safe.
 """
 from __future__ import annotations
 
+import contextlib
+
 try:
     import defusedxml.ElementTree as _ET  # type: ignore[import-not-found]
     _DEFUSED = True
@@ -37,31 +39,27 @@ except ImportError:  # pragma: no cover
 # defusedxml is not installed.
 def _hardened_parser():
     import xml.etree.ElementTree as _stdlib_ET  # local import
-    parser = _stdlib_ET.XMLParser()
+    parser = _stdlib_ET.XMLParser()  # noqa: S314  # defusedxml-unavailable fallback; DOCTYPE/DTD disabled via the handlers installed below
     # ``UseForeignDTD(False)`` and rejecting any ``StartDoctypeDecl``
     # together kill external entity resolution and inline ``<!ENTITY>``
     # declarations. expat ignores the rest after that.
-    try:
+    with contextlib.suppress(Exception):  # pragma: no cover - older Python
         parser.parser.UseForeignDTD(False)
-    except Exception:  # pragma: no cover - older Python
-        pass
 
     def _no_doctype(*_args, **_kwargs):
         raise ValueError("DOCTYPE / DTD declarations are not permitted")
 
-    try:
+    with contextlib.suppress(Exception):  # pragma: no cover
         parser.parser.StartDoctypeDeclHandler = _no_doctype
-    except Exception:  # pragma: no cover
-        pass
     return parser
 
 
 def fromstring(xml: str | bytes):
     """Parse ``xml`` and return the root element. Rejects DTDs / entities."""
     if _DEFUSED:
-        return _ET.fromstring(xml)
-    import xml.etree.ElementTree as _stdlib_ET
-    return _stdlib_ET.fromstring(xml, parser=_hardened_parser())
+        return _ET.fromstring(xml)  # noqa: S314  # `_ET` is defusedxml.ElementTree in this branch (_DEFUSED is True)
+    import xml.etree.ElementTree as _stdlib_ET  # local import
+    return _stdlib_ET.fromstring(xml, parser=_hardened_parser())  # noqa: S314  # defusedxml-unavailable fallback; parser blocks DOCTYPE/DTD/entities
 
 
 # Re-export the parser's specific exception so callers can catch it
@@ -76,12 +74,12 @@ def pretty(xml: str) -> str:
         # Parse first with the hardened ElementTree, which strips
         # DOCTYPE / entity declarations.
         root = fromstring(xml)
-        import xml.etree.ElementTree as _stdlib_ET
+        import xml.etree.ElementTree as _stdlib_ET  # noqa: S314  # only serialising a tree already parsed through the hardened/defused parser above
         canonical = _stdlib_ET.tostring(root, encoding="unicode")
         if _DEFUSED_MD:
-            return _MD.parseString(canonical).toprettyxml(indent="  ")
+            return _MD.parseString(canonical).toprettyxml(indent="  ")  # noqa: S318  # `_MD` is defusedxml.minidom in this branch (_DEFUSED_MD is True)
         # Stdlib minidom still safe at this point because ``canonical``
         # contains no DTD/entities.
-        return _MD.parseString(canonical).toprettyxml(indent="  ")
+        return _MD.parseString(canonical).toprettyxml(indent="  ")  # noqa: S318  # `canonical` was re-serialised from the hardened ElementTree parse above — DTD/entities already stripped
     except Exception:
         return xml

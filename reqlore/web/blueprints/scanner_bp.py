@@ -4,15 +4,27 @@ from __future__ import annotations
 import re
 
 from flask import (
-    Blueprint, abort, current_app, flash, g, redirect, render_template, request, url_for,
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
 from ...findings_bus import record_finding
+from ...plugins import get_registry
 from ...scanner import (
-    ActiveOptions, ActiveScanner, BUILTIN_ACTIVE_CHECKS, BUILTIN_RULES, Scanner,
+    BUILTIN_ACTIVE_CHECKS,
+    BUILTIN_RULES,
+    ActiveOptions,
+    ActiveScanner,
+    Scanner,
 )
 from ...scanner.rules import SEVERITIES
-from ...plugins import get_registry
 
 bp = Blueprint("scanner", __name__)
 
@@ -95,7 +107,7 @@ def _resolve_preset(preset: str, posted_checks: list[str]) -> list[str] | None:
         # Only keep names that actually exist as builtins or plugins.
         return [n for n in posted_checks if n] or None
     if preset == "quick":
-        return sorted(ACTIVE_PRESETS["quick"])
+        return sorted(ACTIVE_PRESETS["quick"] or ())
     if preset == "full":
         return None  # None ⇒ enable everything
     # standard (default): everything except oast
@@ -201,6 +213,8 @@ def run_page():
         history_count = 0
     from ...scanner.presets import (
         DEFAULT_PRESET as _DEFAULT_SCAN_PRESET,
+    )
+    from ...scanner.presets import (
         all_summaries as _scan_preset_summaries,
     )
     # Phase 10 — surface available macros so the auth fieldset can
@@ -217,7 +231,7 @@ def run_page():
                 continue
             try:
                 m = _Macro.from_json(blob)
-            except Exception:  # noqa: BLE001 — corrupt entry; skip
+            except Exception:  # noqa: BLE001,S112 — corrupt macro entry; skip and continue rendering the selector with remaining entries
                 continue
             macros.append({"id": i, "name": m.name or f"macro #{i}"})
     except Exception:  # noqa: BLE001 — fake projects in tests
@@ -285,7 +299,11 @@ def run_active():
     # the dataclass defaults.
     from ...scanner.presets import (
         DEFAULT_PRESET as _DEFAULT_SCAN_PRESET,
+    )
+    from ...scanner.presets import (
         PRESET_NAMES as _SCAN_PRESET_NAMES,
+    )
+    from ...scanner.presets import (
         apply_preset as _apply_scan_preset,
     )
     scan_preset_name = (request.form.get("scan_preset")
@@ -339,10 +357,7 @@ def run_active():
             if v == "1":
                 levels.add(tier_name)
     if not levels:
-        if posted_tier_field:
-            levels = {"light", "medium"}
-        else:
-            levels = set(preset_opts.intensity_levels)
+        levels = {"light", "medium"} if posted_tier_field else set(preset_opts.intensity_levels)
     if "intrusive" in levels:
         if request.form.get("confirm_intrusive") != "yes":
             flash(
@@ -534,7 +549,7 @@ def show(fid: int):
     for occ in occurrences:
         try:
             occ["ts_iso"] = _dt.datetime.fromtimestamp(
-                int(occ.get("ts") or 0), tz=_dt.timezone.utc,
+                int(occ.get("ts") or 0), tz=_dt.UTC,
             ).strftime("%Y-%m-%d %H:%M:%SZ")
         except Exception:
             occ["ts_iso"] = ""
@@ -769,7 +784,8 @@ def priority_preview():
     current ``list_history`` snapshot.
     """
     from ...scanner.prioritise import (
-        ScoringWeights, prioritise_queue,
+        ScoringWeights,
+        prioritise_queue,
     )
     try:
         limit = int(request.args.get("limit", "200"))

@@ -20,11 +20,8 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
-from .engines import Request, Response
-from .engines import httpx_engine
-
+from .engines import Request, Response, httpx_engine
 
 # Recognised values for ``MacroStep.step_type``. The empty string is the
 # default (untyped step). The other values let auth-flow active checks
@@ -55,7 +52,7 @@ class MacroStep:
     step_type: str = ""
 
     @classmethod
-    def from_dict(cls, d: dict) -> "MacroStep":
+    def from_dict(cls, d: dict) -> MacroStep:
         return cls(
             name=d.get("name", "step"),
             method=d.get("method", "GET"),
@@ -92,7 +89,7 @@ class Macro:
         }, indent=2)
 
     @classmethod
-    def from_json(cls, blob: str) -> "Macro":
+    def from_json(cls, blob: str) -> Macro:
         if not blob:
             return cls()
         d = json.loads(blob)

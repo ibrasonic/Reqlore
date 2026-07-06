@@ -20,9 +20,9 @@ def oast():
 
 def _hit(url: str, *, method: str = "GET", data: bytes | None = None,
           headers: dict[str, str] | None = None) -> str:
-    req = urllib.request.Request(url, data=data, method=method,
+    req = urllib.request.Request(url, data=data, method=method,  # noqa: S310  # test-only helper; `url` comes from the LocalOAST fixture bound to 127.0.0.1
                                   headers=headers or {})
-    with urllib.request.urlopen(req, timeout=5) as resp:
+    with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310  # test-only helper; scheme comes from the LocalOAST fixture bound to 127.0.0.1
         return resp.read().decode()
 
 
@@ -71,7 +71,7 @@ def test_unknown_token_logged_as_underscore(oast):
             break
         time.sleep(0.05)
     ix = oast.interactions()
-    assert any(i.token == "_" for i in ix)
+    assert any(i.token == "_" for i in ix)  # noqa: S105  # test fixture OAST token, not a real credential
 
 
 def test_clear_resets_log(oast):

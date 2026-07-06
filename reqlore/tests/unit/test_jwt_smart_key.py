@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -22,7 +21,6 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from reqlore.config import Settings
 from reqlore.jwk_resolver import resolve_public_key
 from reqlore.web import create_app
-
 
 # ---------------------------------------------------------------- fixtures ----
 

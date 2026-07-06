@@ -25,7 +25,6 @@ from reqlore.sequencer_capture import (
 )
 from reqlore.storage import Project
 
-
 # ---------------------------------------------------------------- helpers
 
 
@@ -209,12 +208,14 @@ def test_storage_set_status_and_error_count(tmp_path: Path):
         cid, "running", stop_reason="", error_count=3,
     )
     cap = p.get_sequencer_capture(cid)
+    assert cap is not None
     assert cap["status"] == "running"
     assert cap["error_count"] == 3
     p.set_sequencer_capture_status(
         cid, "errored", stop_reason="boom", error_count=4,
     )
     cap = p.get_sequencer_capture(cid)
+    assert cap is not None
     assert cap["status"] == "errored"
     assert cap["stop_reason"] == "boom"
 
@@ -245,7 +246,7 @@ def test_storage_delete_capture_cascades_samples(tmp_path: Path):
     )
     for i in range(3):
         p.add_sequencer_sample(
-            capture_id=cid, seq=i, token="t", status=200, duration_ms=1,
+            capture_id=cid, seq=i, token="t", status=200, duration_ms=1,  # noqa: S106  # test fixture sequencer token, not a real credential
         )
     assert p.count_sequencer_samples(cid) == 3
     p.delete_sequencer_capture(cid)
@@ -337,6 +338,7 @@ def test_capture_detail_reconciles_stale_running(tmp_path: Path):
     r = c.get(f"/sequencer/capture/{cid}")
     assert r.status_code == 200
     cap_after = Project(tmp_path / "p.rlr").get_sequencer_capture(cid)
+    assert cap_after is not None
     assert cap_after["status"] == "idle"
 
 
@@ -398,6 +400,7 @@ def test_runner_collects_session_cookies(tmp_path: Path, issuer_server: int):
     runner.start()
     assert runner.wait(timeout=30), "runner did not complete in time"
     cap = p.get_sequencer_capture(cid)
+    assert cap is not None
     assert cap["status"] == "done"
     assert p.count_sequencer_samples(cid) == target
     tokens = p.list_sequencer_tokens(cid)
@@ -453,6 +456,7 @@ def test_runner_aborts_when_no_token_is_extractable(tmp_path: Path,
     runner.start()
     assert runner.wait(timeout=15)
     cap = p.get_sequencer_capture(cid)
+    assert cap is not None
     assert cap["status"] == "errored"
     assert "extractor" in cap["stop_reason"]
     assert p.count_sequencer_samples(cid) == 0
@@ -480,6 +484,7 @@ def test_runner_cancel_stops_quickly(tmp_path: Path, issuer_server: int):
     runner.cancel()
     assert runner.wait(timeout=10)
     cap = p.get_sequencer_capture(cid)
+    assert cap is not None
     assert cap["status"] == "cancelled"
     # Sanity: we collected at least a handful, far short of max_samples.
     assert 3 <= p.count_sequencer_samples(cid) < 20000

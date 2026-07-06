@@ -42,7 +42,7 @@ def test_count_history_after_empty(project):
 
 def test_count_history_after_counts_newer(project):
     a = _add(project)
-    b = _add(project)
+    _add(project)
     c = _add(project)
     new, mx = project.count_history_after(a)
     assert new == 2 and mx == c

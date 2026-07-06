@@ -25,18 +25,18 @@ Covers:
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from reqlore.auth_matrix import (
+    SESSION_KINDS,
+    VERDICT_LABELS,
     AuthMatrixRunner,
     AuthShadowWorker,
     RunOptions,
     Session,
-    SESSION_KINDS,
-    VERDICT_LABELS,
-    Verdict,
     apply_session_to_request,
     body_similarity_pct,
     build_substitution,
@@ -58,12 +58,11 @@ from reqlore.engines import Request, Response, Timings
 from reqlore.storage import Project
 from reqlore.web import create_app
 
-
 # ============================================================ fixtures
 
 
 @pytest.fixture
-def project(tmp_path: Path) -> Project:
+def project(tmp_path: Path) -> Iterator[Project]:
     p = Project(tmp_path / "am.rlr")
     yield p
     p.close()
@@ -116,7 +115,10 @@ class TestCrypto:
         blob = encrypt_payload(key, b"secret")
         other = ProjectKey(raw=bytes(b"\x00" * 32))
         if blob[:1] == b"\x01":
-            with pytest.raises(Exception):
+            # cryptography can raise InvalidTag, ValueError, or a nested
+            # variant depending on backend version; asserting the umbrella
+            # is deliberate here.
+            with pytest.raises(Exception):  # noqa: B017  # broad by design (see comment above)
                 decrypt_payload(other, blob)
 
     def test_version_byte_unknown_raises(self, key: ProjectKey):
@@ -490,7 +492,9 @@ class TestStorageAuthMatrix:
         assert decrypt_payload(key, got["payload_blob"]) == b"session=admin"
 
         project.auth_matrix_update_session(sid, active=False)
-        assert project.auth_matrix_get_session(sid)["active"] is False
+        got_updated = project.auth_matrix_get_session(sid)
+        assert got_updated is not None
+        assert got_updated["active"] is False
 
         # List + active_only
         sid2 = project.auth_matrix_create_session(
@@ -515,6 +519,7 @@ class TestStorageAuthMatrix:
             options={"x": 1},
         )
         run = project.auth_matrix_get_run(rid)
+        assert run is not None
         assert run["status"] == "pending"
         assert run["history_ids"] == [1, 2]
         assert run["compare_session_ids"] == [10, 11]
@@ -523,10 +528,12 @@ class TestStorageAuthMatrix:
         project.auth_matrix_append_run_log(rid, "first")
         project.auth_matrix_append_run_log(rid, "second")
         run = project.auth_matrix_get_run(rid)
+        assert run is not None
         assert "first" in run["log"] and "second" in run["log"]
         project.auth_matrix_update_run(
             rid, status="ok", verdict_counts={"identical": 4})
         run = project.auth_matrix_get_run(rid)
+        assert run is not None
         assert run["verdict_counts"] == {"identical": 4}
 
     def test_cell_blobs_round_trip_and_cascade(
@@ -549,6 +556,7 @@ class TestStorageAuthMatrix:
             baseline_response_blob=b"HTTP/1.1 200 OK\r\n\r\nbody",
         )
         c = project.auth_matrix_get_cell(cid)
+        assert c is not None
         assert c["request_blob"].startswith(b"GET")
         assert c["response_blob"].endswith(b"body")
         counts = project.auth_matrix_cell_counts(rid)
@@ -605,7 +613,7 @@ class TestAuthMatrixRunner:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             run = project.auth_matrix_get_run(rid)
-            if run["status"] in ("ok", "error", "cancelled", "timeout"):
+            if run is not None and run["status"] in ("ok", "error", "cancelled", "timeout"):
                 return run
             time.sleep(0.02)
         return project.auth_matrix_get_run(rid)

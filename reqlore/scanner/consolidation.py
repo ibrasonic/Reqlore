@@ -39,8 +39,9 @@ from __future__ import annotations
 import re
 import time
 import urllib.parse as _up
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 __all__ = [
     "ConsolidationSettings",
@@ -219,10 +220,7 @@ def directory_of(url: str) -> str:
     # If the path ends in "/", that already is the directory.
     if not path.endswith("/"):
         last_slash = path.rfind("/")
-        if last_slash == -1:
-            path = "/"
-        else:
-            path = path[: last_slash + 1]
+        path = "/" if last_slash == -1 else path[:last_slash + 1]
     if path == "":
         path = "/"
     path = _ID_SEGMENT_RE.sub("/{id}", path)

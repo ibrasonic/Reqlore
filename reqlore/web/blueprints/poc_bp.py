@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 from flask import (
-    Blueprint, Response, abort, g, render_template, request, url_for,
+    Blueprint,
+    Response,
+    abort,
+    g,
+    render_template,
+    request,
 )
 
 from ...poc import clickjacking_poc, csrf_fetch_poc, csrf_form_poc

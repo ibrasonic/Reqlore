@@ -32,8 +32,7 @@ Functions exported:
 from __future__ import annotations
 
 import re
-from typing import Iterable, Sequence
-
+from collections.abc import Iterable, Sequence
 
 # ---------------------------------------------------------------------------
 # Vendor / framework signatures.
@@ -176,9 +175,9 @@ def fingerprint_response(body: bytes | None,
                 line = f"{name}: {value}"
             except (TypeError, ValueError):
                 continue
-            for tag, pat in _HEADER_SIGNATURES:
+            for tag, hpat in _HEADER_SIGNATURES:
                 try:
-                    if pat.search(line):
+                    if hpat.search(line):
                         tags.add(tag)
                 except (TypeError, re.error):
                     continue

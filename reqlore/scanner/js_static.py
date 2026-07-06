@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, cast
 
 from .findings import Finding
 
@@ -68,7 +68,8 @@ _SOURCE_MEMBERS: tuple[tuple[str, str], ...] = (
     ("window", "name"),
     ("history", "state"),
     # Whole-object reads — coarser; covers `var x = location;` then `x.hash`.
-    # We don't model that follow-up access; treat the whole `location`/`document.location` as a source.
+    # We don't model that follow-up access; treat the whole `location` /
+    # `document.location` as a source.
     ("location", ""),  # bare `location` reference (rare but real)
 )
 
@@ -168,7 +169,7 @@ class _Scope:
     Writes to an unbound name go into the script-root scope (closest to
     real JS semantics for hoisted ``var`` without ``let``/``const``).
     """
-    parent: "_Scope | None" = None
+    parent: _Scope | None = None
     vars: dict[str, _Taint | None] = field(default_factory=dict)
 
     def get(self, name: str) -> _Taint | None:
@@ -410,7 +411,7 @@ def _expr_taint(node: Any, scope: _Scope, ctx: _Ctx) -> _Taint | None:
                             line=inner.line,
                             sanitised_html=False,  # still HTML-risky
                             sanitised_full=False,
-                        )._with_html_sanitiser_marked()
+                        )._with_html_sanitiser_marked()  # type: ignore[attr-defined]  # method attached below via module-level assign
                 return None
         # 2b. Member-style sanitiser: DOMPurify.sanitize(x) — full strip.
         if callee and _node_type(callee) in ("MemberExpression", "StaticMemberExpression"):
@@ -418,21 +419,20 @@ def _expr_taint(node: Any, scope: _Scope, ctx: _Ctx) -> _Taint | None:
             if pair is not None and pair in _SANITISER_MEMBER:
                 return None  # sanitised
             # JSON.parse / localStorage.getItem propagate.
-            if pair is not None:
-                if pair in _SOURCE_CALLS:
-                    # localStorage.getItem() → tainted regardless of arg.
-                    if pair[0] in ("localStorage", "sessionStorage"):
-                        return _Taint(source=f"{pair[0]}.{pair[1]}", line=_line_of(node))
-                    # JSON.parse(x) → propagate taint of x.
-                    args = getattr(node, "arguments", []) or []
-                    if args:
-                        inner = _expr_taint(args[0], scope, ctx)
-                        if inner is not None:
-                            return _Taint(
-                                source=f"JSON.parse({inner.source})",
-                                line=_line_of(node),
-                            )
-                    return None
+            if pair is not None and pair in _SOURCE_CALLS:
+                # localStorage.getItem() → tainted regardless of arg.
+                if pair[0] in ("localStorage", "sessionStorage"):
+                    return _Taint(source=f"{pair[0]}.{pair[1]}", line=_line_of(node))
+                # JSON.parse(x) → propagate taint of x.
+                args = getattr(node, "arguments", []) or []
+                if args:
+                    inner = _expr_taint(args[0], scope, ctx)
+                    if inner is not None:
+                        return _Taint(
+                            source=f"JSON.parse({inner.source})",
+                            line=_line_of(node),
+                        )
+                return None
         # Default: taint of any argument propagates conservatively when the
         # call has no recognised effect (chained string methods etc.).
         args = getattr(node, "arguments", []) or []
@@ -779,7 +779,7 @@ def _emit(ctx: _Ctx, category: str, cwe: str, taint: _Taint,
     }[category]
 
     ctx.findings.append(Finding(
-        severity=meta["severity"],
+        severity=cast("Literal['info', 'low', 'medium', 'high', 'critical']", meta["severity"]),
         title=meta["title"],
         description=description,
         remediation=remediation,
@@ -787,7 +787,7 @@ def _emit(ctx: _Ctx, category: str, cwe: str, taint: _Taint,
         owasp=meta["owasp"],
         evidence=flow,
         payload="",
-        confidence=confidence,
+        confidence=cast("Literal['tentative', 'firm', 'certain']", confidence),
     ))
 
 

@@ -48,13 +48,15 @@ def test_sequencer_weak_emits_finding(tmp_path: Path):
                                                url="https://app/login")
     assert fid is not None
     row = p.get_finding(fid)
+    assert row is not None
     assert row["rule_id"] == "sequencer:low-entropy"
     assert row["cwe"] == "CWE-330"
 
 
 def test_sequencer_strong_records_skip(tmp_path: Path):
-    from reqlore import sequencer
     import secrets
+
+    from reqlore import sequencer
     p = _new(tmp_path, "seqstrong")
     # Use a wide alphabet (~6 bits/char) so the analyser lands in
     # "good"/"excellent" — token_hex only yields ~4 bits/char.
@@ -83,6 +85,7 @@ def test_smuggling_helper_writes_finding(tmp_path: Path):
     fid = smuggling.record_smuggling_test(p, test, url="https://t/")
     assert fid is not None
     row = p.get_finding(fid)
+    assert row is not None
     assert row["rule_id"] == "smuggling:cl.te"
     assert row["severity"] == "critical"
     assert row["cwe"] == "CWE-444"
@@ -115,6 +118,7 @@ def test_graphql_introspection_helper(tmp_path: Path):
                                                   url="https://api/graphql")
     assert fid is not None
     row = p.get_finding(fid)
+    assert row is not None
     assert row["rule_id"] == "graphql:introspection-enabled"
     assert row["severity"] == "medium"
     assert "3 types" in row["evidence"]
@@ -134,10 +138,10 @@ def test_oast_helper_emits_finding_per_interaction(tmp_path: Path):
     from reqlore import oast
     p = _new(tmp_path, "oast")
     ixs = [
-        oast.Interaction(ts_ms=1, token="abc123", kind="http",
+        oast.Interaction(ts_ms=1, token="abc123", kind="http",  # noqa: S106  # test fixture OAST token, not a real credential
                           remote="10.0.0.5", method="GET",
                           path="/abc123/x", bytes_in=12),
-        oast.Interaction(ts_ms=2, token="abc123", kind="http",
+        oast.Interaction(ts_ms=2, token="abc123", kind="http",  # noqa: S106  # test fixture OAST token, not a real credential
                           remote="10.0.0.6", method="POST",
                           path="/abc123/y", bytes_in=24),
     ]

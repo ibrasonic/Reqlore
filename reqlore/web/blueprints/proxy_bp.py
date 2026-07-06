@@ -6,16 +6,25 @@ import re
 from pathlib import Path
 
 from flask import (
-    Blueprint, abort, flash, g, jsonify, redirect, render_template, request,
-    url_for, send_file,
+    Blueprint,
+    abort,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    url_for,
 )
 
 from ...proxy.rules import (
-    DEFAULT_NOISE_HOST_REGEX, DEFAULT_NOISE_PATH_REGEX, SUPPORTED_METHODS,
+    DEFAULT_NOISE_HOST_REGEX,
+    DEFAULT_NOISE_PATH_REGEX,
+    SUPPORTED_METHODS,
     InterceptConfig,
 )
-from .._decode_helpers import (_current_encoding, _has_supported_encoding,
-                                _maybe_decode_blob)
+from .._decode_helpers import _current_encoding, _has_supported_encoding, _maybe_decode_blob
 
 bp = Blueprint("proxy", __name__)
 
@@ -542,10 +551,7 @@ def show_intercept(iid: int):
     # the radio would be a no-op).
     has_encoded_body = _has_supported_encoding(item.req_blob)
     decode_arg = request.args.get("decode")
-    if decode_arg is None:
-        decode = has_encoded_body
-    else:
-        decode = has_encoded_body and decode_arg == "1"
+    decode = has_encoded_body if decode_arg is None else has_encoded_body and decode_arg == "1"
     display_blob, body_decode_note = _maybe_decode_blob(item.req_blob, decode)
     body_text = _safe_text(display_blob)
     body_encoding = _current_encoding(item.req_blob)

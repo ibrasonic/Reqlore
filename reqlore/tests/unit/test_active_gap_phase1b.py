@@ -15,7 +15,6 @@ from reqlore.scanner.active import (
 )
 from reqlore.storage import Project
 
-
 # --------------------------- shared row helpers ------------------------------
 
 
@@ -89,7 +88,6 @@ def test_smuggling_check_off_by_default():
 def test_smuggling_check_fires_on_timing_threshold(monkeypatch):
     """When opt-in and the raw timing exceeds threshold, fire critical."""
     from reqlore import smuggling as smug
-    from reqlore.scanner import active as active_mod
 
     def fake_detect(url, technique, *, sender, pause_ms_threshold):
         if technique == "cl.te":

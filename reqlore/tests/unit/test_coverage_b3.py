@@ -17,7 +17,6 @@ from reqlore.scanner import Scanner
 from reqlore.storage import Project
 from reqlore.web import create_app
 
-
 # --------------------------- coverage_rows_by_host ---------------------------
 
 

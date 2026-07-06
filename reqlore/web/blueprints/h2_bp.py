@@ -3,11 +3,17 @@ from __future__ import annotations
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
-from .._prg import PRGCache
 from ...h2_tool import (
-    build_goaway, build_ping, build_rst_stream, build_settings,
-    build_window_update, parse_frames, parse_hex, to_hex,
+    build_goaway,
+    build_ping,
+    build_rst_stream,
+    build_settings,
+    build_window_update,
+    parse_frames,
+    parse_hex,
+    to_hex,
 )
+from .._prg import PRGCache
 
 bp = Blueprint("h2", __name__)
 

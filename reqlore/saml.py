@@ -72,7 +72,7 @@ def decode(blob: str) -> tuple[str, str]:
         dec = zlib.decompress(raw, -zlib.MAX_WBITS)
         return dec.decode("utf-8"), "http-redirect"
     except (zlib.error, UnicodeDecodeError) as exc:
-        raise ValueError(f"could not decode as POST or Redirect SAML: {exc}")
+        raise ValueError(f"could not decode as POST or Redirect SAML: {exc}") from exc
 
 
 def _safe_b64(s: str) -> bytes | None:

@@ -21,8 +21,8 @@ project file.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from ..engines import Request, Response, Timings
 from .normaliser import (
@@ -33,7 +33,6 @@ from .normaliser import (
 )
 from .sessions import Session, apply_session_to_request
 from .verdict import Verdict, decide_verdict
-
 
 _MAX_BLOB_LEN = 64 * 1024     # 64 KiB cap on stored req/resp blobs
 _BODY_SNIP_LEN = 4 * 1024     # 4 KiB snippet handed to verdict heuristics

@@ -16,20 +16,21 @@ The runner is shared across the web app via
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
 import traceback
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Literal, cast
 
 from .crypto import ProjectKey, decrypt_payload, derive_or_load_key
 from .normaliser import Normaliser, default_normaliser
 from .replay import replay_history_with_session
 from .sessions import Session
 from .verdict import finding_severity_for_verdict
-
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ class RunOptions:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict | None) -> "RunOptions":
+    def from_dict(cls, payload: dict | None) -> RunOptions:
         d = payload or {}
         return cls(
             similarity_floor=int(d.get("similarity_floor", 80)),
@@ -116,10 +117,13 @@ def _build_session_from_row(row: dict, key: ProjectKey) -> Session:
     except Exception:
         # Mis-keyed or corrupt — surface to verdict as an empty session.
         payload = ""
+    kind_str = str(row["kind"])
+    if kind_str not in ("cookie", "bearer", "header", "multi", "anon"):
+        kind_str = "anon"
     return Session(
         id=int(row["id"]),
         name=str(row["name"]),
-        kind=str(row["kind"]),
+        kind=cast("Literal['cookie', 'bearer', 'header', 'multi', 'anon']", kind_str),
         payload=payload,
         source=str(row.get("source") or ""),
         source_hid=row.get("source_hid"),
@@ -223,10 +227,8 @@ class AuthMatrixRunner:
             t = s.thread
             if t is None:
                 continue
-            try:
+            with contextlib.suppress(Exception):
                 t.join(timeout=_SHUTDOWN_JOIN_S)
-            except Exception:
-                pass
 
     # ---- internals -------------------------------------------------
 
@@ -424,12 +426,10 @@ class AuthMatrixRunner:
                 if options.inter_request_sleep_s > 0:
                     time.sleep(options.inter_request_sleep_s)
 
-            try:
+            with contextlib.suppress(Exception):
                 self.project.auth_matrix_update_session(
                     int(sess.id), bump_last_used=True,
                 ) if compare_sessions else None
-            except Exception:
-                pass
 
         try:
             self.project.auth_matrix_update_run(
@@ -462,8 +462,8 @@ class AuthMatrixRunner:
                 privileged_floor=options.privileged_floor,
             )
         except Exception as exc:
-            from .verdict import Verdict
             from .replay import ReplayOutcome
+            from .verdict import Verdict
             return ReplayOutcome(
                 session_id=int(session.id or 0),
                 history_id=int(history_id),

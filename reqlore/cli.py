@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 import sys
@@ -129,10 +130,8 @@ def _port_in_use(host: str, port: int) -> bool:
     if port <= 0:
         return False  # OS-assigned ports never collide
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
+        with contextlib.suppress(OSError):
             s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        except OSError:
-            pass
         try:
             s.bind((host, port))
         except OSError:
@@ -248,10 +247,8 @@ def cmd_ui(args: argparse.Namespace, *, proxy: ProxyController | None = None) ->
         print("\nShutting down.", file=sys.stderr)
     finally:
         if proxy is not None:
-            try:
+            with contextlib.suppress(Exception):
                 proxy.stop()
-            except Exception:  # noqa: BLE001
-                pass
     return 0
 
 
@@ -289,14 +286,13 @@ def cmd_proxy(args: argparse.Namespace) -> int:
                   proxy_endpoint=f"{settings.proxy_host}:{settings.proxy_port}")
     log.debug("Proxy listening on %s:%d", settings.proxy_host, settings.proxy_port)
     try:
+        assert ctrl._thread is not None  # noqa: SLF001  # controller running -> thread must be set
         ctrl._thread.join()  # noqa: SLF001
     except KeyboardInterrupt:
         print("\nShutting down.", file=sys.stderr)
     finally:
-        try:
+        with contextlib.suppress(Exception):
             ctrl.stop()
-        except Exception:  # noqa: BLE001
-            pass
     return 0
 
 
@@ -356,8 +352,8 @@ def cmd_both(args: argparse.Namespace) -> int:
 
 def cmd_scan(args: argparse.Namespace) -> int:
     log = _logger()
-    from .scanner import Scanner, BUILTIN_RULES
     from .plugins import get_registry
+    from .scanner import BUILTIN_RULES, Scanner
     project = Project(_resolve_project(args.project))
     extra = get_registry().active_rules()
     scanner = Scanner(rules=BUILTIN_RULES, extra_rules=extra)
@@ -696,7 +692,9 @@ def cmd_intruder(args: argparse.Namespace) -> int:
     by_status: dict[int, int] = {}
     for r in results:
         by_status[r["status"]] = by_status.get(r["status"], 0) + 1
-    final = project.get_intruder(aid)["status"]
+    final_row = project.get_intruder(aid)
+    assert final_row is not None
+    final = final_row["status"]
     print(f"Done. status={final} sent={len(results)} matched={matched}")
     if runner.stop_reason:
         print(f"Stopped early: {runner.stop_reason}")
@@ -877,6 +875,7 @@ def cmd_finding_triage(args: argparse.Namespace) -> int:
 def cmd_finding_import(args: argparse.Namespace) -> int:
     """Bulk-import findings from a JSON file using the bus."""
     import json as _json
+
     from .findings_bus import record_finding
     from .scanner.rules import SEVERITIES
 
@@ -1144,7 +1143,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Verbose logging (timestamps, logger names, INFO from dependencies).")
     pb.set_defaults(func=cmd_both)
 
-    psc = sub.add_parser("scan", help="Run the passive scanner on recorded history.", allow_abbrev=False)
+    psc = sub.add_parser("scan", allow_abbrev=False,
+                          help="Run the passive scanner on recorded history.")
     psc.add_argument("--project", required=True)
     psc.add_argument("--limit", type=int, default=5000,
                      help="How many most-recent requests to scan (default 5000).")
@@ -1170,7 +1170,8 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Abort the run on the first failing step.")
     prun.set_defaults(func=cmd_run)
 
-    pih = sub.add_parser("import-har", help="Import a HAR file into the project history.", allow_abbrev=False)
+    pih = sub.add_parser("import-har", allow_abbrev=False,
+                          help="Import a HAR file into the project history.")
     pih.add_argument("--project", required=True)
     pih.add_argument("har", help="Path to a .har file.")
     pih.set_defaults(func=cmd_import_har)

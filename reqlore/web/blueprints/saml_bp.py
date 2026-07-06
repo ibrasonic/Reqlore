@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from flask import Blueprint, redirect, render_template, request, url_for
 
-from .._prg import PRGCache
 from ...saml import inspect
+from .._prg import PRGCache
 
 bp = Blueprint("saml", __name__)
 

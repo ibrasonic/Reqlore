@@ -33,6 +33,8 @@ except ImportError:  # pragma: no cover - exercised only when extra is installed
     BackgroundScheduler = None  # type: ignore
     _APS_AVAILABLE = False
 
+import contextlib
+
 from .scanner import BUILTIN_RULES, Scanner
 
 _STATE_KEY = "sched:jobs"
@@ -80,7 +82,7 @@ def _deserialise(raw: str | None) -> list[ScheduledJob]:
     # Tolerate rows persisted before Phase 14 added `last_error` /
     # `last_finished_ts`: drop unknown keys (would crash the dataclass
     # constructor) and let the new keys fall back to their defaults.
-    allowed = {f for f in ScheduledJob.__dataclass_fields__}
+    allowed = set(ScheduledJob.__dataclass_fields__)
     for j in payload:
         if not isinstance(j, dict):
             continue
@@ -166,10 +168,8 @@ class Scheduler:
             if removed:
                 self._save()
                 if self._aps is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         self._aps.remove_job(name)
-                    except Exception:
-                        pass
         return removed
 
     def set_enabled(self, name: str, enabled: bool) -> bool:
@@ -239,7 +239,7 @@ class Scheduler:
             self.project.set_state(_LOCK_KEY, json.dumps(stamp))
             self._lock_held = True
             self._lock_last_refresh = time.monotonic()
-        except Exception:
+        except Exception:  # noqa: S110  # storage write failed (DB locked / closed); caller surfaces the error from start(), the lock simply isn't held in this run
             # Storage write failed (DB locked / closed). The caller
             # surfaces the error from start(); the lock simply isn't
             # held in this run.
@@ -281,13 +281,10 @@ class Scheduler:
         # Only clear the row if we still own it: a concurrent process
         # may have stolen the slot after our TTL expired.
         existing = self._read_lock()
-        if existing is not None:
-            if existing.get("pid") == os.getpid() \
+        if existing is not None and existing.get("pid") == os.getpid() \
                     and existing.get("host") == socket.gethostname():
-                try:
-                    self.project.set_state(_LOCK_KEY, "")
-                except Exception:
-                    pass
+            with contextlib.suppress(Exception):
+                self.project.set_state(_LOCK_KEY, "")
         self._lock_held = False
 
     def _maybe_refresh_lock(self) -> None:
@@ -306,6 +303,7 @@ class Scheduler:
                     self._blocking_pid, self._blocking_host)
             if _APS_AVAILABLE:
                 self._aps = BackgroundScheduler(daemon=True)
+                assert self._aps is not None
                 self._aps.start()
                 for job in self._jobs:
                     if job.enabled:
@@ -343,13 +341,11 @@ class Scheduler:
     def _arm(self, job: ScheduledJob) -> None:
         if self._aps is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._aps.add_job(self._run_job, "interval",
                               seconds=job.interval_s,
                               id=job.name, replace_existing=True,
                               args=(job,))
-        except Exception:
-            pass
 
     def _thread_loop(self) -> None:
         next_run: dict[str, float] = {}
@@ -363,13 +359,11 @@ class Scheduler:
                     next_run[j.name] = now + j.interval_s
                     continue
                 if now >= t:
-                    try:
+                    # `_run_job` already persisted `last_error`;
+                    # swallow here so the thread loop keeps running
+                    # other jobs.
+                    with contextlib.suppress(Exception):
                         self._run_job(j)
-                    except Exception:
-                        # `_run_job` already persisted `last_error`;
-                        # swallow here so the thread loop keeps running
-                        # other jobs.
-                        pass
                     next_run[j.name] = now + j.interval_s
             self._maybe_refresh_lock()
             self._stop.wait(timeout=1.0)

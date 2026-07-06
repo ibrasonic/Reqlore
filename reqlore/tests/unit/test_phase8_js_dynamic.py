@@ -11,21 +11,21 @@ from __future__ import annotations
 import http.server
 import socketserver
 import threading
+from typing import Literal, cast
 
 import pytest
 
 from reqlore.scanner.findings import Finding
 from reqlore.scanner.js_dynamic import (
+    _INJECTABLE_SOURCES,
     DOMHit,
     DynamicOptions,
-    _INJECTABLE_SOURCES,
     _js_literal,
     _runtime_sink_matches,
     analyze_dynamic,
     cross_confirm_findings,
     persist_hits,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure-Python tests — always run.
@@ -111,7 +111,7 @@ def _mk_finding(*, source: str, sink: str, sline: int = 1,
         severity="high",
         title="DOM-based cross-site scripting",
         evidence=f"{source} (line {sline}) -> {sink} (line {klsink})",
-        confidence=confidence,
+        confidence=cast("Literal['tentative', 'firm', 'certain']", confidence),
     )
 
 

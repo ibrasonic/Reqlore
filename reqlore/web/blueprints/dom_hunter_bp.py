@@ -10,8 +10,15 @@ from __future__ import annotations
 import json
 
 from flask import (
-    Blueprint, abort, current_app, flash, g, jsonify, redirect,
-    render_template, request, url_for,
+    Blueprint,
+    abort,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
 from ... import dom_hunter as S
@@ -143,7 +150,7 @@ def settings():
             enabled = request.form.get("enabled") == "1"
             S.set_enabled(g.project, enabled)
             scope_raw = request.form.get("scope", "")
-            hosts = [h for h in (scope_raw or "").replace(",", "\n").splitlines()]
+            hosts = list((scope_raw or "").replace(",", "\n").splitlines())
             S.set_scope(g.project, hosts)
             S.set_inherit_sitemap(
                 g.project, request.form.get("inherit_sitemap") == "1"

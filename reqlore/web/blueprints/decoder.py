@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import gzip
 import hashlib
 import html
@@ -306,10 +307,8 @@ def _compressed_candidates(s: str) -> list[bytes]:
     if hexish.lower().startswith("0x"):
         hexish = hexish[2:]
     if hexish and len(hexish) % 2 == 0 and re.fullmatch(r"[0-9A-Fa-f]+", hexish):
-        try:
+        with contextlib.suppress(ValueError):
             _add(bytes.fromhex(hexish))
-        except ValueError:
-            pass
     b64ish = re.sub(r"\s+", "", s)
     if b64ish and re.fullmatch(r"[A-Za-z0-9+/_\-]+=*", b64ish):
         try:

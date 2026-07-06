@@ -1,8 +1,7 @@
 """Phase 5 - Optional engines: H/3 and curl-cffi availability + safe fallback."""
 from __future__ import annotations
 
-from reqlore.engines import Request
-from reqlore.engines import curl_cffi_engine, h3_engine
+from reqlore.engines import Request, curl_cffi_engine, h3_engine
 
 
 def test_h3_availability_flag_is_boolean():

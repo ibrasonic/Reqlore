@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -105,11 +106,11 @@ def test_dedupe_key_is_stable_and_distinguishing():
 
 
 def test_add_and_list_findings_with_dedupe(project: Project):
-    args = dict(
-        page_url="https://x/", frame_url="https://x/", sink="eval",
-        source="location.hash", severity="critical", canary_seen=True,
-        value="alert(1)", stack="at f", dedupe_key="kEY-1",
-    )
+    args: dict[str, Any] = {
+        "page_url": "https://x/", "frame_url": "https://x/", "sink": "eval",
+        "source": "location.hash", "severity": "critical", "canary_seen": True,
+        "value": "alert(1)", "stack": "at f", "dedupe_key": "kEY-1",
+    }
     fid1 = project.add_dom_hunter_finding(**args)
     fid2 = project.add_dom_hunter_finding(**args)
     assert fid1 == fid2  # dedupe by key
@@ -448,6 +449,7 @@ def test_packager_finds_signed_xpi():
 
 def test_packager_builds_xpi(tmp_path: Path):
     import zipfile
+
     from reqlore.dom_hunter.packager import build_xpi
     out = build_xpi(out_path=tmp_path / "out.xpi")
     assert out.exists()
@@ -641,7 +643,7 @@ def test_browser_policy_embeds_dom_hunter(tmp_path: Path):
         homepage_url="http://127.0.0.1:8080/",
         dom_hunter_xpi=fake_xpi,
         dom_hunter_bridge_url="http://127.0.0.1:8080",
-        dom_hunter_token="testtoken",
+        dom_hunter_token="testtoken",  # noqa: S106  # test fixture token, not a real credential
     )["policies"]
 
     from reqlore.browser import DOM_HUNTER_EXT_ID
@@ -696,7 +698,7 @@ def test_install_policies_writes_valid_json(tmp_path: Path):
         homepage_url="http://127.0.0.1:8787/",
         dom_hunter_xpi=fake_xpi,
         dom_hunter_bridge_url="http://127.0.0.1:8787",
-        dom_hunter_token="abc",
+        dom_hunter_token="abc",  # noqa: S106  # test fixture token, not a real credential
     )
     assert out.exists()
     data = json.loads(out.read_text(encoding="utf-8"))
@@ -704,7 +706,7 @@ def test_install_policies_writes_valid_json(tmp_path: Path):
     ext_id = DOM_HUNTER_EXT_ID
     assert data["policies"]["ExtensionSettings"][ext_id]["installation_mode"] \
         == "force_installed"
-    assert data["policies"]["3rdparty"]["Extensions"][ext_id]["token"] == "abc"
+    assert data["policies"]["3rdparty"]["Extensions"][ext_id]["token"] == "abc"  # noqa: S105  # test fixture token, not a real credential
 
 
 def test_cmd_browser_with_project_passes_through_and_closes(
@@ -732,8 +734,8 @@ def test_cmd_browser_with_project_passes_through_and_closes(
     class _FakeResult:
         pid = 1234
         exe = Path("/usr/bin/firefox")
-        profile = Path("/tmp/profile")
-        policies = Path("/tmp/policies.json")
+        profile = tmp_path / "profile"
+        policies = tmp_path / "policies.json"
 
     def fake_run_browser(**kwargs):
         captured.update(kwargs)
@@ -760,7 +762,7 @@ def test_cmd_browser_with_project_passes_through_and_closes(
     # the Release channel and still loads the signed XPI cleanly.
     assert captured.get("channel") == "release"
     # Project must be closed after launch -- otherwise SQLite locks linger.
-    proj = captured["project"]
+    captured["project"]
     # Re-opening must work (i.e., the file isn't write-locked by us).
     Project(proj_path).close()
 
@@ -782,8 +784,8 @@ def test_cmd_browser_without_project_uses_release_channel(
     class _FakeResult:
         pid = 1
         exe = Path("/usr/bin/firefox")
-        profile = Path("/tmp/p")
-        policies = Path("/tmp/pol")
+        profile = tmp_path / "p"
+        policies = tmp_path / "pol"
 
     monkeypatch.setattr(fxmod, "run_browser",
                         lambda **kw: captured.update(kw) or _FakeResult())
@@ -1205,6 +1207,7 @@ def test_proxy_request_hook_injects_referer_canary(tmp_path: Path) -> None:
     request hook against it, and assert the Referer header now carries
     the canary. Verifies the wiring between dom_hunter and proxy.mitm."""
     import asyncio
+
     from reqlore.proxy.mitm import _HistoryAddon
 
     proj_path = tmp_path / "y.rlr"
@@ -1251,6 +1254,7 @@ def test_proxy_request_hook_injects_referer_canary(tmp_path: Path) -> None:
 def test_proxy_request_hook_leaves_referer_alone_when_disabled(
         tmp_path: Path) -> None:
     import asyncio
+
     from reqlore.proxy.mitm import _HistoryAddon
 
     proj_path = tmp_path / "z.rlr"
@@ -1529,7 +1533,8 @@ def test_agent_js_report_recaptures_page_url() -> None:
 
 
 def test_agent_js_truncates_stack_for_relay() -> None:
-    """The relay postMessage must stay well under the structured-clone\n    limit on huge minified pages. Stack must be capped before send."""
+    """The relay postMessage must stay well under the structured-clone
+    limit on huge minified pages. Stack must be capped before send."""
     agent = _read_agent_js()
     assert "trimmed.slice(0, 8000)" in agent or "slice(0, 8000)" in agent, (
         "report() must cap the stack length before relaying."
@@ -1537,7 +1542,8 @@ def test_agent_js_truncates_stack_for_relay() -> None:
 
 
 def test_agent_js_hooks_new_high_impact_sinks() -> None:
-    """Professional-grade DOM-XSS coverage requires more than just\n    innerHTML. These sinks are commonly exploited but were missing."""
+    """Professional-grade DOM-XSS coverage requires more than just
+    innerHTML. These sinks are commonly exploited but were missing."""
     agent = _read_agent_js()
     for sink_id, hook_marker in [
         ("HTMLIFrameElement.srcdoc", "\"srcdoc\""),
@@ -1555,7 +1561,8 @@ def test_agent_js_hooks_new_high_impact_sinks() -> None:
 
 
 def test_dom_hunter_sink_index_contains_new_sinks() -> None:
-    """Every literal sink id agent.js can emit MUST exist in\n    SINK_INDEX or the bridge will refuse the finding."""
+    """Every literal sink id agent.js can emit MUST exist in
+    SINK_INDEX or the bridge will refuse the finding."""
     from reqlore.dom_hunter import SINK_INDEX
     required = {
         "Element.innerHTML", "Element.outerHTML",

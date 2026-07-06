@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
-from typing import Iterable
+from collections.abc import Iterable
 
 from ._common import (
     SEV_ORDER,

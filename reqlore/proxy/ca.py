@@ -8,8 +8,10 @@ expose a simple façade that:
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
+from datetime import UTC
 from pathlib import Path
 
 from cryptography import x509
@@ -19,11 +21,9 @@ from .._secret_file import secret_write_bytes
 
 
 def _harden_perms(path: Path) -> None:
-    try:
+    # Windows: ACLs are managed elsewhere; skipping silently is fine.
+    with contextlib.suppress(OSError):
         os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    except OSError:
-        # Windows: ACLs are managed elsewhere; skipping silently is fine.
-        pass
 
 
 def _ensure_mitmproxy_ca_link(ca_dir: Path,
@@ -62,8 +62,9 @@ def ensure_ca(ca_dir: Path) -> tuple[Path, Path]:
     # serving for years. Existing on-disk CAs are short-circuited
     # at the top of this function, so users who already imported a
     # 5-year RSA root keep working without surprise re-imports.
+    from datetime import datetime, timedelta
+
     from cryptography.hazmat.primitives.asymmetric import ec
-    from datetime import datetime, timedelta, timezone
 
     key = ec.generate_private_key(ec.SECP256R1())
     # M-2: allow operators to override the CA Common Name (e.g. when
@@ -74,7 +75,7 @@ def ensure_ca(ca_dir: Path) -> tuple[Path, Path]:
         x509.NameAttribute(x509.NameOID.COMMON_NAME, common_name),
         x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, "Reqlore"),
     ])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(name).issuer_name(name)

@@ -18,14 +18,13 @@ import pytest
 
 from reqlore.config import Settings
 from reqlore.scheduler import (
-    Scheduler,
-    SchedulerLockError,
     _LOCK_KEY,
     _LOCK_TTL_S,
+    Scheduler,
+    SchedulerLockError,
 )
 from reqlore.storage import Project
 from reqlore.web import create_app
-
 
 # ---------------------------------------------------------------------------
 # acquire / release

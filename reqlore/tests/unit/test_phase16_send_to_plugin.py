@@ -23,6 +23,7 @@ Covers:
 from __future__ import annotations
 
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -33,7 +34,6 @@ from reqlore.plugin_runner import PluginRunner
 from reqlore.plugins import reset_registry
 from reqlore.storage import Project
 from reqlore.web import create_app
-
 
 # ============================================================ fixtures
 
@@ -46,7 +46,7 @@ def _isolate_registry():
 
 
 @pytest.fixture
-def project(tmp_path: Path) -> Project:
+def project(tmp_path: Path) -> Iterator[Project]:
     p = Project(tmp_path / "p16_send.rlr")
     yield p
     p.close()

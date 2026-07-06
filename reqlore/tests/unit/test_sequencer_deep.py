@@ -5,15 +5,7 @@ import math
 import random
 import secrets
 
-import pytest
-
 from reqlore.sequencer import (
-    BitTest,
-    CorrelationWarning,
-    DeepAnalysis,
-    PerBitStats,
-    SequencerResult,
-    TransitionStat,
     _chi2_pvalue,
     _encode_to_bits,
     _gamma_p,
@@ -22,7 +14,6 @@ from reqlore.sequencer import (
     _runs_test,
     analyse_deep,
 )
-
 
 # ---------------------------------------------------------------- math kernels
 
@@ -68,7 +59,7 @@ def test_runs_alternating_fails():
 
 
 def test_poker_uniform_passes():
-    rnd = random.Random(0xC0FFEE)
+    rnd = random.Random(0xC0FFEE)  # noqa: S311  # non-cryptographic — seeded PRNG for reproducible statistical-test fixtures
     bits = [rnd.randrange(2) for _ in range(4000)]
     t = _poker_test(bits)
     assert t.p_value is not None and t.p_value > 0.05
@@ -127,7 +118,7 @@ def test_deep_counter_tokens_are_weak():
 def test_deep_detects_mirrored_bit_correlation():
     """If a token's first hex digit always equals its last hex digit,
     the correlation test must flag the 4-bit slices."""
-    rnd = random.Random(0)
+    rnd = random.Random(0)  # noqa: S311  # non-cryptographic — seeded PRNG for reproducible correlation-test fixture
     tokens = []
     for _ in range(300):
         body = "".join(rnd.choice("0123456789abcdef") for _ in range(16))
@@ -169,7 +160,7 @@ def test_deep_correlation_skipped_for_oversize_tokens():
     # 60 positions * a 200-symbol alphabet -> 60 * 8 = 480 bits per token,
     # well above the 256-bit correlation cap. 250 samples are enough to
     # see roughly the whole alphabet at each position.
-    rnd = random.Random(7)
+    rnd = random.Random(7)  # noqa: S311  # non-cryptographic — seeded PRNG for reproducible correlation-cap test fixture
     pool = "".join(chr(33 + i) for i in range(200))   # printable ASCII pool
     tokens = ["".join(rnd.choice(pool) for _ in range(60)) for _ in range(250)]
     r = analyse_deep(tokens, significance=0.01)

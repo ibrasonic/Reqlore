@@ -1,16 +1,15 @@
 """Scanner engine: iterate history, run rules (+ plugin rules), persist findings."""
 from __future__ import annotations
 
+import contextlib
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Iterable
 
 from ..findings_bus import record_finding
 from .findings import Finding
 from .passive import BUILTIN_RULES, Rule, _all_headers, _split_http, run_passive
 from .rules import apply_meta_defaults, id_for, meta_for
-
 
 # B.5 — persistent key used to remember the highest http_history.id the passive
 # scanner has already processed. Stored in `project_state` so re-runs can
@@ -189,11 +188,9 @@ class Scanner:
         # also normalises the value if it was corrupted by a downgrade.
         if result.rows_scanned or resume_from:
             result.last_scanned_id = highest_id_seen or None
-            try:
+            # Older fake projects in tests may not implement set_state.
+            with contextlib.suppress(AttributeError):
                 project.set_state(_RESUME_STATE_KEY, str(highest_id_seen or 0))
-            except AttributeError:
-                # Older fake projects in tests may not implement set_state.
-                pass
         # Phase 1b item #16 — sequencer auto-feed. Cross-row aggregation of
         # Set-Cookie token samples; emits a finding when the entropy
         # rating is "weak" with at least the minimum sample count.
@@ -204,7 +201,7 @@ class Scanner:
                 result.by_severity["medium"] = (
                     result.by_severity.get("medium", 0) + fired
                 )
-        except Exception:
+        except Exception:  # noqa: S110  # sequencer aggregation is best-effort; a bad sample must never abort the scan (rule_runs row records "no_match")
             # Sequencer is best-effort: a bad sample must never abort the
             # scan. Failures are intentionally silent here; the
             # rule_runs row records "no_match" which is enough.
@@ -214,7 +211,8 @@ class Scanner:
         # mask a successful scan, so we trap broadly and move on.
         try:
             from .consolidation import (
-                consolidate_frequent_findings, load_settings,
+                consolidate_frequent_findings,
+                load_settings,
             )
             cs = load_settings(project)
             if cs.enabled:
@@ -225,7 +223,7 @@ class Scanner:
                     cres.cross_host_collapses
                 )
                 result.consolidation_backend_rollups = cres.backend_rollups
-        except Exception:
+        except Exception:  # noqa: S110  # noise-reduction consolidation is best-effort post-processing; a failure here must not mask an otherwise successful scan
             pass
         result.elapsed_ms = int((time.monotonic() - t0) * 1000)
         return result
@@ -293,7 +291,7 @@ def _scan_session_entropy(project, *, limit: int = 5000) -> tuple[int, int]:
     for row in rows:
         try:
             _, headers, _ = _split_http(row.resp_blob or b"")
-        except Exception:
+        except Exception:  # noqa: S112  # skip malformed history row (unparseable HTTP blob), continue aggregating remaining rows
             continue
         for raw in _all_headers(headers, "set-cookie"):
             parsed = _parse_set_cookie(raw)

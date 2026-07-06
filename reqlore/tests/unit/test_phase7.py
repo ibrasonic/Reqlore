@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -10,15 +9,18 @@ import pytest
 from reqlore.config import Settings
 from reqlore.engines import Request, Response
 from reqlore.har import (
-    HARImportResult, build_request_blob, build_response_blob,
-    import_har_data, import_har_file, parse_har,
+    HARImportResult,
+    build_request_blob,
+    build_response_blob,
+    import_har_data,
+    import_har_file,
+    parse_har,
 )
 from reqlore.param_miner import DEFAULT_WORDS, MineOptions, mine
-from reqlore.scheduler import Scheduler, ScheduledJob, _deserialise, _serialise
+from reqlore.scheduler import ScheduledJob, Scheduler, _deserialise, _serialise
 from reqlore.storage import Project
-from reqlore.update_check import UpdateInfo, _parse_version
+from reqlore.update_check import _parse_version
 from reqlore.web import create_app
-
 
 # ---- HAR importer ----
 
@@ -143,7 +145,6 @@ def test_har_import_file_wrapper(tmp_path: Path):
 # ---- Param miner ----
 
 def test_param_miner_detects_reflected_sentinel():
-    seen = {}
 
     def fake_send(req: Request) -> Response:
         # Baseline request has no extra param, probes carry sentinel; we reflect
@@ -216,7 +217,7 @@ def test_intruder_send_factory_picks_curl_cffi_profile(monkeypatch):
 
     captured = {}
 
-    def fake_cc_send(req, *, profile, timeout, follow_redirects):
+    def fake_cc_send(req, *, profile, timeout, verify):
         captured["profile"] = profile
         return Response(status=200, headers=[], body=b"cc-ok")
 

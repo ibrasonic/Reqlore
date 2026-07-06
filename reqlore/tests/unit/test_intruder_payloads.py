@@ -6,10 +6,13 @@ from pathlib import Path
 import pytest
 
 from reqlore.intruder import (
-    ARG_PROCESSORS, PROCESSORS, WORDLISTS, apply_processors,
-    load_wordlist_file, processor_names, wordlist_names,
+    ARG_PROCESSORS,
+    WORDLISTS,
+    apply_processors,
+    load_wordlist_file,
+    processor_names,
+    wordlist_names,
 )
-
 
 # ---------- new no-arg processors ----------
 

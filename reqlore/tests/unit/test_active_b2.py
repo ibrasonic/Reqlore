@@ -6,19 +6,17 @@ from dataclasses import dataclass
 from reqlore.engines import Request, Response
 from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner.active import (
-    ActiveCORSCheck,
     BUILTIN_ACTIVE_CHECKS,
+    ActiveCORSCheck,
     NoSQLInjectionCheck,
     PathTraversalCheck,
     ReflectedHeaderXSSCheck,
     XXEClassicCheck,
     _cookie_pairs,
     _mutated_cookie,
-    _mutated_header,
     _replace_cookie_value,
     _replace_header_value,
 )
-
 
 # ----------------------------- shared helpers --------------------------------
 

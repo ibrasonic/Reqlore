@@ -8,9 +8,8 @@ from __future__ import annotations
 import bisect
 import difflib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
-
 
 # ---------- WCAG contrast (relative luminance per WCAG 2.1) ----------
 
@@ -324,9 +323,11 @@ def pair_diff_lines(
             dels: list[tuple[str, int | None, int | None, str]] = []
             adds: list[tuple[str, int | None, int | None, str]] = []
             while i < n and lines[i][0] == "del":
-                dels.append(lines[i]); i += 1
+                dels.append(lines[i])
+                i += 1
             while i < n and lines[i][0] == "add":
-                adds.append(lines[i]); i += 1
+                adds.append(lines[i])
+                i += 1
             for k in range(max(len(dels), len(adds))):
                 d = dels[k] if k < len(dels) else None
                 a = adds[k] if k < len(adds) else None
@@ -349,7 +350,7 @@ def byte_diff_summary(a: bytes, b: bytes) -> str:
     if a == b:
         return "Identical (both empty)." if not a else f"Identical ({len(a)} bytes)."
     if len(a) == len(b):
-        n = sum(1 for x, y in zip(a, b) if x != y)
+        n = sum(1 for x, y in zip(a, b, strict=False) if x != y)
         return f"Same length ({len(a)} bytes); {n} byte{'s' if n != 1 else ''} differ."
     return (f"A is {len(a)} bytes, B is {len(b)} bytes "
             f"(delta {len(b) - len(a):+d}).")

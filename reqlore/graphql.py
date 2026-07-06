@@ -5,8 +5,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from .engines import Request
-from .engines import httpx_engine
+from .engines import Request, httpx_engine
 
 INTROSPECTION_QUERY = """\
 query IntrospectionQuery {
@@ -49,7 +48,7 @@ class SchemaType:
     fields: list[SchemaField] = field(default_factory=list)
 
 
-def _type_to_str(t: dict) -> str:
+def _type_to_str(t: dict | None) -> str:
     """Render a (possibly nested) GraphQL type reference as 'X!' / '[X!]!'."""
     if not t:
         return "?"
@@ -119,7 +118,7 @@ def run_query(url: str, query: str, *,
                variables: dict[str, Any] | None = None,
                headers: list[tuple[str, str]] | None = None,
                timeout: float = 15.0) -> dict:
-    payload = {"query": query}
+    payload: dict[str, Any] = {"query": query}
     if variables:
         payload["variables"] = variables
     body = json.dumps(payload).encode()

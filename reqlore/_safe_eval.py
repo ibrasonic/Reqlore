@@ -21,7 +21,8 @@ runner can report a clear failure to the user.
 from __future__ import annotations
 
 import ast
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 
 class UnsafeExpressionError(ValueError):

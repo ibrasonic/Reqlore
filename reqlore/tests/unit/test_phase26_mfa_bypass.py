@@ -21,7 +21,6 @@ from reqlore.scanner.active import (
     _raw_sender_from,
 )
 
-
 # ---- shared fixtures -------------------------------------------------------
 
 

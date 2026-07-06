@@ -169,8 +169,8 @@ def analyse(tokens: list[str]) -> SequencerResult:
     length_variance = max(lengths) - min(lengths)
 
     # Overall char counter for global stats.
-    all_chars = Counter()
-    classes = Counter()
+    all_chars: Counter[str] = Counter()
+    classes: Counter[str] = Counter()
     for t in tokens:
         for ch in t:
             all_chars[ch] += 1
@@ -183,7 +183,7 @@ def analyse(tokens: list[str]) -> SequencerResult:
     positions: list[PositionStats] = []
     weak: list[int] = []
     for i in range(common_length):
-        col = Counter()
+        col: Counter[str] = Counter()
         for t in tokens:
             if i < len(t):
                 col[t[i]] += 1
@@ -644,7 +644,7 @@ def _correlation_warnings(bit_matrix: list[list[int]], bits_per_token: int,
     for a, b in combinations(range(bits_per_token), 2):
         ca, cb = columns[a], columns[b]
         c00 = c01 = c10 = c11 = 0
-        for x, y in zip(ca, cb):
+        for x, y in zip(ca, cb, strict=False):
             if x:
                 if y:
                     c11 += 1

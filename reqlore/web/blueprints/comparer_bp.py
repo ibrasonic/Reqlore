@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 from flask import (
-    Blueprint, Response, abort, g, redirect, render_template, request, url_for,
+    Blueprint,
+    Response,
+    abort,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
+from ...a11y import byte_diff_summary, diff_lines, diff_summary, pair_diff_lines, unified_diff
 from .._prg import PRGCache
-from ...a11y import (byte_diff_summary, diff_lines, diff_summary,
-                       pair_diff_lines, unified_diff)
 
 bp = Blueprint("comparer", __name__)
 
@@ -40,7 +46,8 @@ def _load_blob(hid_str: str, view: str) -> str:
 
 def _render(form: dict, *, token: str | None = None) -> str:
     """Render the diff page for a given form dict (a, b, from_a, from_b, view)."""
-    a = form["a"]; b = form["b"]
+    a = form["a"]
+    b = form["b"]
     has_input = bool(a or b)
     summary = diff_summary(a, b).sentence("A", "B") if has_input else ""
     byte_summary = byte_diff_summary(

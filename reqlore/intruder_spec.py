@@ -15,10 +15,15 @@ from pathlib import Path
 from typing import Any
 
 from .intruder import (
-    COMMON_PASSWORDS, DEFAULT_MARKER, WORDLISTS, find_positions,
-    load_wordlist_file, payloads_brute, payloads_from_text, payloads_numbers,
+    COMMON_PASSWORDS,
+    DEFAULT_MARKER,
+    WORDLISTS,
+    find_positions,
+    load_wordlist_file,
+    payloads_brute,
+    payloads_from_text,
+    payloads_numbers,
 )
-
 
 _VALID_ATTACK_TYPES = ("sniper", "battering", "pitchfork", "clusterbomb")
 _VALID_SOURCES = ("text", "numbers", "brute", "common_pw", "wordlist", "wordlist_file")

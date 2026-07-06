@@ -23,17 +23,23 @@ from __future__ import annotations
 import ipaddress
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError, InvalidHashError
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from flask import (
-    Flask, abort, current_app, flash, redirect, render_template, request,
-    session, url_for,
+    Flask,
+    abort,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
 )
 
 from ..config import Settings
-
 
 # Static argon2id parameters chosen to match OWASP 2024 baseline guidance
 # for interactive logins (~50ms on modern hardware).

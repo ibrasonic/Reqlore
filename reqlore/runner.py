@@ -26,8 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .engines import Request
-from .engines import httpx_engine
+from .engines import Request, httpx_engine
 from .storage import Project
 
 try:
@@ -169,10 +168,7 @@ def _dispatch(i: int, kind: str, step: dict[str, Any], vars_: dict[str, Any],
                         for part in str(spec.get("path", "")).split("."):
                             if part == "":
                                 continue
-                            if isinstance(obj, list):
-                                obj = obj[int(part)]
-                            else:
-                                obj = obj[part]
+                            obj = obj[int(part)] if isinstance(obj, list) else obj[part]
                         vars_[vname] = str(obj)
                     except Exception:
                         vars_[vname] = ""
@@ -197,17 +193,16 @@ def _dispatch(i: int, kind: str, step: dict[str, Any], vars_: dict[str, Any],
         return sr, last_response, vars_
 
     if kind == "active":
-        from .scanner.active import (ActiveOptions, ActiveScanner,
-                                       BUILTIN_ACTIVE_CHECKS)
+        from .scanner.active import BUILTIN_ACTIVE_CHECKS, ActiveOptions, ActiveScanner
         opts = ActiveOptions(
             max_requests_per_check=int(step.get("max_per_check", 4)),
             rate_delay_ms=int(step.get("delay_ms", 0)),
             timeout_s=float(step.get("timeout_s", 10.0)),
             follow_redirects=bool(step.get("follow", False)),
-            enabled_checks=tuple(step.get("checks") or ()) or None,
+            enabled_checks=list(step.get("checks") or ()) or None,
         )
-        scanner = ActiveScanner(checks=list(BUILTIN_ACTIVE_CHECKS))
-        ares = scanner.run_on_project(project,
+        active_scanner = ActiveScanner(checks=list(BUILTIN_ACTIVE_CHECKS))
+        ares = active_scanner.run_on_project(project,
                                        options=opts,
                                        host=step.get("host", "") or None,
                                        limit=int(step.get("limit", 50)))
@@ -218,8 +213,7 @@ def _dispatch(i: int, kind: str, step: dict[str, Any], vars_: dict[str, Any],
         return sr, last_response, vars_
 
     if kind == "report":
-        from .reporter import (DOCX_AVAILABLE, render_docx, render_html,
-                                 render_markdown)
+        from .reporter import DOCX_AVAILABLE, render_docx, render_html, render_markdown
         out = Path(str(step["out"])).expanduser().resolve()
         fmt = (step.get("format") or out.suffix.lstrip(".") or "md").lower()
         findings = project.list_findings(limit=10_000)

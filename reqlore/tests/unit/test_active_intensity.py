@@ -25,14 +25,13 @@ from typing import Any
 import pytest
 
 from reqlore.config import Settings
-from reqlore.engines import Request, Response
+from reqlore.engines import Response
 from reqlore.plugins import reset_registry
 from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner.active import BUILTIN_ACTIVE_CHECKS, ActiveScanResult
 from reqlore.scanner.rules import INTENSITIES, RuleMeta, intensity_for
 from reqlore.storage import Project
 from reqlore.web import create_app
-
 
 # ---------------------------------------------------------------------------
 # RuleMeta.intensity
@@ -143,6 +142,7 @@ class _StubCheck:
             self.calls = []
 
     def run(self, ctx: Any, send: Any, *, opts: Any = None):  # noqa: ARG002
+        assert self.calls is not None
         self.calls.append(1)
         return []
 

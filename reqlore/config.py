@@ -5,6 +5,7 @@ Resolution order (highest wins):
 """
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -91,8 +92,6 @@ def settings_from_env(base: Settings | None = None) -> Settings:
     if v := os.environ.get("REQLORE_PASSWORD_HASH"):
         s.ui_password_hash = v
     if v := os.environ.get("REQLORE_SESSION_MAX_AGE"):
-        try:
+        with contextlib.suppress(ValueError):
             s.session_max_age_s = max(60, int(v))
-        except ValueError:
-            pass
     return s

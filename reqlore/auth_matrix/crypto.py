@@ -41,7 +41,7 @@ try:  # pragma: no cover - import guard
     from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
     _HAS_CRYPTO = True
 except Exception:  # pragma: no cover
-    ChaCha20Poly1305 = None  # type: ignore[assignment]
+    ChaCha20Poly1305: type[Any] | None = None  # type: ignore[no-redef,assignment]  # optional dep fallback
     _HAS_CRYPTO = False
 
 

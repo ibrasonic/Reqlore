@@ -59,13 +59,15 @@ def test_build_attack_basic(tmp_path: Path):
 
 
 def test_build_attack_requires_url(tmp_path: Path):
-    spec = _minimal(); spec.pop("url")
+    spec = _minimal()
+    spec.pop("url")
     with pytest.raises(SpecError, match="url"):
         build_attack(spec, base_dir=tmp_path)
 
 
 def test_build_attack_requires_template(tmp_path: Path):
-    spec = _minimal(); spec.pop("template")
+    spec = _minimal()
+    spec.pop("template")
     with pytest.raises(SpecError, match="template"):
         build_attack(spec, base_dir=tmp_path)
 

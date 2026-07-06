@@ -32,6 +32,7 @@ When Playwright is unavailable :func:`analyze_dynamic` returns ``[]``.
 """
 from __future__ import annotations
 
+import contextlib
 import secrets
 import time
 from dataclasses import dataclass
@@ -613,18 +614,14 @@ def analyze_dynamic(
                     return _collect_hits(page, canary)
 
                 if "postMessage" in sources:
-                    try:
+                    with contextlib.suppress(Exception):
                         page.evaluate(
                             "(c) => { window.postMessage(c, '*'); }",
                             sources["postMessage"],
                         )
-                    except Exception:                       # noqa: BLE001
-                        pass
 
-                try:
+                with contextlib.suppress(Exception):
                     page.wait_for_timeout(opts.settle_ms)
-                except Exception:                           # noqa: BLE001
-                    pass
 
                 if time.monotonic() > deadline:
                     return _collect_hits(page, canary)
@@ -635,25 +632,19 @@ def analyze_dynamic(
                             _DRIVE_EVENTS_JS, int(opts.max_events),
                         )
                         page.wait_for_timeout(opts.settle_ms)
-                    except Exception:                       # noqa: BLE001
+                    except Exception:                       # noqa: BLE001,S110  # Playwright evaluate raises arbitrary JS/browser errors; event-driving is best-effort, hits are collected regardless
                         pass
 
                 return _collect_hits(page, canary)
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     page.close()
-                except Exception:                           # noqa: BLE001
-                    pass
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 browser.close()
-            except Exception:                               # noqa: BLE001
-                pass
     finally:
-        try:
+        with contextlib.suppress(Exception):
             pw_ctx.stop()
-        except Exception:                                   # noqa: BLE001
-            pass
 
 
 def _collect_hits(page: Any, canary: str) -> list[DOMHit]:

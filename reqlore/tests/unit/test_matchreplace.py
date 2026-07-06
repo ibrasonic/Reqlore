@@ -1,10 +1,12 @@
 """Tests for proxy.matchreplace (text-level transforms only; mitmproxy not invoked)."""
+from typing import Any
+
 from reqlore.proxy.matchreplace import MRRule, apply_request, apply_response
 
 
 def _rule(**kw) -> MRRule:
-    defaults = dict(id=0, enabled=True, where="req_header", is_regex=False,
-                    host_regex="", pattern="", replacement="")
+    defaults: dict[str, Any] = {"id": 0, "enabled": True, "where": "req_header", "is_regex": False,
+                    "host_regex": "", "pattern": "", "replacement": ""}
     defaults.update(kw)
     return MRRule(**defaults)
 

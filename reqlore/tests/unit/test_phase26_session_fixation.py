@@ -14,7 +14,6 @@ from reqlore.macros import Macro, MacroStep
 from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner.active import SessionFixationActiveCheck
 
-
 # ---- shared fixtures -------------------------------------------------------
 
 

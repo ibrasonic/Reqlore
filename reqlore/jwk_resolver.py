@@ -31,11 +31,10 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 from cryptography.hazmat.primitives import serialization
 from jwt.algorithms import RSAAlgorithm
-
 
 _MAX_INPUT_BYTES = 128 * 1024          # 128 KB paste cap
 _MAX_FETCH_BYTES = 1024 * 1024         # 1 MB fetched-JWKS cap
@@ -72,6 +71,9 @@ def _jwk_to_pem(jwk: dict) -> str:
         pub = RSAAlgorithm.from_jwk(json.dumps(jwk))
     except Exception as e:  # noqa: BLE001 - surface a short summary, never the traceback
         raise ValueError(f"Invalid JWK: {type(e).__name__}") from None
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+    if isinstance(pub, RSAPrivateKey):
+        pub = pub.public_key()
     try:
         pem = pub.public_bytes(
             encoding=serialization.Encoding.PEM,
@@ -225,7 +227,8 @@ def resolve_public_key(
     # JSON: single JWK or JWKS document pasted verbatim.
     if stripped.startswith("{") or stripped.startswith("["):
         doc = _parse_json(stripped)
-        return _handle_jwks_doc(doc, kid=kid, prefix="JWKS" if isinstance(doc, dict) and "keys" in doc else "JWK")
+        prefix = "JWKS" if isinstance(doc, dict) and "keys" in doc else "JWK"
+        return _handle_jwks_doc(doc, kid=kid, prefix=prefix)
 
     raise ValueError(
         "Unrecognised format. Expected PEM (-----BEGIN...-----), a JWK "

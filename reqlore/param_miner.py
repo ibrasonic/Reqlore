@@ -18,11 +18,10 @@ from __future__ import annotations
 import secrets
 import time
 import urllib.parse as up
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Callable, Iterable
 
 from .engines import Request, Response, httpx_engine
-
 
 # ---- options & results ----
 

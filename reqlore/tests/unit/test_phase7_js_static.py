@@ -1,8 +1,6 @@
 """Phase 7 — JavaScript static AST taint analysis tests."""
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from reqlore.scanner.js_static import _HAVE_ESPRIMA, analyze_js

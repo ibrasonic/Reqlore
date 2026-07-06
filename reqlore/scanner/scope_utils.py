@@ -17,7 +17,7 @@ on every recorded response.
 from __future__ import annotations
 
 import fnmatch
-from typing import Iterable
+from collections.abc import Iterable
 
 
 def host_in_scope(host: str, scope_rules: Iterable[dict]) -> bool:

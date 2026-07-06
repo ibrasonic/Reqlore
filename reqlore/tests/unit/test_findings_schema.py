@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from reqlore.storage import Project, SCHEMA_VERSION
+from reqlore.storage import SCHEMA_VERSION, Project
 
 
 @pytest.fixture

@@ -17,8 +17,6 @@ specific findings produced.
 """
 from __future__ import annotations
 
-import queue
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,11 +27,9 @@ from reqlore.scanner import (
     LiveScanWorker,
     Scanner,
     host_in_scope,
-    load_scope_rules,
 )
 from reqlore.scanner.findings import Finding
 from reqlore.storage import Project
-
 
 # ---------------------------------------------------------------------------
 # scope_utils
@@ -91,7 +87,7 @@ def _project(tmp_path: Path) -> Project:
     return Project(tmp_path / "live.rlr")
 
 
-def _add_row(p: Project, host: str = "x.test", url: str = None) -> int:
+def _add_row(p: Project, host: str = "x.test", url: str | None = None) -> int:
     return p.add_history(
         host=host, method="GET", url=url or f"https://{host}/",
         status=200, duration_ms=1, engine="test",
@@ -338,12 +334,11 @@ def test_history_addon_response_hook_never_raises_on_callback_error():
     """The mitm response hook must capture the hid and forward it to
     the live worker without ever propagating an exception back into
     the mitmproxy event loop."""
-    from reqlore.proxy.mitm import _HistoryAddon
 
     @dataclass
     class _Flow:
-        request: "_Req"
-        response: "_Resp"
+        request: _Req
+        response: _Resp
 
     @dataclass
     class _Req:

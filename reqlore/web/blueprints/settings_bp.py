@@ -4,10 +4,16 @@ from __future__ import annotations
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
 from ...scanner.consolidation import (
-    ConsolidationSettings, load_settings as load_consolidation_settings,
+    ConsolidationSettings,
+)
+from ...scanner.consolidation import (
+    load_settings as load_consolidation_settings,
+)
+from ...scanner.consolidation import (
     save_settings as save_consolidation_settings,
 )
-from ...update_check import UpdateInfo, check as run_update_check
+from ...update_check import UpdateInfo
+from ...update_check import check as run_update_check
 
 bp = Blueprint("settings", __name__)
 

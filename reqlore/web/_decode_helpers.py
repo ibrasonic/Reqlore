@@ -18,7 +18,6 @@ from __future__ import annotations
 import gzip
 import zlib
 
-
 _SUPPORTED_ENCODINGS = {"gzip", "x-gzip", "deflate", "br", "zstd"}
 
 

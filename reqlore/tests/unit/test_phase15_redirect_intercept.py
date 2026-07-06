@@ -23,12 +23,10 @@ from pathlib import Path
 import pytest
 
 from reqlore.config import Settings
-from reqlore.proxy import mitm as mitm_mod
-from reqlore.proxy.mitm import _HistoryAddon, _REDIRECT_TTL_S
+from reqlore.proxy.mitm import _REDIRECT_TTL_S, _HistoryAddon
 from reqlore.proxy.rules import Rule
 from reqlore.storage import InterceptRow, Project
 from reqlore.web import create_app
-
 
 # ---------------------------------------------------------------------------
 # storage / migration
@@ -71,7 +69,7 @@ def test_enqueue_intercept_sync_persists_parent_id(tmp_path: Path) -> None:
         parent = p.enqueue_intercept_sync(
             "request", b"GET /a HTTP/1.1\r\n\r\n", "first", "flow-a",
         )
-        child = p.enqueue_intercept_sync(
+        p.enqueue_intercept_sync(
             "request", b"GET /b HTTP/1.1\r\n\r\n", "redirect", "flow-b",
             parent_intercept_id=parent,
         )
@@ -219,7 +217,7 @@ def test_redirect_chain_links_child_to_parent(tmp_path: Path) -> None:
                 parent_intercept_id=parent_intercept_id,
             )
             flow._reqlore_iid = iid
-        addon._sync_hold = _fake_hold
+        addon._sync_hold = _fake_hold  # type: ignore[method-assign]  # test monkey-patch to swap the addon's async intercept-hold path
 
         asyncio.run(addon.request(flow1))
         parent_iid = getattr(flow1, "_reqlore_iid", None)
@@ -245,7 +243,7 @@ def test_redirect_chain_links_child_to_parent(tmp_path: Path) -> None:
                 parent_intercept_id=parent_intercept_id,
             )
             flow._reqlore_iid = iid
-        addon._sync_hold = _fake_hold2
+        addon._sync_hold = _fake_hold2  # type: ignore[method-assign]  # test monkey-patch to redirect the addon's async intercept-hold path to the second fake
 
         asyncio.run(addon.request(flow2))
 
@@ -270,7 +268,7 @@ def test_redirect_chain_skipped_when_not_3xx(tmp_path: Path) -> None:
                 kind, raw, reason, "f", parent_intercept_id=parent_intercept_id,
             )
             flow._reqlore_iid = iid
-        addon._sync_hold = _fake_hold
+        addon._sync_hold = _fake_hold  # type: ignore[method-assign]  # test monkey-patch to swap the addon's async intercept-hold path
 
         asyncio.run(addon.request(flow))
         flow.response = _Resp(status=200, location="")
@@ -297,7 +295,7 @@ def test_unrelated_request_gets_no_parent(tmp_path: Path) -> None:
                 parent_intercept_id=parent_intercept_id,
             )
             flow._reqlore_iid = iid
-        addon._sync_hold = _fake_hold
+        addon._sync_hold = _fake_hold  # type: ignore[method-assign]  # test monkey-patch to swap the addon's async intercept-hold path
 
         asyncio.run(addon.request(_Flow(req=_Req(url="https://other.example/x"))))
         assert recorded == [None]

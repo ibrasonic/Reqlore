@@ -6,11 +6,13 @@ be opened in any browser, mailed, or pasted into a ticket.
 """
 from __future__ import annotations
 
-from .markdown import render_markdown
+from .docx import DOCX_AVAILABLE, render_docx
 from .html import render_html
-from .docx import render_docx, DOCX_AVAILABLE
-from .json_export import render_json, build_export as build_json_export, SCHEMA as JSON_SCHEMA
-from .sarif import render_sarif, build_sarif, SARIF_VERSION
+from .json_export import SCHEMA as JSON_SCHEMA
+from .json_export import build_export as build_json_export
+from .json_export import render_json
+from .markdown import render_markdown
+from .sarif import SARIF_VERSION, build_sarif, render_sarif
 
 __all__ = [
     "render_markdown", "render_html", "render_docx", "DOCX_AVAILABLE",

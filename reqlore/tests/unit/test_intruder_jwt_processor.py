@@ -8,9 +8,11 @@ import jwt as pyjwt
 import pytest
 
 from reqlore.intruder import (
-    ARG_PROCESSORS, apply_processors, processor_names, _proc_jwt,
+    ARG_PROCESSORS,
+    _proc_jwt,
+    apply_processors,
+    processor_names,
 )
-
 
 # ---- helpers --------------------------------------------------------------
 
@@ -63,7 +65,7 @@ def test_jwt_none_header_kid_writes_into_header():
 
 @pytest.mark.parametrize("alg", ["HS256", "HS384", "HS512"])
 def test_jwt_hs_verifies_with_supplied_secret(alg):
-    secret = "topsecret"
+    secret = "topsecret"  # noqa: S105  # test fixture HS-alg secret, not a real credential
     out = _proc_jwt("alice", f"{alg} secret={secret} claim=sub")
     # Round-trip: pyjwt must accept the token with the same secret.
     decoded = pyjwt.decode(out, secret, algorithms=[alg])
@@ -173,7 +175,7 @@ def test_apply_processors_jwt_then_prefix_concatenates_bearer():
 
 def test_jwt_sniper_walk_produces_one_token_per_username():
     users = ["admin", "alice", "bob"]
-    secret = "k"
+    secret = "k"  # noqa: S105  # test fixture HS-alg secret, not a real credential
     spec = f"jwt:HS256 secret={secret} claim=sub"
     tokens = [apply_processors(u, [spec]) for u in users]
     decoded = [pyjwt.decode(t, secret, algorithms=["HS256"]) for t in tokens]

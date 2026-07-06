@@ -44,7 +44,8 @@ def _csrf(client) -> str:
 def _tpl_two_markers() -> str:
     m = DEFAULT_MARKER
     return (
-        f"POST /login HTTP/1.1\r\nHost: x.test\r\nContent-Type: application/x-www-form-urlencoded\r\n"
+        "POST /login HTTP/1.1\r\nHost: x.test\r\n"
+        "Content-Type: application/x-www-form-urlencoded\r\n"
         f"\r\nu={m}user{m}&id={m}1{m}"
     )
 

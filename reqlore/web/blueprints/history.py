@@ -4,15 +4,17 @@ from __future__ import annotations
 import json
 import re
 
-from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for, Response
+from flask import Blueprint, Response, abort, flash, g, redirect, render_template, request, url_for
 
-from ...a11y import (ResponseSummaryInput, build_find_multi,
-                     summarise_response)
+from ...a11y import ResponseSummaryInput, build_find_multi, summarise_response
 from ...plugins import get_registry
-from .._decode_helpers import (_current_encoding, _has_supported_encoding,
-                                _maybe_decode_blob, _split_http)
-from ..send_targets import (available_targets, bearer_token,
-                              parse_raw_request, target_label)
+from .._decode_helpers import (
+    _current_encoding,
+    _has_supported_encoding,
+    _maybe_decode_blob,
+    _split_http,
+)
+from ..send_targets import available_targets, bearer_token, parse_raw_request, target_label
 
 bp = Blueprint("history", __name__)
 
@@ -186,10 +188,7 @@ def show(hid: int):
     # the body, not stare at a gzipped binary smear. Explicit `decode=0`
     # in the query string opts back into the raw view.
     decode_arg = request.args.get("decode")
-    if decode_arg is None:
-        decode = has_encoded_body
-    else:
-        decode = has_encoded_body and decode_arg == "1"
+    decode = has_encoded_body if decode_arg is None else has_encoded_body and decode_arg == "1"
     req_blob, req_decode_note = _maybe_decode_blob(row.req_blob, decode)
     resp_blob, resp_decode_note = _maybe_decode_blob(row.resp_blob, decode)
     req_text = _safe_text(req_blob)

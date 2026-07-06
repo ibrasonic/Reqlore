@@ -19,26 +19,16 @@ Public surface::
 """
 from __future__ import annotations
 
-from .findings import Finding, Severity
-from .passive import BUILTIN_RULES, Rule, RuleContext, run_passive
-from .engine import Scanner, ScanResult
-from .active import (
-    ActiveCheck, ActiveContext, ActiveOptions, ActiveScanResult, ActiveScanner,
-    BUILTIN_ACTIVE_CHECKS,
-)
 # Phase 6 — import for side-effect: appends 18 new checks onto
 # BUILTIN_ACTIVE_CHECKS via register_phase6_checks() at module load.
 from . import phase6_checks as _phase6_checks  # noqa: F401
-from .scope_utils import host_in_scope, load_scope_rules
-from .live import LiveScanWorker, DEFAULT_QUEUE_MAXSIZE
-from .presets import (
-    PRESET_NAMES,
-    DEFAULT_PRESET,
-    SCAN_PRESETS,
-    PRESET_DESCRIPTIONS,
-    apply_preset,
-    preset_summary,
-    all_summaries,
+from .active import (
+    BUILTIN_ACTIVE_CHECKS,
+    ActiveCheck,
+    ActiveContext,
+    ActiveOptions,
+    ActiveScanner,
+    ActiveScanResult,
 )
 from .auth_session import (
     AuthCredentials,
@@ -52,9 +42,35 @@ from .consolidation import (
     ConsolidationSettings,
     consolidate_frequent_findings,
     extract_backend_signature,
-    load_settings as load_consolidation_settings,
-    save_settings as save_consolidation_settings,
     should_use_lightweight_mode,
+)
+from .consolidation import (
+    load_settings as load_consolidation_settings,
+)
+from .consolidation import (
+    save_settings as save_consolidation_settings,
+)
+from .engine import Scanner, ScanResult
+from .findings import Finding, Severity
+from .js_pipeline import (
+    DEFAULT_JS_ANALYSIS_MODE,
+    JS_ANALYSIS_MODES,
+    JSPipelineResult,
+    extract_inline_scripts,
+    is_html_response,
+    is_javascript_response,
+    run_js_pipeline,
+)
+from .live import DEFAULT_QUEUE_MAXSIZE, LiveScanWorker
+from .passive import BUILTIN_RULES, Rule, RuleContext, run_passive
+from .presets import (
+    DEFAULT_PRESET,
+    PRESET_DESCRIPTIONS,
+    PRESET_NAMES,
+    SCAN_PRESETS,
+    all_summaries,
+    apply_preset,
+    preset_summary,
 )
 from .prioritise import (
     InterestFactors,
@@ -67,15 +83,7 @@ from .prioritise import (
     request_carries_auth,
     score_row,
 )
-from .js_pipeline import (
-    DEFAULT_JS_ANALYSIS_MODE,
-    JS_ANALYSIS_MODES,
-    JSPipelineResult,
-    extract_inline_scripts,
-    is_html_response,
-    is_javascript_response,
-    run_js_pipeline,
-)
+from .scope_utils import host_in_scope, load_scope_rules
 
 __all__ = [
     "Finding",

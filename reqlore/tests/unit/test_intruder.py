@@ -1,7 +1,14 @@
 """Unit tests for intruder module: parsing, scheduling, processors."""
 from reqlore.intruder import (
-    DEFAULT_MARKER, apply_payloads, apply_processors, find_positions,
-    grep_extract, iterate, payloads_from_text, payloads_numbers, strip_markers,
+    DEFAULT_MARKER,
+    apply_payloads,
+    apply_processors,
+    find_positions,
+    grep_extract,
+    iterate,
+    payloads_from_text,
+    payloads_numbers,
+    strip_markers,
 )
 
 

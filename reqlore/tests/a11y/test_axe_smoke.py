@@ -11,7 +11,6 @@ the suite.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from threading import Thread
 from wsgiref.simple_server import make_server
 
@@ -19,12 +18,11 @@ import pytest
 
 playwright = pytest.importorskip("playwright")
 axe_pw = pytest.importorskip("axe_playwright_python")
-from playwright.sync_api import sync_playwright   # noqa: E402
 from axe_playwright_python.sync_playwright import Axe  # noqa: E402
+from playwright.sync_api import sync_playwright  # noqa: E402
 
-from reqlore.config import Settings
-from reqlore.web import create_app
-
+from reqlore.config import Settings  # noqa: E402  # after pytest.importorskip guard
+from reqlore.web import create_app  # noqa: E402  # after pytest.importorskip guard
 
 ROUTES = [
     "/", "/proxy/", "/history/", "/repeater/", "/intruder/", "/scanner/",

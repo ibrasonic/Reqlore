@@ -20,7 +20,6 @@ from reqlore.intruder import (
     iterate_streaming,
 )
 
-
 # ---------- factory adapters ----------
 
 def test_from_list_replayable():
@@ -68,7 +67,7 @@ def test_from_path_constant_memory_on_large_file(tmp_path: Path):
     it = src()
     assert [next(it), next(it), next(it)] == ["line0", "line1", "line2"]
     # Drain to release the file handle (the generator's finally closes it).
-    it.close()
+    it.close()  # type: ignore[attr-defined]  # our generators expose .close() via runtime generator protocol
 
 
 # ---------- iterate_streaming behaviour ----------

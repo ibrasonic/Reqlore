@@ -84,7 +84,7 @@ def csrf_fetch_poc(method: str, url: str, headers: list[tuple[str, str]],
             keep.append([k, v])
     body_str = body.decode("utf-8", errors="replace") if body else ""
     js_body = json.dumps(body_str) if body_str else "undefined"
-    js_headers = json.dumps({k: v for k, v in keep})
+    js_headers = json.dumps(dict(keep))
     html = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>Reqlore — fetch() CSRF PoC for {_h.escape(url)}</title></head>

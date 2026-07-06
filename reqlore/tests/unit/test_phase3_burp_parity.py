@@ -1,8 +1,6 @@
 """Phase 3 — Burp-parity confidence + consolidation + fingerprint tests."""
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from reqlore.config import Settings
@@ -10,9 +8,10 @@ from reqlore.findings_bus import record_finding
 from reqlore.plugins import reset_registry
 from reqlore.scanner.findings import Finding
 from reqlore.scanner.fingerprints import (
-    apply_fingerprint, fingerprint_response,
+    apply_fingerprint,
+    fingerprint_response,
 )
-from reqlore.storage import Project, SCHEMA_VERSION
+from reqlore.storage import SCHEMA_VERSION, Project
 from reqlore.web import create_app
 
 

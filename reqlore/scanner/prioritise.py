@@ -31,8 +31,9 @@ so re-runs produce identical orderings even when scores collide.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any
 
 from .insertion_points import iter_insertion_points
 
@@ -180,7 +181,7 @@ class RowScore:
 # ---------------------------------------------------------------------------
 
 def is_state_changing(
-    method: str,
+    method: str | None,
     factors: InterestFactors | None = None,
 ) -> bool:
     """Return ``True`` when ``method`` mutates server state.
@@ -197,7 +198,7 @@ def is_state_changing(
 
 
 def looks_like_session_cookie(
-    name: str,
+    name: str | None,
     factors: InterestFactors | None = None,
 ) -> bool:
     if not name:
@@ -464,7 +465,7 @@ def _normalise_and_sort(
     max_novelty = max((s.surface_novelty for s in scored), default=0)
     norm = max(1, max_novelty)  # avoid div-by-zero
     composite = []
-    for r, s in zip(rows_list, scored):
+    for r, s in zip(rows_list, scored, strict=False):
         surface_norm = s.surface_novelty / norm
         composite_score = (
             weights.surface * surface_norm

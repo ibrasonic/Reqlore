@@ -10,8 +10,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-import pytest
-
 from reqlore.engines import Request, Response
 from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner import active as active_mod
@@ -23,7 +21,6 @@ from reqlore.scanner.active import (
     _parse_cert_expiry,
     _TLSInfo,
 )
-
 
 # --------------------------- shared helpers ---------------------------------
 

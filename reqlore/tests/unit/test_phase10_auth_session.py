@@ -32,7 +32,6 @@ from reqlore.scanner.auth_session import (
     harvest_cookies_from_set_cookie,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers — fakes for the macro sender + scanner sender.
 # ---------------------------------------------------------------------------
@@ -72,7 +71,10 @@ class _ScriptedSender:
         if entry is None:
             return self.default
         if callable(entry):
-            return entry(req)
+            result = entry(req)
+            assert isinstance(result, Response)
+            return result
+        assert isinstance(entry, Response)
         return entry
 
 
@@ -107,11 +109,11 @@ def test_credentials_repr_redacts_values():
 
 
 def test_credentials_values_returns_defensive_copy():
-    c = AuthCredentials({"username": "alice", "password": "topsecret"})
+    c = AuthCredentials({"username": "alice", "password": "topsecret"})  # noqa: S106  # test fixture credentials dict, not a real credential
     out = c.values()
-    out["password"] = "tampered"
+    out["password"] = "tampered"  # noqa: S105  # test fixture credential mutation, not a real credential
     # Internal state is unchanged.
-    assert c.values()["password"] == "topsecret"
+    assert c.values()["password"] == "topsecret"  # noqa: S105  # test fixture credential, not a real credential
 
 
 def test_credentials_refuses_to_pickle():

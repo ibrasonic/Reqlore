@@ -16,30 +16,26 @@ Two layers:
 """
 from __future__ import annotations
 
+# Import the plugin module by file path the same way the registry
+# does so it's exercised through the public surface only.
+import importlib.util
 import io
 import struct
+import sys
 import threading
-import time
 import zipfile
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from reqlore import plugins_sdk as sdk
 from reqlore.plugins import (
-    PluginRegistry,
     default_plugin_dirs,
     get_registry,
     reset_registry,
 )
-
-# Import the plugin module by file path the same way the registry
-# does so it's exercised through the public surface only.
-import importlib.util
-import sys
 
 _PLUGIN_PATH = (
     Path(__file__).resolve().parent.parent.parent
@@ -398,7 +394,7 @@ def test_build_cases_svg_oast_requires_token(upmod):
     assert "svg-xxe-file" in names
     assert "svg-ssrf" not in names  # needs OAST
     # With token -> OAST cases appear and embed the token URL.
-    cases = upmod.build_cases(settings, oast_token="tok",
+    cases = upmod.build_cases(settings, oast_token="tok",  # noqa: S106  # test fixture token, not a real credential
                               oast_base="http://oast.test/tok/")
     ssrf = [c for c in cases if c.name == "svg-ssrf"][0]
     assert b"http://oast.test/tok/svg-ssrf/" in ssrf.content
@@ -690,8 +686,8 @@ def test_run_redownload_match_marks_stored(upmod):
     )
     # baseline -> 200 ok; eicar upload -> 200 ok; eicar redownload -> body match.
     eicar_bytes = (
-        "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
-    ).encode()
+        b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    )
     sends = iter([
         _StubResp(status=200, body=b"ok"),                   # baseline
         _StubResp(status=200, body=b"ok"),                   # eicar upload

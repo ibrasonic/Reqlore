@@ -12,15 +12,11 @@ outside the module's scope (and intentionally so).
 from __future__ import annotations
 
 import binascii
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any
 
 try:
-    from hyperframe.frame import (
-        ContinuationFrame, DataFrame, Frame, GoAwayFrame, HeadersFrame,
-        PingFrame, PriorityFrame, PushPromiseFrame, RstStreamFrame,
-        SettingsFrame, WindowUpdateFrame,
-    )
     HYPERFRAME_AVAILABLE = True
 except Exception:                  # pragma: no cover - hyperframe is on deps
     HYPERFRAME_AVAILABLE = False
@@ -118,10 +114,14 @@ def parse_frames(data: bytes) -> FrameStream:
 def _decode_flags(type_code: int, flags: int) -> list[str]:
     out: list[str] = []
     # Generic ones first
-    if flags & 0x1: out.append("ACK/END_STREAM")
-    if flags & 0x4: out.append("END_HEADERS")
-    if flags & 0x8: out.append("PADDED")
-    if flags & 0x20: out.append("PRIORITY")
+    if flags & 0x1:
+        out.append("ACK/END_STREAM")
+    if flags & 0x4:
+        out.append("END_HEADERS")
+    if flags & 0x8:
+        out.append("PADDED")
+    if flags & 0x20:
+        out.append("PRIORITY")
     return out
 
 
@@ -130,10 +130,8 @@ def _decode_payload(type_code: int, payload: bytes,
     out: dict[str, Any] = {"size": len(payload)}
     if type_code == 0x0:                                # DATA
         out["body_hex"] = binascii.hexlify(payload[:64]).decode()
-        try:
+        with contextlib.suppress(Exception):
             out["body_preview"] = payload[:64].decode("utf-8", "replace")
-        except Exception:
-            pass
     elif type_code == 0x4:                              # SETTINGS
         if flags & 0x1:
             out["settings_ack"] = True
@@ -164,9 +162,7 @@ def _decode_payload(type_code: int, payload: bytes,
     elif type_code == 0x8:                              # WINDOW_UPDATE
         if len(payload) >= 4:
             out["increment"] = int.from_bytes(payload[:4], "big") & 0x7FFFFFFF
-    elif type_code == 0x1:                              # HEADERS (HPACK)
-        out["hpack_hex"] = binascii.hexlify(payload[:64]).decode()
-    elif type_code == 0x9:                              # CONTINUATION
+    elif type_code == 0x1 or type_code == 0x9:                              # HEADERS (HPACK)
         out["hpack_hex"] = binascii.hexlify(payload[:64]).decode()
     return out
 

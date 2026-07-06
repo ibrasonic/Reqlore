@@ -1,10 +1,10 @@
 """Param-miner blueprint — surface :mod:`reqlore.param_miner` in the UI."""
 from __future__ import annotations
 
-from flask import Blueprint, g, redirect, render_template, request, url_for
+from flask import Blueprint, redirect, render_template, request, url_for
 
-from .._prg import PRGCache
 from ...param_miner import DEFAULT_WORDS, MineOptions, mine
+from .._prg import PRGCache
 
 bp = Blueprint("param_miner", __name__)
 
@@ -38,7 +38,8 @@ def index():
                 delay = max(0, min(2000, int(form["rate_delay"] or 0)))
             except ValueError:
                 delay = 0
-            location = form["location"] if form["location"] in ("query", "body", "header") else "query"
+            loc_raw = form["location"]
+            location = loc_raw if loc_raw in ("query", "body", "header") else "query"
             method = (form["method"] or "GET").upper()
             opts = MineOptions(location=location, method=method,
                                max_words=max_words, rate_delay_ms=delay)

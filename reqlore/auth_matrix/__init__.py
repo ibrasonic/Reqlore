@@ -32,38 +32,38 @@ from __future__ import annotations
 
 from .crypto import (
     ProjectKey,
-    encrypt_payload,
     decrypt_payload,
     derive_or_load_key,
-)
-from .sessions import (
-    Session,
-    SessionKind,
-    SESSION_KINDS,
-    build_substitution,
-    apply_session_to_request,
-    capture_session_from_history,
-    session_already_present,
+    encrypt_payload,
 )
 from .normaliser import (
     Normaliser,
+    body_similarity_pct,
     default_normaliser,
     normalise_body,
     normalise_headers,
-    body_similarity_pct,
-)
-from .verdict import (
-    Verdict,
-    VERDICT_LABELS,
-    decide_verdict,
-    finding_severity_for_verdict,
 )
 from .replay import (
     ReplayOutcome,
     replay_history_with_session,
 )
 from .runner import AuthMatrixRunner, RunOptions
+from .sessions import (
+    SESSION_KINDS,
+    Session,
+    SessionKind,
+    apply_session_to_request,
+    build_substitution,
+    capture_session_from_history,
+    session_already_present,
+)
 from .shadow import AuthShadowWorker
+from .verdict import (
+    VERDICT_LABELS,
+    Verdict,
+    decide_verdict,
+    finding_severity_for_verdict,
+)
 
 __all__ = [
     "ProjectKey",

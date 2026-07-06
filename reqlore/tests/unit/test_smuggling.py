@@ -4,8 +4,7 @@ from __future__ import annotations
 import time
 
 from reqlore.engines import Request, Response
-from reqlore.smuggling import (PAYLOAD_BUILDERS, cl_te_payload, detect,
-                                 te_cl_payload, te_te_payload)
+from reqlore.smuggling import PAYLOAD_BUILDERS, cl_te_payload, detect, te_cl_payload, te_te_payload
 
 
 def _resp(status: int = 200, *, sleep: float = 0.0) -> Response:

@@ -53,8 +53,10 @@ def check(manifest_url: str = DEFAULT_MANIFEST_URL, *,
     """Fetch the manifest and return an :class:`UpdateInfo`. Never raises."""
     info = UpdateInfo(enabled=True, current_version=__version__)
     try:
-        req = urllib.request.Request(manifest_url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # nosec B310
+        if not manifest_url.startswith(("http://", "https://")):
+            raise ValueError(f"unsupported manifest URL scheme: {manifest_url!r}")
+        req = urllib.request.Request(manifest_url, headers={"User-Agent": USER_AGENT})  # noqa: S310  # scheme allow-list checked above (http/https only)
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310  # scheme allow-list checked above (http/https only)
             raw = resp.read(64_000)
         data = json.loads(raw.decode("utf-8", errors="replace"))
         info.latest_version = data.get("latest_version")

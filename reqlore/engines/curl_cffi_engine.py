@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from . import Request, Response, Timings
 
 try:
-    from curl_cffi import requests as _curl_requests   # type: ignore[import-not-found]
+    from curl_cffi import requests as _curl_requests  # type: ignore[import-not-found]
     CFFI_AVAILABLE = True
 except Exception:
     CFFI_AVAILABLE = False
@@ -39,7 +39,7 @@ def send(req: Request, *, profile: str = "chrome120", timeout: float = 15.0,
     if profile not in SUPPORTED_PROFILES:
         profile = "chrome120"
 
-    parsed = urlparse(req.url)
+    urlparse(req.url)
     headers_dict: dict[str, str] = {}
     for k, v in req.headers:
         if k.lower() in ("host", "content-length", "connection"):
@@ -61,7 +61,7 @@ def send(req: Request, *, profile: str = "chrome120", timeout: float = 15.0,
         try:
             for k, v in r.headers.items():
                 out_headers.append((str(k), str(v)))
-        except Exception:
+        except (AttributeError, TypeError):  # noqa: S110  # curl_cffi headers container shape varies across versions; empty header list is acceptable fallback
             pass
         body = r.content if isinstance(r.content, (bytes, bytearray)) else \
                (r.text.encode("utf-8", "replace") if r.text else b"")

@@ -20,7 +20,6 @@ from typing import Any
 
 import regex as _regex
 
-
 # Default per-call deadline. 100 ms is more than enough for any sane
 # pattern against a single HTTP message body and short enough that a
 # pathological pattern cannot stall the proxy for noticeable time.

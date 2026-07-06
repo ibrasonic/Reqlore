@@ -14,7 +14,6 @@ from reqlore.a11y import (
     wcag_ui_component_pass,
 )
 
-
 CSS = Path(__file__).resolve().parents[2] / "web" / "static" / "reqlore.css"
 
 

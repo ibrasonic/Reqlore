@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import html as _h
-from typing import Iterable
+from collections.abc import Iterable
 
 from ._common import (
     SEV_ORDER,
@@ -108,7 +108,10 @@ def render_html(project_meta: dict, findings: Iterable[dict],
 
     parts.append("<h2>Summary</h2>")
     parts.append("<table><caption>Findings by severity</caption>")
-    parts.append("<thead><tr><th scope=\"col\">Severity</th><th scope=\"col\">Count</th></tr></thead><tbody>")
+    parts.append(
+        "<thead><tr><th scope=\"col\">Severity</th>"
+        "<th scope=\"col\">Count</th></tr></thead><tbody>"
+    )
     for sev in SEV_ORDER:
         style, label = SEV_BADGE[sev]
         parts.append(

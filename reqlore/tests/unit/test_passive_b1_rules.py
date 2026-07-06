@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import pytest
 
 from reqlore.scanner.passive import (
+    BUILTIN_RULES,
+    RuleContext,
     rule_autocomplete_on_password,
     rule_cache_control_on_private,
     rule_cors_null_origin,
@@ -14,10 +16,7 @@ from reqlore.scanner.passive import (
     rule_open_redirect_hint_headers,
     rule_session_fixation,
     rule_weak_tls_hint,
-    BUILTIN_RULES,
-    RuleContext,
 )
-
 
 # ---------------- shared helpers ----------------
 

@@ -21,7 +21,6 @@ from reqlore.config import Settings
 from reqlore.web import create_app
 from reqlore.web.blueprints.decoder import _encode
 
-
 # ---------------------------------------------------------------------------
 # Decoder: pure-function checks on _encode()
 # ---------------------------------------------------------------------------
@@ -386,8 +385,8 @@ class TestErrorMessages:
         # exp=1 (1970) \u2014 long expired. The decoder must NOT refuse to
         # show the claims; that would defeat the only reason to paste
         # an expired token into the panel.
-        import json as _json
         import base64 as _b64
+        import json as _json
         def _b64u(d):
             return _b64.urlsafe_b64encode(d).rstrip(b"=").decode()
         header = _b64u(_json.dumps({"alg": "none", "typ": "JWT"}).encode())

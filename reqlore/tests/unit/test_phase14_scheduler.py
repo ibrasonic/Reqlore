@@ -22,14 +22,13 @@ import pytest
 from reqlore import scheduler as sched_mod
 from reqlore.config import Settings
 from reqlore.scheduler import (
-    Scheduler,
     ScheduledJob,
+    Scheduler,
     _deserialise,
     _serialise,
 )
 from reqlore.storage import Project
 from reqlore.web import create_app
-
 
 # ---------------------------------------------------------------------------
 # dataclass + serialisation

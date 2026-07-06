@@ -1,13 +1,14 @@
 """Findings persistence, reporter formats, scanner end-to-end."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from reqlore.reporter import (
-    DOCX_AVAILABLE, render_html, render_markdown,
+    DOCX_AVAILABLE,
+    render_html,
+    render_markdown,
 )
 from reqlore.scanner import Scanner
 from reqlore.storage import Project
@@ -19,7 +20,7 @@ def project(tmp_path: Path) -> Project:
 
 
 def _add_history(p: Project, *, url: str, status: int = 200,
-                  resp_headers: list[tuple[str, str]] = None,
+                  resp_headers: list[tuple[str, str]] | None = None,
                   resp_body: bytes = b"") -> int:
     resp_headers = resp_headers or []
     head = f"HTTP/1.1 {status} OK\r\n" + "".join(
@@ -49,9 +50,13 @@ def test_add_and_list_findings(project: Project):
 def test_finding_status_lifecycle(project: Project):
     fid = project.add_finding(severity="low", title="t")
     project.set_finding_status(fid, "triaged")
-    assert project.get_finding(fid)["status"] == "triaged"
+    row_a = project.get_finding(fid)
+    assert row_a is not None
+    assert row_a["status"] == "triaged"
     project.set_finding_status(fid, "false_positive")
-    assert project.get_finding(fid)["status"] == "false_positive"
+    row_b = project.get_finding(fid)
+    assert row_b is not None
+    assert row_b["status"] == "false_positive"
 
 
 def test_finding_status_rejects_bad_value(project: Project):
@@ -127,7 +132,8 @@ def test_render_html_is_self_contained(project: Project):
     assert html.startswith("<!doctype html>")
     # No external resources allowed in the report.
     assert "<link" not in html
-    assert "<script" not in html  # raw '<script' (no JS, and the escaped evidence keeps the &lt; entity)
+    # raw '<script' (no JS; escaped evidence keeps the &lt; entity)
+    assert "<script" not in html
     # Evidence with HTML must be escaped.
     assert "&lt;script&gt;" in html
     # Severity badge for critical present.

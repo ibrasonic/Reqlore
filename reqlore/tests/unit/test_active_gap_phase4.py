@@ -19,7 +19,6 @@ from reqlore.scanner.active import (
     _cloud_blob_service,
 )
 
-
 # --------------------------- shared helpers ---------------------------------
 
 
@@ -233,7 +232,7 @@ def test_dom_xss_fires_when_marker_reaches_innerHTML():
 
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):                                       # noqa: N802
-            from urllib.parse import urlsplit, parse_qs
+            from urllib.parse import parse_qs, urlsplit
             q = parse_qs(urlsplit(self.path).query).get("q", [""])[0]
             body = (b"<!doctype html><html><body>"
                      b"<div id=\"out\"></div>"

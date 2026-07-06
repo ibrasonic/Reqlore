@@ -135,7 +135,7 @@ class LocalOAST:
             self._interactions.clear()
 
 
-def _make_handler(oast: "LocalOAST"):
+def _make_handler(oast: LocalOAST):
     class _H(BaseHTTPRequestHandler):
         # Silence the default stderr logging — we record everything ourselves.
         def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003

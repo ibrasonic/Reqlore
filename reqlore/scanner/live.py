@@ -31,13 +31,13 @@ Design invariants:
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import threading
 import time
 
 from .scope_utils import host_in_scope, load_scope_rules
-
 
 log = logging.getLogger("reqlore.scanner.live")
 
@@ -208,12 +208,10 @@ class LiveScanWorker:
         # Lazy trim: drop samples older than the window. The list is
         # append-only so this is O(k) per call where k is the number of
         # entries to discard — bounded by the cap we enforce in _loop.
-        i = 0
-        for i, ts in enumerate(self._completions):
-            if ts >= cutoff:
-                break
-        else:
-            i = len(self._completions)
+        i = next(
+            (idx for idx, ts in enumerate(self._completions) if ts >= cutoff),
+            len(self._completions),
+        )
         if i > 0:
             self._completions = self._completions[i:]
         return float(len(self._completions))
@@ -465,13 +463,11 @@ class LiveScanWorker:
                         self.findings_added += 1
                     fired_any = True
                 if not fired_any:
-                    try:
+                    with contextlib.suppress(AttributeError):
                         self._project.record_rule_run(
                             rule_id=rid, host=row.host or "", url=row.url or "",
                             fired=False, reason="no_match",
                         )
-                    except AttributeError:
-                        pass
             except Exception:  # noqa: BLE001 — isolate each rule
                 self.errors += 1
                 log.exception(

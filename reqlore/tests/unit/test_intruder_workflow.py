@@ -10,7 +10,6 @@ import pytest
 from reqlore.intruder import AttackRunner, find_positions
 from reqlore.storage import Project
 
-
 _MARKER = "\u00a7"
 _TPL = (
     f"GET /?q={_MARKER}X{_MARKER} HTTP/1.1\r\n"
@@ -58,14 +57,16 @@ def _start_server(handler) -> tuple[int, ThreadingHTTPServer]:
 def echo_server():
     port, srv = _start_server(_PathEcho)
     yield port
-    srv.shutdown(); srv.server_close()
+    srv.shutdown()
+    srv.server_close()
 
 
 @pytest.fixture
 def status_server():
     port, srv = _start_server(_StatusByPayload)
     yield port
-    srv.shutdown(); srv.server_close()
+    srv.shutdown()
+    srv.server_close()
 
 
 def _create_attack(p: Project, port: int, payloads: list[str], **opts) -> int:
@@ -90,14 +91,17 @@ def test_stop_on_match_cancels_remaining(tmp_path: Path, echo_server: int):
         grep=[r"TRIGGER"], stop_on_match=True,
     )
     r = AttackRunner(p, aid)
-    r.start(); r.wait(timeout=30)
+    r.start()
+    r.wait(timeout=30)
     results = p.list_intruder_results(aid)
     # We must see the trigger row and *fewer* total rows than the 5 planned.
     seqs = sorted(x["seq"] for x in results)
     assert any(x["matched"] for x in results)
     assert len(seqs) < 5
     # 'done' final status, with stop_reason explaining the auto-stop.
-    assert p.get_intruder(aid)["status"] == "done"
+    row_a = p.get_intruder(aid)
+    assert row_a is not None
+    assert row_a["status"] == "done"
     assert "grep match" in r.stop_reason
 
 
@@ -108,9 +112,12 @@ def test_no_stop_on_match_runs_all(tmp_path: Path, echo_server: int):
         grep=[r"q=b"], stop_on_match=False,
     )
     r = AttackRunner(p, aid)
-    r.start(); r.wait(timeout=30)
+    r.start()
+    r.wait(timeout=30)
     assert len(p.list_intruder_results(aid)) == 3
-    assert p.get_intruder(aid)["status"] == "done"
+    row_b = p.get_intruder(aid)
+    assert row_b is not None
+    assert row_b["status"] == "done"
     assert r.stop_reason == ""
 
 
@@ -124,12 +131,15 @@ def test_stop_on_status_cancels_on_match(tmp_path: Path, status_server: int):
         stop_on_status=[302],
     )
     r = AttackRunner(p, aid)
-    r.start(); r.wait(timeout=30)
+    r.start()
+    r.wait(timeout=30)
     results = p.list_intruder_results(aid)
     assert any(x["status"] == 302 for x in results)
     assert len(results) < 5
     assert "status 302" in r.stop_reason
-    assert p.get_intruder(aid)["status"] == "done"
+    row_c = p.get_intruder(aid)
+    assert row_c is not None
+    assert row_c["status"] == "done"
 
 
 # ---------- retries ----------
@@ -152,7 +162,8 @@ def test_retries_recover_from_transient_send_exception(tmp_path: Path, echo_serv
     mod.httpx_engine.send = flaky
     try:
         r = AttackRunner(p, aid)
-        r.start(); r.wait(timeout=30)
+        r.start()
+        r.wait(timeout=30)
     finally:
         mod.httpx_engine.send = real
 
@@ -181,12 +192,15 @@ def test_retries_exhausted_marks_attack_errored_without_row(tmp_path: Path, echo
     mod.httpx_engine.send = always_fail
     try:
         r = AttackRunner(p, aid)
-        r.start(); r.wait(timeout=30)
+        r.start()
+        r.wait(timeout=30)
     finally:
         mod.httpx_engine.send = real
 
     assert p.list_intruder_results(aid) == []
-    assert p.get_intruder(aid)["status"] == "errored"
+    row_d = p.get_intruder(aid)
+    assert row_d is not None
+    assert row_d["status"] == "errored"
     assert r.errors  # at least one job recorded its error
     assert "nope" in r.stop_reason
 
@@ -197,5 +211,6 @@ def test_runner_exposes_total_jobs(tmp_path: Path, echo_server: int):
     p = Project(tmp_path / "pj.rlr")
     aid = _create_attack(p, echo_server, ["a", "b", "c", "d"])
     r = AttackRunner(p, aid)
-    r.start(); r.wait(timeout=30)
+    r.start()
+    r.wait(timeout=30)
     assert r.total_jobs == 4

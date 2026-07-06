@@ -28,22 +28,25 @@ class HARImportResult:
     entries_skipped: int = 0
     first_history_id: int | None = None
     last_history_id: int | None = None
-    errors: list[str] = None
+    errors: list[str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.errors is None:
             self.errors = []
 
 
 def parse_har(raw: bytes | str) -> dict[str, Any]:
     """Parse HAR text and return the top-level dict; raises ValueError on bad input."""
+    text: str
     if isinstance(raw, bytes):
         try:
-            raw = raw.decode("utf-8-sig")
+            text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
-            raw = raw.decode("utf-8", errors="replace")
+            text = raw.decode("utf-8", errors="replace")
+    else:
+        text = raw
     try:
-        data = json.loads(raw)
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"HAR is not valid JSON: {exc}") from exc
     if not isinstance(data, dict) or "log" not in data:
@@ -62,7 +65,6 @@ def _hdr_pairs(items: list[dict] | None) -> list[tuple[str, str]]:
         if n:
             out.append((n, v))
     return out
-
 
 # M-6: cap HAR base64 body decoding to 50 MiB so a hostile HAR cannot
 # trigger an unbounded allocation when imported.
@@ -171,6 +173,8 @@ def import_har_data(project, data: dict[str, Any]) -> HARImportResult:
             result.entries_imported += 1
         except Exception as exc:  # pragma: no cover -- defensive
             result.entries_skipped += 1
+            if result.errors is None:
+                result.errors = []
             result.errors.append(f"entry {i}: {type(exc).__name__}: {exc}")
     return result
 

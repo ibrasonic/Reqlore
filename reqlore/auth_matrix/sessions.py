@@ -28,9 +28,9 @@ column and is encrypted with the project key. CRUD on the
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from typing import Iterable, Literal
-
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import Literal
 
 SessionKind = Literal["cookie", "bearer", "header", "multi", "anon"]
 SESSION_KINDS: tuple[SessionKind, ...] = (
@@ -302,10 +302,7 @@ def session_already_present(
         req_headers.append((k.strip(), v.strip()))
 
     if session.kind == "anon":
-        for name, _ in req_headers:
-            if name.lower() in _AUTH_HEADERS_STRIP:
-                return False
-        return True
+        return all(name.lower() not in _AUTH_HEADERS_STRIP for name, _ in req_headers)
 
     if session.kind == "cookie":
         req_cookie = _header_value(req_headers, "Cookie")
@@ -334,9 +331,6 @@ def session_already_present(
         sub = build_substitution(session)
         if not sub:
             return False
-        for name, value in sub:
-            if _header_value(req_headers, name).strip() != value.strip():
-                return False
-        return True
+        return all(_header_value(req_headers, name).strip() == value.strip() for name, value in sub)
 
     return False

@@ -9,8 +9,16 @@ plumbing.
 from __future__ import annotations
 
 from flask import (
-    Blueprint, abort, current_app, flash, g, jsonify, redirect,
-    render_template, request, url_for,
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
 from ...plugins import get_registry
@@ -173,7 +181,7 @@ def app_run(slug: str):
         return redirect(url_for(".app_detail", slug=app.slug))
     # Re-build the form dict; checkboxes that are unchecked omit the
     # key entirely, which BoolField interprets as False.
-    settings = {k: request.form.get(k) for k in request.form.keys()
+    settings = {k: request.form.get(k) for k in request.form
                 if k not in ("_csrf", "_seed_history_id")}
     seed_hid = _read_seed_history_id(request.form.get("_seed_history_id"))
     try:

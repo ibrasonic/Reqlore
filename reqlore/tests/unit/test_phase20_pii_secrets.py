@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 from reqlore.scanner import run_passive
 from reqlore.scanner.passive import (
     _is_text_response,
@@ -103,7 +101,7 @@ def test_is_text_response_recognises_text_and_json_variants():
 
 
 def _findings_only(row):
-    return [f for f in run_passive(row, rules=[rule_pii_secrets])]
+    return list(run_passive(row, rules=[rule_pii_secrets]))
 
 
 def test_detects_aws_access_key():

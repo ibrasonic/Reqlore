@@ -10,13 +10,13 @@ import secrets
 import time
 
 # Default project-state keys used by DOM Hunter.
-TOKEN_KEY = "dom_hunter_token"
+TOKEN_KEY = "dom_hunter_token"  # noqa: S105  # project-state key name, not a secret value
 # Previous-token + timestamp keep the prior bridge token valid for a
 # short grace window after rotation, so a running extension can fetch
 # the new token via the bridge config response and refresh its stored
 # value WITHOUT needing the user to relaunch reqlore browser.
-PREVIOUS_TOKEN_KEY = "dom_hunter_previous_token"
-PREVIOUS_TOKEN_AT_KEY = "dom_hunter_previous_token_at"
+PREVIOUS_TOKEN_KEY = "dom_hunter_previous_token"  # noqa: S105  # project-state key name, not a secret value
+PREVIOUS_TOKEN_AT_KEY = "dom_hunter_previous_token_at"  # noqa: S105  # project-state key name, not a secret value
 # Grace window during which the previous token is still accepted.
 # Long enough for an extension polling at CFG_TTL_MS=3s to roll over
 # multiple times, short enough that a leaked old token is not

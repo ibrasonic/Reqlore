@@ -14,7 +14,6 @@ import pytest
 from reqlore.config import Settings
 from reqlore.web import create_app
 
-
 # Match url_for('endpoint.name'  or  url_for("endpoint.name"
 _URL_FOR_RE = re.compile(r"""url_for\(\s*['"]([a-zA-Z_][a-zA-Z0-9_.]*)['"]""")
 

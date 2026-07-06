@@ -7,16 +7,13 @@ from __future__ import annotations
 
 import io
 import json
-import sys
 import tarfile
 import zipfile
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
 from reqlore import browser as fxmod
-
 
 # ---------------------------------------------------------------------------
 # Platform spec / cache layout

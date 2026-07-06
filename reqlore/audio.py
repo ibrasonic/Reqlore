@@ -8,7 +8,7 @@ import io
 import math
 import struct
 import wave
-
+from collections.abc import Callable
 
 SAMPLE_RATE = 22050
 
@@ -56,12 +56,14 @@ def chord(freqs: list[float], ms: int = 180) -> bytes:
         frames += struct.pack("<h", int(env * v * 32767))
     buf = io.BytesIO()
     with wave.open(buf, "wb") as w:
-        w.setnchannels(1); w.setsampwidth(2); w.setframerate(SAMPLE_RATE)
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(SAMPLE_RATE)
         w.writeframes(bytes(frames))
     return buf.getvalue()
 
 
-CUES: dict[str, tuple[str, callable]] = {
+CUES: dict[str, tuple[str, Callable[[], bytes]]] = {
     "ok":       ("Short major-3rd chord — operation completed.",
                  lambda: chord([523.25, 659.25], 140)),
     "warn":     ("Two-tone descending — needs attention.",

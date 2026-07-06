@@ -15,19 +15,14 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import socket
-import subprocess
-import sys
-from pathlib import Path
 
 import pytest
 
 import reqlore
 from reqlore import cli as reqlore_cli
 from reqlore.config import Settings
-from reqlore.engines import Request
-from reqlore.engines import raw_engine
+from reqlore.engines import Request, raw_engine
 from reqlore.web import create_app
-
 
 # Modules that legitimately raise at import time when their optional
 # dependency is missing. The scanner gap plan covers these separately;
@@ -256,8 +251,9 @@ def test_raw_engine_dead_port_returns_zero_status_with_error():
 def test_httpx_engine_send_signature_is_stable():
     """The active scanner calls httpx_engine.send(req, timeout=...,
     follow_redirects=...); guard that signature."""
-    from reqlore.engines import httpx_engine
     import inspect
+
+    from reqlore.engines import httpx_engine
 
     sig = inspect.signature(httpx_engine.send)
     params = sig.parameters

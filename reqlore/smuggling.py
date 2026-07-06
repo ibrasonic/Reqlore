@@ -20,8 +20,8 @@ request strongly suggests the back end is waiting for an extra byte.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 from urllib.parse import urlparse
 
 from .engines import Request, Response

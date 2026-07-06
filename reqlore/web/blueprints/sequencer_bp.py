@@ -20,16 +20,30 @@ preserved unchanged so existing tests and muscle memory keep working.
 from __future__ import annotations
 
 from flask import (
-    Blueprint, Response as FlaskResponse, abort, flash, g, jsonify, redirect,
-    render_template, request, url_for,
+    Blueprint,
+    abort,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
+from flask import (
+    Response as FlaskResponse,
 )
 
-from .._prg import PRGCache
 from ...sequencer import analyse, analyse_deep, collect_tokens
 from ...sequencer_capture import (
-    EXTRACTOR_KINDS, CaptureRunner, get_runner, parse_target_from_history,
-    register, unregister,
+    EXTRACTOR_KINDS,
+    CaptureRunner,
+    get_runner,
+    parse_target_from_history,
+    register,
+    unregister,
 )
+from .._prg import PRGCache
 
 bp = Blueprint("sequencer", __name__)
 
@@ -73,10 +87,7 @@ def index():
         result = None
         if tokens_text.strip():
             tokens = collect_tokens(tokens_text)
-            if deep_on:
-                result = analyse_deep(tokens, significance=significance)
-            else:
-                result = analyse(tokens)
+            result = analyse_deep(tokens, significance=significance) if deep_on else analyse(tokens)
         else:
             flash("Paste at least one token before analysing.", "warn")
 

@@ -15,7 +15,6 @@ from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner.active import OASTSSRFCheck
 from reqlore.web import create_app
 
-
 # ---- Repeater engine select ----
 
 @pytest.fixture

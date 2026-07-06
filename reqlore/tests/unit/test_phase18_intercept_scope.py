@@ -18,11 +18,10 @@ import json
 from pathlib import Path
 
 from reqlore.config import Settings
-from reqlore.proxy.mitm import _HistoryAddon, ProxyController
-from reqlore.proxy.rules import InterceptConfig, Rule
+from reqlore.proxy.mitm import ProxyController, _HistoryAddon
+from reqlore.proxy.rules import InterceptConfig
 from reqlore.storage import Project
 from reqlore.web import create_app
-
 
 # ---------------------------------------------------------------------------
 # dataclass + persistence round-trip

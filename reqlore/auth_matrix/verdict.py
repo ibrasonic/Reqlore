@@ -46,7 +46,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 VERDICT_LABELS: tuple[str, ...] = (
     "bypass-suspect",
     "denied-correctly",

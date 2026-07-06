@@ -30,7 +30,6 @@ from reqlore.scanner.js_pipeline import (
 )
 from reqlore.scanner.presets import SCAN_PRESETS, apply_preset
 
-
 # ---------------------------------------------------------------------------
 # Helpers — minimal stand-ins for storage / history rows / DOM hits.
 # ---------------------------------------------------------------------------
@@ -169,8 +168,8 @@ class TestExtractInlineScripts:
         assert out == ["var x = 1;"]
 
     def test_multiple_scripts(self) -> None:
-        html = ("<script>a()</script>foo"
-                "<script>b()</script>").encode()
+        html = (b"<script>a()</script>foo"
+                b"<script>b()</script>")
         assert extract_inline_scripts(html) == ["a()", "b()"]
 
     def test_external_script_skipped(self) -> None:
@@ -574,8 +573,8 @@ class TestScannerIntegration:
     def test_static_only_records_finding_and_bumps_counters(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from reqlore.scanner.active import ActiveScanner
         from reqlore.scanner import js_pipeline as pkg_mod
+        from reqlore.scanner.active import ActiveScanner
 
         def stub(source, *, host, url):
             return [Finding(
@@ -604,8 +603,8 @@ class TestScannerIntegration:
     def test_non_js_row_yields_no_pipeline_work(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from reqlore.scanner.active import ActiveScanner
         from reqlore.scanner import js_pipeline as pkg_mod
+        from reqlore.scanner.active import ActiveScanner
 
         called = []
         def stub(source, *, host, url):
@@ -626,8 +625,8 @@ class TestScannerIntegration:
     def test_pipeline_exception_does_not_break_scan(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from reqlore.scanner.active import ActiveScanner
         from reqlore.scanner import js_pipeline as pkg_mod
+        from reqlore.scanner.active import ActiveScanner
 
         def broken(source, *, host, url):
             raise RuntimeError("kaboom")
@@ -649,8 +648,8 @@ class TestScannerIntegration:
     def test_html_row_with_inline_script_records_finding(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from reqlore.scanner.active import ActiveScanner
         from reqlore.scanner import js_pipeline as pkg_mod
+        from reqlore.scanner.active import ActiveScanner
 
         def stub(source, *, host, url):
             return [Finding(

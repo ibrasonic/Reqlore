@@ -1,7 +1,7 @@
 """OAST blueprint: start/stop local callback receiver; list interactions."""
 from __future__ import annotations
 
-from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, url_for
 
 from ...oast import LocalOAST
 

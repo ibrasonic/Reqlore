@@ -13,6 +13,7 @@ platform so callers do not branch.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -37,19 +38,15 @@ def secret_write_bytes(path: Path, data: bytes) -> Path:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.close(fd)
-        except OSError:
-            pass
         raise
     # Defence-in-depth: on POSIX systems chmod even though we opened
     # with 0o600, in case an unusual umask interfered. Cheap and
     # idempotent.
-    try:
+    # Windows: ACLs are managed by the OS; chmod is a no-op there.
+    with contextlib.suppress(OSError):
         os.chmod(str(p), 0o600)
-    except OSError:
-        # Windows: ACLs are managed by the OS; chmod is a no-op there.
-        pass
     return p
 
 

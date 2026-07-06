@@ -4,11 +4,16 @@ from __future__ import annotations
 import json
 
 from flask import (
-    Blueprint, flash, g, redirect, render_template, request, url_for,
+    Blueprint,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
-from .._prg import PRGCache
 from ...graphql import introspect, parse_schema, run_query
+from .._prg import PRGCache
 
 bp = Blueprint("graphql", __name__)
 

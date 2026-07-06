@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from reqlore.engines import Response
 from reqlore.runner import YAML_AVAILABLE, load_job, run_job
 from reqlore.storage import Project
 

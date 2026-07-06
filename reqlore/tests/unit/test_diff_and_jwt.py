@@ -39,7 +39,7 @@ def test_pair_diff_lines_pairs_replace_block_into_chg():
     chg_rows = [r for r in paired if r[0] == "chg"]
     assert len(chg_rows) == 2
     # Each chg row has both an A side and a B side.
-    for tag, la, atext, lb, btext in chg_rows:
+    for _tag, la, atext, lb, btext in chg_rows:
         assert la is not None and lb is not None
         assert atext and btext
 

@@ -7,7 +7,8 @@ payloads at a target during exploration.
 """
 from __future__ import annotations
 
-from flask import Blueprint, Response as FlaskResponse, render_template, request
+from flask import Blueprint, render_template, request
+from flask import Response as FlaskResponse
 
 from ...smuggling import PAYLOAD_BUILDERS
 

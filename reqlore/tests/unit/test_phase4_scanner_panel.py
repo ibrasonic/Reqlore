@@ -28,7 +28,6 @@ from reqlore.plugins import reset_registry
 from reqlore.scanner.live import LiveScanWorker
 from reqlore.web import create_app
 
-
 # --------------------------- storage-level filters ---------------------------
 
 
@@ -152,7 +151,7 @@ def _make_worker(clock: _FakeClock) -> LiveScanWorker:
     w._clock = clock
     w._completions = []
     w.last_error = ""
-    w._last_error_ts = 0
+    w.last_error_ts = 0
     return w
 
 

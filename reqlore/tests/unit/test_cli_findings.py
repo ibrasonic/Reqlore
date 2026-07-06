@@ -9,7 +9,6 @@ import pytest
 from reqlore.cli import build_parser, main
 from reqlore.storage import Project
 
-
 # ---------------- parser surface ----------------
 
 
@@ -170,7 +169,9 @@ def test_finding_triage_false_positive_creates_suppression(tmp_path: Path, capsy
 
     proj = Project(proj_path)
     try:
-        assert proj.get_finding(fid)["status"] == "false_positive"
+        row = proj.get_finding(fid)
+        assert row is not None
+        assert row["status"] == "false_positive"
         sups = proj.list_finding_suppressions()
         assert any(s["rule_id"] == "passive:foo" and s["reason"] == "accepted"
                     for s in sups)
@@ -191,7 +192,9 @@ def test_finding_triage_other_status_does_not_suppress(tmp_path: Path, capsys):
     assert rc == 0
     proj = Project(proj_path)
     try:
-        assert proj.get_finding(fid)["status"] == "triaged"
+        row = proj.get_finding(fid)
+        assert row is not None
+        assert row["status"] == "triaged"
         assert proj.list_finding_suppressions() == []
     finally:
         proj.close()

@@ -50,11 +50,11 @@ import binascii
 import json
 import re
 import urllib.parse as up
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator, Literal
+from typing import Literal
 
 from ..engines import Request
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -170,7 +170,7 @@ def _iter_query(url: str) -> Iterator[InsertionPoint]:
         try:
             dk = up.unquote(k)
             dv = up.unquote(v)
-        except Exception:
+        except (UnicodeDecodeError, ValueError):  # noqa: S112  # skip malformed URL-encoded query pair, continue with remaining pairs
             continue
         yield InsertionPoint(
             ip_type="query", name=dk, value=dv, location="query",
@@ -200,7 +200,7 @@ def _iter_form(body: bytes, ct: str) -> Iterator[InsertionPoint]:
         try:
             dk = up.unquote(k)
             dv = up.unquote(v)
-        except Exception:
+        except (UnicodeDecodeError, ValueError):  # noqa: S112  # skip malformed URL-encoded form pair, continue with remaining pairs
             continue
         yield InsertionPoint(
             ip_type="form", name=dk, value=dv,
@@ -312,7 +312,7 @@ def _iter_xml(body: bytes, ct: str) -> Iterator[InsertionPoint]:
         try:
             elem = m.group(1).decode("ascii")
             val = m.group(3).decode("utf-8", errors="replace")
-        except Exception:
+        except (UnicodeDecodeError, AttributeError):  # noqa: S112  # skip XML element whose tag name isn't ASCII, continue with remaining matches
             continue
         yield InsertionPoint(
             ip_type="xml-value", name=elem, value=val,
@@ -324,7 +324,7 @@ def _iter_xml(body: bytes, ct: str) -> Iterator[InsertionPoint]:
             val = (m.group(2) or m.group(4) or b"").decode(
                 "utf-8", errors="replace",
             )
-        except Exception:
+        except (UnicodeDecodeError, AttributeError):  # noqa: S112  # skip XML attribute whose name isn't ASCII, continue with remaining matches
             continue
         if not attr:
             continue
@@ -428,7 +428,7 @@ def detect_nested_encoding(value: str, *, depth: int = 0) -> NestedEncoding:
             dec = up.unquote(value)
             if dec != value:
                 return "url"
-        except Exception:
+        except (UnicodeDecodeError, ValueError):  # noqa: S110  # expected when value contains malformed percent-escapes; not URL-encoded then
             pass
     # JSON?
     s = value.lstrip()
@@ -439,13 +439,13 @@ def detect_nested_encoding(value: str, *, depth: int = 0) -> NestedEncoding:
         except (ValueError, UnicodeDecodeError):
             pass
     # Base64? Length multiple of 4 (with padding), valid charset, ≥12 chars.
-    if len(value) >= 12 and len(value) % 4 == 0:
-        if re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", value):
-            try:
-                base64.b64decode(value, validate=True)
-                return "base64"
-            except (binascii.Error, ValueError):
-                pass
+    if (len(value) >= 12 and len(value) % 4 == 0
+            and re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", value)):
+        try:
+            base64.b64decode(value, validate=True)
+            return "base64"
+        except (binascii.Error, ValueError):
+            pass
     # Hex? Even length, hex charset, ≥8 chars.
     if len(value) >= 8 and len(value) % 2 == 0 and _HEX_RE.fullmatch(value):
         return "hex"
@@ -640,10 +640,12 @@ def _split_json_path(path: str) -> list:
         c = path[i]
         if c == ".":
             if buf:
-                tokens.append(buf); buf = ""
+                tokens.append(buf)
+                buf = ""
         elif c == "[":
             if buf:
-                tokens.append(buf); buf = ""
+                tokens.append(buf)
+                buf = ""
             j = path.find("]", i)
             if j == -1:
                 return []

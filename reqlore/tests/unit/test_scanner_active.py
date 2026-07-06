@@ -3,14 +3,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
-from reqlore.engines import Response, Request
+from reqlore.engines import Request, Response
 from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner.active import (
-    GraphQLIntrospectionCheck, OpenRedirectCheck, ReflectedXSSCheck,
-    SQLiErrorCheck, SSTICheck, JWTAlgNoneAcceptanceCheck,
+    GraphQLIntrospectionCheck,
+    JWTAlgNoneAcceptanceCheck,
+    OpenRedirectCheck,
     PrototypePollutionCheck,
+    ReflectedXSSCheck,
+    SQLiErrorCheck,
+    SSTICheck,
 )
 
 

@@ -23,7 +23,6 @@ import pytest
 from reqlore.scanner import insertion_points as ip
 from reqlore.scanner.active import ActiveOptions
 
-
 # --------------------------- iter_insertion_points ---------------------------
 
 

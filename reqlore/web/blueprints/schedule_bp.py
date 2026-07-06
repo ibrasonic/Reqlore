@@ -2,7 +2,14 @@
 from __future__ import annotations
 
 from flask import (
-    Blueprint, current_app, flash, g, redirect, render_template, request, url_for,
+    Blueprint,
+    current_app,
+    flash,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
 from ...scheduler import Scheduler, SchedulerLockError

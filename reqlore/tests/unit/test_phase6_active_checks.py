@@ -12,11 +12,10 @@ import base64
 import json
 from dataclasses import dataclass
 
-import pytest
-
-from reqlore.engines import Request, Response
-from reqlore.scanner import ActiveOptions, ActiveScanner, BUILTIN_ACTIVE_CHECKS
+from reqlore.engines import Response
+from reqlore.scanner import BUILTIN_ACTIVE_CHECKS, ActiveOptions, ActiveScanner
 from reqlore.scanner.phase6_checks import (
+    PHASE6_CHECKS,
     CachePoisoningCheck,
     CodeInjectionCheck,
     CRLFInjectionCheck,
@@ -28,7 +27,6 @@ from reqlore.scanner.phase6_checks import (
     LDAPInjectionCheck,
     MassAssignmentCheck,
     OAuthStateValidationCheck,
-    PHASE6_CHECKS,
     PaddingOracleCheck,
     SMTPHeaderInjectionCheck,
     SSIInjectionCheck,
@@ -37,7 +35,6 @@ from reqlore.scanner.phase6_checks import (
     XFFTrustCheck,
     XPathInjectionCheck,
 )
-
 
 # --- shared row / wire helpers --------------------------------------------
 
@@ -81,8 +78,9 @@ def _run(check, row, *, opts: ActiveOptions | None = None,
          responder=None):
     """Run a single check against a row via a fake sender."""
     if responder is None:
-        responder = lambda req: Response(status=200, headers=[],
-                                          body=b"", engine="fake")
+        def responder(req):
+            return Response(status=200, headers=[],
+                                                  body=b"", engine="fake")
     scanner = ActiveScanner(checks=[check], sender=responder)
     return scanner.run_on_row(row, options=opts or ActiveOptions(
         intensity_levels=frozenset({"light", "medium", "intrusive"}),
@@ -462,10 +460,9 @@ def test_xff_trust_positive():
     def responder(req):
         for k, v in req.headers:
             if k.lower() in ("x-forwarded-for", "x-real-ip", "x-client-ip",
-                              "x-originating-ip", "true-client-ip"):
-                if v == "127.0.0.1":
-                    return Response(status=200, headers=[], body=b"ok",
-                                     engine="fake")
+                              "x-originating-ip", "true-client-ip") and v == "127.0.0.1":
+                return Response(status=200, headers=[], body=b"ok",
+                                 engine="fake")
         return Response(status=403, headers=[], body=b"forbidden",
                          engine="fake")
     row = _row(status=403, resp_body=b"forbidden")

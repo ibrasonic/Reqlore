@@ -32,7 +32,6 @@ import pytest
 from reqlore.config import Settings
 from reqlore.web import create_app
 
-
 _TEMPLATES_ROOT = (Path(__file__).resolve().parents[2]
                     / "web" / "templates")
 

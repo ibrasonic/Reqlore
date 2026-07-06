@@ -3,10 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
-from reqlore.scanner import BUILTIN_RULES, Finding, Scanner, run_passive
-from reqlore.scanner.passive import RuleContext
+from reqlore.scanner import Finding, Scanner, run_passive
 
 
 @dataclass
@@ -27,7 +24,7 @@ def _resp(status: int, headers: list[tuple[str, str]], body: bytes = b"") -> byt
     return head.encode("latin-1") + b"\r\n" + body
 
 
-def _req(method: str, url: str, headers: list[tuple[str, str]] = None,
+def _req(method: str, url: str, headers: list[tuple[str, str]] | None = None,
          body: bytes = b"") -> bytes:
     headers = headers or []
     head = f"{method} {url} HTTP/1.1\r\n"

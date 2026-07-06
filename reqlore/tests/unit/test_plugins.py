@@ -91,7 +91,9 @@ def get_seen():
     reg.discover()
     sentinel = object()
     reg.call_register(sentinel)
-    mod = reg.get("demo").module
+    plugin = reg.get("demo")
+    assert plugin is not None
+    mod = plugin.module
     assert mod.get_seen() == [sentinel]
 
 
@@ -100,9 +102,13 @@ def test_discover_preserves_disabled_state(tmp_path: Path):
     reg = PluginRegistry([tmp_path])
     reg.discover()
     reg.toggle("demo")
-    assert reg.get("demo").enabled is False
+    plugin_a = reg.get("demo")
+    assert plugin_a is not None
+    assert plugin_a.enabled is False
     reg.discover()  # re-scan
-    assert reg.get("demo").enabled is False
+    plugin_b = reg.get("demo")
+    assert plugin_b is not None
+    assert plugin_b.enabled is False
 
 
 def test_rule_failure_inside_plugin_does_not_take_down_scan(tmp_path: Path):
@@ -128,11 +134,10 @@ def scanner_rules():
         url: str = ""
         method: str = ""
         status: int = 0
-        req_start_line: str = ""
-        req_headers: list = None
+        req_headers: list | None = None
         req_body: bytes = b""
         resp_start_line: str = ""
-        resp_headers: list = None
+        resp_headers: list | None = None
         resp_body: bytes = b""
 
     with pytest.raises(RuntimeError):

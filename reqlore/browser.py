@@ -17,8 +17,8 @@ Only stdlib + ``cryptography`` (already a dependency). No new pip deps.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
-import io
 import json
 import logging
 import os
@@ -305,10 +305,10 @@ def latest_version(timeout_s: float = DEFAULT_TIMEOUT_S,
     if channel not in CHANNELS:
         raise ValueError(f"unknown Firefox channel: {channel!r}")
     key = CHANNELS[channel]["version_key"]
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310  # VERSIONS_JSON_URL is a compile-time https:// literal (product-details.mozilla.org)
         VERSIONS_JSON_URL, headers={"User-Agent": "reqlore-browser/1.0"}
     )
-    with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310
+    with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310  # see Request() above — URL is a compile-time https:// literal
         data = json.loads(r.read().decode("utf-8"))
     ver = data.get(key)
     if not isinstance(ver, str) or not _VERSION_RE.match(ver):
@@ -339,12 +339,12 @@ def _fetch_expected_sha(version: str, archive_basename: str, lang: str,
     Returns None if the line isn't found (e.g. very old version layout) —
     we treat that as 'skip verification, log a warning'.
     """
-    req = urllib.request.Request(
+    req = urllib.request.Request(  # noqa: S310  # URL built from CHANNELS[channel]['archive_base'] which is a compile-time https:// literal (archive.mozilla.org)
         _sha256_sums_url(version, channel=channel),
         headers={"User-Agent": "reqlore-browser/1.0"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=timeout_s) as r:  # noqa: S310  # see Request() above — URL derived from compile-time https:// base
             body = r.read().decode("utf-8", errors="replace")
     except Exception as exc:
         log.warning("could not fetch SHA256SUMS for %s: %s", version, exc)
@@ -360,8 +360,10 @@ def _fetch_expected_sha(version: str, archive_basename: str, lang: str,
 def _download(url: str, dest: Path, timeout_s: float,
               progress: bool = True) -> None:
     log.info("downloading %s", url)
-    req = urllib.request.Request(url, headers={"User-Agent": "reqlore-browser/1.0"})
-    with urllib.request.urlopen(req, timeout=timeout_s) as r, open(dest, "wb") as f:  # noqa: S310
+    if not url.startswith(("http://", "https://")):
+        raise ValueError(f"unsupported download URL scheme: {url!r}")
+    req = urllib.request.Request(url, headers={"User-Agent": "reqlore-browser/1.0"})  # noqa: S310  # scheme allow-list checked above
+    with urllib.request.urlopen(req, timeout=timeout_s) as r, open(dest, "wb") as f:  # noqa: S310  # scheme allow-list checked above
         total = int(r.headers.get("Content-Length") or 0)
         seen = 0
         chunk = 1024 * 64
@@ -388,11 +390,30 @@ def _sha256_file(p: Path) -> str:
     return h.hexdigest()
 
 
+def _safe_extract_zip(z: zipfile.ZipFile, target: Path) -> None:
+    """Extract *z* into *target* after rejecting members whose resolved
+    path would escape the target directory (path traversal / absolute
+    paths / drive letters). zipfile has no built-in safe filter, so we
+    validate every member up front."""
+    target_resolved = target.resolve()
+    for m in z.infolist():
+        # PurePath normalisation collapses `..`, so a resolved child that
+        # is not under `target_resolved` means the archive is hostile.
+        candidate = (target_resolved / m.filename).resolve()
+        try:
+            candidate.relative_to(target_resolved)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"refusing to extract unsafe zip member: {m.filename!r}"
+            ) from exc
+    z.extractall(target)  # noqa: S202  # every member's resolved path was validated to stay inside `target` above
+
+
 def _extract(archive: Path, target: Path, kind: str) -> None:
     target.mkdir(parents=True, exist_ok=True)
     if kind == "zip":
         with zipfile.ZipFile(archive) as z:
-            z.extractall(target)
+            _safe_extract_zip(z, target)
         return
     if kind == "tar.xz":
         with tarfile.open(archive, mode="r:xz") as t:
@@ -652,10 +673,8 @@ def ensure_profile(profile_dir: Path | None = None) -> Path:
     # DOM Hunter bridge token; making it owner-only stops other local
     # users from reading them through stock /home traversal. On
     # Windows the chmod is a no-op and ACLs handle isolation.
-    try:
+    with contextlib.suppress(OSError):
         os.chmod(p, 0o700)
-    except OSError:
-        pass
     # Seed a tiny user.js so Firefox doesn't show 'first-run' nags even
     # when policies.json hasn't been applied yet (first cold boot).
     user_js = p / "user.js"
@@ -772,10 +791,8 @@ def sideload_dom_hunter(*, profile_dir: Path, xpi_path: Path,
         # Most likely: a managed Firefox is already running against this
         # same profile and is holding the XPI open. Clean up our scratch
         # file and re-raise with a message the user can act on.
-        try:
+        with contextlib.suppress(OSError):
             tmp.unlink()
-        except OSError:
-            pass
         raise PermissionError(
             f"cannot replace DOM Hunter XPI at {dest}: file is in use "
             f"(close any running 'reqlore browser' for this profile, "
@@ -910,7 +927,7 @@ def _ldd_missing(exe: Path) -> list[str]:
         return []
     try:
         r = subprocess.run(  # noqa: S603
-            ["ldd", str(exe)],
+            ["ldd", str(exe)],  # noqa: S607  # `ldd` is a required Linux tool expected on PATH; used for read-only shared-library inspection
             capture_output=True, text=True, timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired):
@@ -929,7 +946,7 @@ def _ldd_missing(exe: Path) -> list[str]:
 
 def _apt_pkg_exists(pkg: str) -> bool:
     r = subprocess.run(  # noqa: S603
-        ["apt-cache", "show", pkg],
+        ["apt-cache", "show", pkg],  # noqa: S607  # `apt-cache` is a required Debian/Ubuntu tool expected on PATH; used for read-only package existence check
         capture_output=True, text=True, timeout=10,
     )
     return r.returncode == 0 and bool((r.stdout or "").strip())
@@ -1141,15 +1158,15 @@ def launch(*, exe: Path, profile_dir: Path, url: str,
     log_file = Path(log_path)
     try:
         with log_file.open("wb") as ferr:
-            proc = subprocess.Popen(args, stderr=ferr, env=_clean_env())  # noqa: S603
+            popen: subprocess.Popen[bytes] = subprocess.Popen(args, stderr=ferr, env=_clean_env())  # noqa: S603
 
         deadline = time.monotonic() + max(0.1, warmup_seconds)
         while time.monotonic() < deadline:
-            if proc.poll() is not None:
+            if popen.poll() is not None:
                 break
             time.sleep(0.1)
 
-        if proc.poll() is not None:
+        if popen.poll() is not None:
             try:
                 err = log_file.read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -1159,23 +1176,21 @@ def launch(*, exe: Path, profile_dir: Path, url: str,
             # worker firefox.exe and exits cleanly. The visible browser
             # window is now owned by the worker process, which we don't
             # track. Treat exit-0 as successful hand-off.
-            if proc.returncode == 0:
+            if popen.returncode == 0:
                 log.info("firefox launcher exited 0 (handed off to worker process)")
             else:
-                raise RuntimeError(_explain_firefox_exit(proc.returncode, err))
+                raise RuntimeError(_explain_firefox_exit(popen.returncode, err))
     finally:
         # If Firefox is still running, leave the log file on disk for the
         # operator; otherwise clean it up.
-        if proc.poll() is not None:
-            try:
+        if popen.poll() is not None:
+            with contextlib.suppress(OSError):
                 log_file.unlink()
-            except OSError:
-                pass
 
     return LaunchResult(
         exe=exe, profile=profile_dir,
         policies=_policies_target_dir(exe) / "policies.json",
-        pid=proc.pid,
+        pid=popen.pid,
     )
 
 

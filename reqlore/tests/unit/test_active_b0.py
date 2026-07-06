@@ -9,11 +9,13 @@ import pytest
 from reqlore.engines import Request, Response
 from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner.active import (
-    ReflectedXSSCheck, SQLiErrorCheck, _detect_sql_engine,
-    _host_in_scope, _replace_form_value,
+    ReflectedXSSCheck,
+    SQLiErrorCheck,
+    _detect_sql_engine,
+    _host_in_scope,
+    _replace_form_value,
 )
 from reqlore.storage import Project
-
 
 # ----------------------------- shared helpers --------------------------------
 

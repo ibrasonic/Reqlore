@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import shlex
-from typing import Iterable
+from collections.abc import Iterable
 
 from .. import __version__ as _REQLORE_VERSION
 
@@ -19,9 +19,9 @@ def utc_now(now: _dt.datetime | None = None) -> _dt.datetime:
     ``now`` to make report generation deterministic in tests."""
     if now is not None:
         if now.tzinfo is None:
-            return now.replace(tzinfo=_dt.timezone.utc)
-        return now.astimezone(_dt.timezone.utc)
-    return _dt.datetime.now(_dt.timezone.utc)
+            return now.replace(tzinfo=_dt.UTC)
+        return now.astimezone(_dt.UTC)
+    return _dt.datetime.now(_dt.UTC)
 
 
 def reqlore_version() -> str:
@@ -29,7 +29,7 @@ def reqlore_version() -> str:
 
 
 def severity_counts(findings: Iterable[dict]) -> dict[str, int]:
-    out = {s: 0 for s in SEV_ORDER}
+    out = dict.fromkeys(SEV_ORDER, 0)
     for f in findings:
         sev = f.get("severity", "info")
         out[sev] = out.get(sev, 0) + 1
@@ -101,7 +101,7 @@ def parse_raw_request(blob: bytes) -> tuple[str, str, list[tuple[str, str]], byt
             continue
         try:
             line = raw.decode("utf-8", "replace")
-        except Exception:  # pragma: no cover
+        except (UnicodeDecodeError, AttributeError):  # noqa: S112  # pragma: no cover  # skip malformed header line, continue with remaining headers
             continue
         if ":" not in line:
             continue

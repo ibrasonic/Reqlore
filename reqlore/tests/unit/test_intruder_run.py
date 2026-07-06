@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from reqlore.intruder import AttackRunner, SQLI_PAYLOADS
+from reqlore.intruder import SQLI_PAYLOADS, AttackRunner
 from reqlore.storage import Project
 
 
@@ -117,6 +117,7 @@ def test_intruder_run_stale_content_length_in_template(tmp_path: Path, server: i
     r.wait(timeout=30)
 
     attack = p.get_intruder(aid)
+    assert attack is not None
     assert attack["status"] == "done", (
         f"attack did not complete cleanly: status={attack['status']}, "
         f"stop_reason={r.stop_reason!r}, errors={dict(list(r.errors.items())[:3])}"
@@ -162,7 +163,9 @@ def test_intruder_run_drops_transfer_encoding_from_template(tmp_path: Path, serv
     r = AttackRunner(p, aid)
     r.start()
     r.wait(timeout=15)
-    assert p.get_intruder(aid)["status"] == "done"
+    row_te = p.get_intruder(aid)
+    assert row_te is not None
+    assert row_te["status"] == "done"
     results = p.list_intruder_results(aid)
     assert len(results) == 2
     assert all(row["status"] == 200 for row in results)

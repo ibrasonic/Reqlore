@@ -12,12 +12,10 @@ from __future__ import annotations
 
 import base64
 import json
-import threading
 import time
 from dataclasses import dataclass, field
 
 try:
-    import websockets
     from websockets.sync.client import connect as _ws_connect
     WS_AVAILABLE = True
 except ImportError:
@@ -42,7 +40,7 @@ class WSMessage:
                 "kind": self.kind, "data": self.data, "size": self.size}
 
     @classmethod
-    def from_dict(cls, d: dict) -> "WSMessage":
+    def from_dict(cls, d: dict) -> WSMessage:
         return cls(direction=d.get("dir", ""), ts=int(d.get("ts", 0)),
                    kind=d.get("kind", "text"), data=d.get("data", ""),
                    size=int(d.get("size", 0)))
@@ -62,7 +60,7 @@ class WSTranscript:
         })
 
     @classmethod
-    def from_json(cls, blob: str) -> "WSTranscript":
+    def from_json(cls, blob: str) -> WSTranscript:
         if not blob:
             return cls()
         d = json.loads(blob)

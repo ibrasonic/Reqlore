@@ -1,11 +1,10 @@
 """Intercept rules engine. Pure data; no I/O."""
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
 
 from .. import _safe_regex
-
 
 # Default exclude regex: Firefox / Mozilla background traffic (telemetry,
 # safe-browsing, push, addon updates, captive-portal probes, etc.) plus
@@ -64,10 +63,7 @@ class Rule:
         if self.method_in and method.upper() not in (
                 m.upper() for m in self.method_in):
             return False
-        if self.path_regex and not _safe_regex.safe_search(
-                self.path_regex, path or ""):
-            return False
-        return True
+        return not (self.path_regex and not _safe_regex.safe_search(self.path_regex, path or ""))
 
     def matches_response(self, status: int, content_type: str) -> bool:
         if not self.enabled:
@@ -80,10 +76,9 @@ class Rule:
             return False
         if self.status_in is not None and status not in self.status_in:
             return False
-        if self.content_type_regex and not _safe_regex.safe_search(
-                self.content_type_regex, content_type or ""):
-            return False
-        return True
+        ct = content_type or ""
+        return not (self.content_type_regex
+                    and not _safe_regex.safe_search(self.content_type_regex, ct))
 
 
 def should_hold_request(rules: Iterable[Rule], host: str, method: str,
@@ -150,7 +145,7 @@ class InterceptConfig:
         }
 
     @classmethod
-    def from_dict(cls, d: dict | None) -> "InterceptConfig":
+    def from_dict(cls, d: dict | None) -> InterceptConfig:
         if not d:
             return cls()
         methods = d.get("methods") or []

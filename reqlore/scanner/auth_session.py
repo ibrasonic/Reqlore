@@ -45,11 +45,13 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any
 
 from ..engines import Request, Response, httpx_engine
-from ..macros import Macro, MacroRun, run as run_macro
+from ..macros import Macro, MacroRun
+from ..macros import run as run_macro
 
 __all__ = [
     "AuthCredentials",
@@ -588,7 +590,7 @@ class AuthSession:
             # urlencoded form: key=val&...
             new_text = re.sub(
                 rf"({re.escape(name)}=)([^&]*)",
-                lambda m: m.group(1) + _quote(new_value),
+                lambda m, v=new_value: m.group(1) + _quote(v),  # type: ignore[misc]  # bound-default-arg pattern for closure-over-loop-var
                 new_text,
             )
             # JSON: "name":"value"  (very small subset of cases on
@@ -596,7 +598,7 @@ class AuthSession:
             # parser and we won't pretend to here).
             new_text = re.sub(
                 rf'("{re.escape(name)}"\s*:\s*)"[^"]*"',
-                lambda m: f'{m.group(1)}"{new_value}"',
+                lambda m, v=new_value: f'{m.group(1)}"{v}"',  # type: ignore[misc]  # bound-default-arg pattern for closure-over-loop-var
                 new_text,
             )
         if new_text != text:
@@ -713,9 +715,7 @@ def _name_in_json_or_form(text: str, name: str) -> bool:
         return False
     if (name + "=") in text:
         return True
-    if f'"{name}"' in text:
-        return True
-    return False
+    return f'"{name}"' in text
 
 
 def _quote(value: str) -> str:
@@ -734,7 +734,7 @@ def _extract_csrf_tokens(
     Looks for ``<input name="<n>" value="...">`` first, then
     ``<meta name="<n>" content="...">``. Returns only names found.
     """
-    wanted = {n: None for n in names}
+    wanted = dict.fromkeys(names)
     if not html or not wanted:
         return {}
     for m in _INPUT_VALUE_RE.finditer(html):

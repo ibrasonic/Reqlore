@@ -16,8 +16,8 @@ from dataclasses import dataclass
 
 from reqlore.scanner import run_passive
 from reqlore.scanner.passive import (
-    _is_text_response,
     _SECRET_PATTERNS,
+    _is_text_response,
     rule_pii_secrets,
 )
 
@@ -188,7 +188,11 @@ def test_mapbox_public_pk_not_flagged():
 
 def test_sendgrid_api_key_flagged():
     # Real SendGrid key format: SG.<22-char>.<43-char>
-    body = b'SENDGRID_KEY="' b'SG' b'.aBcDeFgHiJkLmNoPqRsTuV.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789AbCdEfG"'
+    body = (
+        b'SENDGRID_KEY="'
+        b'SG.aBcDeFgHiJkLmNoPqRsTuV'
+        b'.aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789AbCdEfG"'
+    )
     findings = _findings(_row(
         resp_headers=[("Content-Type", "application/javascript")],
         resp_body=body,

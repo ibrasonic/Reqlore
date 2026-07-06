@@ -43,12 +43,14 @@ Design notes
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from .plugins_sdk import (
     CancelledError,
@@ -58,7 +60,6 @@ from .plugins_sdk import (
     SeedRequest,
     parse_seed_request,
 )
-
 
 log = logging.getLogger("reqlore.plugin_runner")
 
@@ -202,10 +203,8 @@ class PluginRunner:
             t = state.thread
             if t is None:
                 continue
-            try:
+            with contextlib.suppress(Exception):
                 t.join(timeout=_SHUTDOWN_JOIN_S)
-            except Exception:
-                pass
 
     # --------------------------------------------------------------- internals
 

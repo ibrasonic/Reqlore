@@ -11,7 +11,6 @@ fall-through, the zero-width-match guard, and the truncation flag.
 from __future__ import annotations
 
 from reqlore.a11y import (
-    FindMatch,
     FindResult,
     FindSegment,
     build_find_context,
@@ -19,7 +18,6 @@ from reqlore.a11y import (
     find_segments,
     find_status_sentence,
 )
-
 
 # ---------- find_in_text ----------
 

@@ -35,7 +35,6 @@ from reqlore.scanner.insertion_points import (
 )
 from reqlore.storage import Project
 
-
 # ---------------------------------------------------------------------------
 # 1) ConsolidationSettings dataclass validation.
 # ---------------------------------------------------------------------------
@@ -342,7 +341,7 @@ def _seed_findings(
         url = f"{base_url}/{i}/profile"
         fid = proj.add_finding(
             severity="medium",
-            title=f"Missing X-Foo header",
+            title="Missing X-Foo header",
             host=host,
             url=url,
             rule_id=rule_id,

@@ -24,7 +24,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 # Order is the order shown in the UI.
 # (slug, label, accesskey)
 SEND_TARGETS: list[tuple[str, str, str]] = [

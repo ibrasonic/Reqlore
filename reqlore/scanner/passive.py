@@ -9,8 +9,9 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from typing import Literal, cast
 
 from .findings import Finding
 from .rules import RuleMeta, rule_meta
@@ -69,7 +70,7 @@ class RuleContext:
     resp_body: bytes
 
     @classmethod
-    def from_row(cls, row) -> "RuleContext":
+    def from_row(cls, row) -> RuleContext:
         rs, rh, rb = _split_http(row.req_blob)
         ss, sh, sb = _split_http(row.resp_blob)
         return cls(
@@ -145,7 +146,8 @@ def rule_missing_security_headers(ctx: RuleContext) -> Iterable[Finding]:
     for name, (sev, cwe, owasp, desc, remed) in _SECURITY_HEADERS.items():
         if _header(ctx.resp_headers, name) is None:
             yield Finding(
-                severity=sev, title=f"Missing response header: {name}",
+                severity=cast("Literal['info', 'low', 'medium', 'high', 'critical']", sev),
+                title=f"Missing response header: {name}",
                 description=desc, remediation=remed, cwe=cwe, owasp=owasp,
                 host=ctx.host, url=ctx.url, request_id=ctx.history_id,
                 evidence=f"{ctx.resp_start_line} — header '{name}' not present",
@@ -1108,11 +1110,11 @@ def _is_text_response(headers: list[tuple[str, str]]) -> bool:
         return True
     if "+json" in ct or "+xml" in ct:
         return True
-    if ("application/javascript" in ct
-            or "application/x-javascript" in ct
-            or "application/ecmascript" in ct):
-        return True
-    return False
+    return bool(
+        "application/javascript" in ct
+        or "application/x-javascript" in ct
+        or "application/ecmascript" in ct
+    )
 
 
 # Each entry: (slug, compiled regex, severity, cwe, owasp, label,
@@ -1227,7 +1229,7 @@ def rule_pii_secrets(ctx: RuleContext) -> Iterable[Finding]:
             raw = m.group(1) if m.groups() else m.group(0)
             try:
                 text = raw.decode("latin-1", errors="replace")
-            except Exception:  # noqa: BLE001
+            except (UnicodeDecodeError, AttributeError):  # noqa: BLE001,S112  # skip regex match whose bytes aren't decodable, continue with remaining matches
                 continue
             if luhn_required:
                 digits = re.sub(r"[ -]", "", text)

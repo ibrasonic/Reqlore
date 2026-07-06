@@ -13,23 +13,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pytest
-
 from reqlore.engines import Request, Response
 from reqlore.scanner import ActiveOptions, ActiveScanner
 from reqlore.scanner.active import (
-    AccountEnumTimingCheck,
-    CSRFTokenValidationCheck,
     _CSRF_HEADER_NAMES,
     _CSRF_PARAM_NAMES,
+    AccountEnumTimingCheck,
+    ActiveContext,
+    CSRFTokenValidationCheck,
     _find_csrf_token,
     _find_username_field,
     _is_timing_anomaly,
     _mad,
     _median,
 )
-from reqlore.scanner.active import ActiveContext
-
 
 # ---- shared row builders ---------------------------------------------------
 

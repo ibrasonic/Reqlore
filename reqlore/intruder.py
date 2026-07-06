@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextlib
 import hashlib
 import html
 import itertools
@@ -30,17 +31,14 @@ import shlex
 import threading
 import time
 import urllib.parse
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterator, Sequence
 from urllib.parse import urlsplit
 
-from .engines import Request, Response
-from .engines import httpx_engine, raw_engine
-from .engines import curl_cffi_engine, h3_engine
+from .engines import Request, Response, curl_cffi_engine, h3_engine, httpx_engine, raw_engine
 from .storage import Project
-
 
 DEFAULT_MARKER = "\u00a7"   # section sign — conventional payload marker
 
@@ -77,7 +75,7 @@ def apply_payloads(template: bytes, positions: list[tuple[int, int]],
         )
     pieces: list[bytes] = []
     cursor = 0
-    for (a, b), p in zip(positions, payloads):
+    for (a, b), p in zip(positions, payloads, strict=False):
         pieces.append(template[cursor:a])
         pieces.append(p.encode("utf-8", errors="replace"))
         cursor = b
@@ -101,8 +99,8 @@ def _proc_b64dec(s: str) -> str:
 def _proc_hex(s: str) -> str: return s.encode().hex()
 def _proc_upper(s: str) -> str: return s.upper()
 def _proc_lower(s: str) -> str: return s.lower()
-def _proc_md5(s: str) -> str: return hashlib.md5(s.encode()).hexdigest()
-def _proc_sha1(s: str) -> str: return hashlib.sha1(s.encode()).hexdigest()
+def _proc_md5(s: str) -> str: return hashlib.md5(s.encode(), usedforsecurity=False).hexdigest()
+def _proc_sha1(s: str) -> str: return hashlib.sha1(s.encode(), usedforsecurity=False).hexdigest()
 def _proc_sha256(s: str) -> str: return hashlib.sha256(s.encode()).hexdigest()
 def _proc_reverse(s: str) -> str: return s[::-1]
 def _proc_length(s: str) -> str: return str(len(s))
@@ -177,6 +175,7 @@ def _jwt_sign_one(value: str, arg: str) -> str:
     # rest of intruder.py stays usable in environments that pre-date the
     # pyjwt dependency on the wheel.
     import base64 as _b64
+
     import jwt as pyjwt  # type: ignore[import-not-found]
 
     tokens = shlex.split(arg, posix=True)
@@ -392,7 +391,7 @@ def load_wordlist_file(path: str, *, max_bytes: int = 5 * 1024 * 1024,
         raise ValueError(
             f"Wordlist too large ({size} bytes > {max_bytes}); split it.")
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
     except OSError as exc:
         raise ValueError(f"Cannot read wordlist: {exc}") from exc
@@ -472,7 +471,7 @@ def from_path(path: str | Path) -> PayloadSource:
     p = str(path)
 
     def _gen() -> Iterator[str]:
-        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+        with open(p, encoding="utf-8", errors="replace") as fh:
             for raw in fh:
                 line = raw.rstrip("\r\n")
                 if not line or line.lstrip().startswith("#"):
@@ -489,7 +488,7 @@ def count_wordlist_lines(path: str | Path) -> int:
     typical SSD; trivial next to the network cost of the attack itself.
     """
     n = 0
-    with open(str(path), "r", encoding="utf-8", errors="replace") as fh:
+    with open(str(path), encoding="utf-8", errors="replace") as fh:
         for raw in fh:
             line = raw.rstrip("\r\n")
             if line and not line.lstrip().startswith("#"):
@@ -521,7 +520,7 @@ def iterate_streaming(attack_type: str, sources: Sequence[PayloadSource],
             yield [p] * n_positions
     elif attack_type == "pitchfork":
         iters = [s() for s in sources]
-        for combo in zip(*iters):
+        for combo in zip(*iters, strict=False):
             yield list(combo)
     elif attack_type == "clusterbomb":
         yield from _clusterbomb(list(sources), [])
@@ -726,17 +725,13 @@ class AttackRunner:
 
     def pause(self) -> None:
         self._pause.clear()
-        try:
+        with contextlib.suppress(Exception):
             self.project.set_intruder_status(self.attack_id, "paused")
-        except Exception:
-            pass
 
     def resume(self) -> None:
         self._pause.set()
-        try:
+        with contextlib.suppress(Exception):
             self.project.set_intruder_status(self.attack_id, "running")
-        except Exception:
-            pass
 
     def is_paused(self) -> bool:
         return not self._pause.is_set() and not self._cancel.is_set()
@@ -850,7 +845,7 @@ class AttackRunner:
                 grep_hits, grep_matched = grep_extract(resp.body or b"", options.grep)
                 raw_req = resp.raw_request or rendered
                 raw_resp = _serialise_response(resp)
-                body_md5 = hashlib.md5(resp.body or b"").hexdigest()
+                body_md5 = hashlib.md5(resp.body or b"", usedforsecurity=False).hexdigest()
                 try:
                     host = urlsplit(req.url).hostname or ""
                 except Exception:
@@ -961,27 +956,30 @@ def _emit_intruder_finding(project, *, attack_id: int, seq: int, host: str,
 
 def _send_factory(engine: str, opts: AttackOptions):
     if engine == "raw":
-        def _s(req: Request) -> Response:
+        def _s_raw(req: Request) -> Response:
             return raw_engine.send(req, verify=opts.verify_tls, timeout=opts.timeout)
-        return _s
+        return _s_raw
     if engine == "h3":
-        def _s(req: Request) -> Response:
+        def _s_h3(req: Request) -> Response:
             return h3_engine.send(req, timeout=opts.timeout)
-        return _s
+        return _s_h3
     if engine.startswith("curl-cffi"):
         profile = engine.split(":", 1)[1] if ":" in engine else "chrome120"
-        def _s(req: Request) -> Response:
+        def _s_cffi(req: Request) -> Response:
+            # curl_cffi_engine does not currently plumb follow_redirects
+            # through to the underlying curl session; dropping the kwarg
+            # matches the engine's actual signature.
             return curl_cffi_engine.send(
                 req, profile=profile, timeout=opts.timeout,
-                follow_redirects=opts.follow_redirects,
+                verify=bool(opts.verify_tls),
             )
-        return _s
-    def _s(req: Request) -> Response:
+        return _s_cffi
+    def _s_httpx(req: Request) -> Response:
         return httpx_engine.send(
             req, verify=opts.verify_tls, timeout=opts.timeout,
             follow_redirects=opts.follow_redirects,
         )
-    return _s
+    return _s_httpx
 
 
 def _serialise_response(resp: Response) -> bytes:

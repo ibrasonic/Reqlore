@@ -7,6 +7,7 @@ project history, applies Match & Replace rules, and supports both async-hold
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import threading
@@ -15,12 +16,15 @@ import urllib.parse
 import uuid
 from typing import Any
 
-from ..storage import Project
 from ..scanner.scope_utils import host_in_scope, load_scope_rules
+from ..storage import Project
 from .ca import ensure_ca
 from .matchreplace import MRRule, apply_request, apply_response, from_row
 from .rules import (
-    InterceptConfig, Rule, should_hold_request, should_hold_response,
+    InterceptConfig,
+    Rule,
+    should_hold_request,
+    should_hold_response,
 )
 
 log = logging.getLogger("reqlore.proxy")
@@ -45,7 +49,7 @@ def _load_mr(project: Project) -> list[MRRule]:
 # Hostnames that always resolve to "this machine". Used together with the
 # Reqlore UI port to make sure we never accidentally hold a request that
 # the operator's browser is making *to* the Reqlore web UI itself.
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", "[::1]"})
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0", "[::1]"})  # noqa: S104  # membership set for detecting local-host header values, not a socket bind
 
 
 def _host_port_from_header(host_hdr: str) -> tuple[str, int]:
@@ -271,10 +275,9 @@ class _HistoryAddon:
                     except Exception:
                         cfg = None
                     if cfg is not None and getattr(
-                            cfg, "restrict_to_scope", False):
-                        if not host_in_scope(
-                                host, load_scope_rules(self.project)):
-                            return
+                            cfg, "restrict_to_scope", False) and not host_in_scope(
+                            host, load_scope_rules(self.project)):
+                        return
                 if self.sync_hold:
                     await self._sync_hold(
                         "request", flow, _serialise_request(req),
@@ -389,10 +392,8 @@ class _HistoryAddon:
         # Phase 15: tag the flow so the response hook knows this is the
         # parent of any subsequent redirect target.  ``flow`` is a
         # mitmproxy HTTPFlow which accepts arbitrary attributes.
-        try:
+        with contextlib.suppress(Exception):
             flow._reqlore_iid = iid
-        except Exception:
-            pass
         deadline = time.monotonic() + HOLD_TIMEOUT_S
         while time.monotonic() < deadline:
             decision, edited = self.project.get_intercept_decision(iid)
@@ -411,7 +412,13 @@ class _HistoryAddon:
 
 
 def _serialise_request(req: Any) -> bytes:
-    head = f"{req.method} {req.path} HTTP/{req.http_version.split('/')[-1] if isinstance(req.http_version, str) else '1.1'}\r\n"
+    # SIM108 would collapse this to a one-line ternary that trips E501
+    # (line >100 chars). Block form is chosen deliberately for readability.
+    if isinstance(req.http_version, str):  # noqa: SIM108  # ternary form exceeds line length
+        http_ver = req.http_version.split("/")[-1]
+    else:
+        http_ver = "1.1"
+    head = f"{req.method} {req.path} HTTP/{http_ver}\r\n"
     for k, v in req.headers.items():
         head += f"{k}: {v}\r\n"
     return head.encode("latin-1", errors="replace") + b"\r\n" + bytes(req.raw_content or b"")
@@ -448,10 +455,8 @@ def _apply_raw_to_response(resp: Any, raw: bytes) -> None:
     if lines:
         parts = lines[0].split(" ", 2)
         if len(parts) >= 2:
-            try:
+            with contextlib.suppress(ValueError):
                 resp.status_code = int(parts[1])
-            except ValueError:
-                pass
             if len(parts) >= 3:
                 resp.reason = parts[2]
     resp.headers.clear()
@@ -644,7 +649,5 @@ class ProxyController:
                 self._loop.run_until_complete(self._loop.shutdown_asyncgens())
             except Exception:
                 log.exception("error while draining proxy event loop")
-            try:
+            with contextlib.suppress(Exception):
                 self._loop.close()
-            except Exception:
-                pass

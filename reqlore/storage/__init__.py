@@ -9,10 +9,10 @@ import threading
 import time
 import uuid as _uuid
 import zlib
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 SCHEMA_VERSION = 6
 
@@ -589,10 +589,8 @@ class Project:
         for table, col, decl in adds:
             cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if col not in cols:
-                try:
+                with suppress(sqlite3.OperationalError):
                     self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
-                except sqlite3.OperationalError:
-                    pass
         # Indices we want even on freshly-migrated databases.
         for ddl in (
             "CREATE INDEX IF NOT EXISTS idx_issues_source ON issues(source)",
@@ -600,10 +598,8 @@ class Project:
             "CREATE INDEX IF NOT EXISTS idx_issues_rule ON issues(rule_id)",
             "CREATE INDEX IF NOT EXISTS idx_issues_dedupe ON issues(dedupe_key)",
         ):
-            try:
+            with suppress(sqlite3.OperationalError):
                 self._conn.execute(ddl)
-            except sqlite3.OperationalError:
-                pass
         # Backfill uuid + updated_at for any pre-v3 rows.
         try:
             rows = self._conn.execute(
@@ -644,7 +640,10 @@ class Project:
     # ---- project meta ----
     def meta(self) -> dict:
         with self._cursor() as cur:
-            r = cur.execute("SELECT name, created_at, schema_version, settings_json FROM project").fetchone()
+            r = cur.execute(
+                "SELECT name, created_at, schema_version, settings_json "
+                "FROM project"
+            ).fetchone()
         return {"name": r[0], "created_at": r[1], "schema_version": r[2],
                 "settings": json.loads(r[3])}
 
@@ -704,7 +703,7 @@ class Project:
         args += [limit, offset]
         with self._cursor() as cur:
             rows = cur.execute(sql, args).fetchall()
-        out = [HistoryRow(*r[:12], _decompress(r[12]), _decompress(r[13])) for r in rows]
+        out = [HistoryRow(*r[:12], _decompress(r[12]), _decompress(r[13])) for r in rows]  # type: ignore[call-arg]  # mypy can't verify r[:12] length; slice yields exactly 12 by SELECT above
         # Regex URL filter is applied in Python because SQLite's REGEXP
         # operator is not bundled by default. The candidate set is
         # already narrowed by every other clause + LIKE, so this stays
@@ -726,7 +725,7 @@ class Project:
             ).fetchone()
         if not r:
             return None
-        return HistoryRow(*r[:12], _decompress(r[12]), _decompress(r[13]))
+        return HistoryRow(*r[:12], _decompress(r[12]), _decompress(r[13]))  # type: ignore[call-arg]  # mypy can't verify r[:12] length; slice yields exactly 12 by SELECT above
 
     def history_count(self) -> int:
         with self._cursor() as cur:
@@ -805,9 +804,11 @@ class Project:
         args: list = []
         if host:
             if host_mode == "contains":
-                where += " AND host LIKE ?"; args.append(f"%{host}%")
+                where += " AND host LIKE ?"
+                args.append(f"%{host}%")
             else:
-                where += " AND host = ?"; args.append(host)
+                where += " AND host = ?"
+                args.append(host)
         # Singular ``method`` kept for backwards-compat with old
         # bookmarks; the multi-select ``methods`` is preferred.
         if methods:
@@ -815,7 +816,8 @@ class Project:
             where += f" AND method IN ({placeholders})"
             args.extend(m.upper() for m in methods)
         elif method:
-            where += " AND method = ?"; args.append(method.upper())
+            where += " AND method = ?"
+            args.append(method.upper())
         if statuses:
             clauses: list[str] = []
             for tok in statuses:
@@ -828,7 +830,8 @@ class Project:
                     args.extend([lo, lo + 100])
                 else:
                     try:
-                        clauses.append("status = ?"); args.append(int(tok))
+                        clauses.append("status = ?")
+                        args.append(int(tok))
                     except ValueError:
                         # Silently drop garbage tokens — the form layer
                         # also validates, so this is defence in depth.
@@ -840,19 +843,24 @@ class Project:
             where += f" AND engine IN ({placeholders})"
             args.extend(engines)
         if len_min is not None:
-            where += " AND len_resp >= ?"; args.append(int(len_min))
+            where += " AND len_resp >= ?"
+            args.append(int(len_min))
         if len_max is not None:
-            where += " AND len_resp <= ?"; args.append(int(len_max))
+            where += " AND len_resp <= ?"
+            args.append(int(len_max))
         if dur_min is not None:
-            where += " AND duration_ms >= ?"; args.append(int(dur_min))
+            where += " AND duration_ms >= ?"
+            args.append(int(dur_min))
         if dur_max is not None:
-            where += " AND duration_ms <= ?"; args.append(int(dur_max))
+            where += " AND duration_ms <= ?"
+            args.append(int(dur_max))
         # URL substring — LIKE is skipped when q_regex is set so the
         # regex pattern (which may use anchors / character classes) is
         # the sole authority. Otherwise we use a case-insensitive
         # substring match.
         if q and not q_regex:
-            where += " AND url LIKE ?"; args.append(f"%{q}%")
+            where += " AND url LIKE ?"
+            args.append(f"%{q}%")
         return where, args
 
     def clear_history(self) -> int:
@@ -921,7 +929,8 @@ class Project:
                                 parent_intercept_id: int | None = None) -> int:
         with self._cursor() as cur:
             cur.execute(
-                "INSERT INTO intercept_q(kind,req_blob,hold_reason,created_at,flow_id,parent_intercept_id) "
+                "INSERT INTO intercept_q(kind,req_blob,hold_reason,"
+                "created_at,flow_id,parent_intercept_id) "
                 "VALUES (?,?,?,?,?,?)",
                 (kind, _compress(raw), reason, int(time.time()), flow_id,
                  parent_intercept_id),
@@ -931,7 +940,8 @@ class Project:
     def get_intercept_by_flow(self, flow_id: str) -> InterceptRow | None:
         with self._cursor() as cur:
             r = cur.execute(
-                "SELECT id,kind,req_blob,hold_reason,created_at,parent_intercept_id FROM intercept_q "
+                "SELECT id,kind,req_blob,hold_reason,created_at,"
+                "parent_intercept_id FROM intercept_q "
                 "WHERE flow_id=? AND decision IS NULL",
                 (flow_id,),
             ).fetchone()
@@ -1030,7 +1040,8 @@ class Project:
         )
         args: list = []
         if host:
-            sql += " AND host=?"; args.append(host)
+            sql += " AND host=?"
+            args.append(host)
         sql += " GROUP BY host, url, method ORDER BY host, url"
         with self._cursor() as cur:
             rows = cur.execute(sql, args).fetchall()
@@ -1051,7 +1062,6 @@ class Project:
         """Search http_history req+resp bodies + url. `where` in {any,url,req,resp}."""
         if not q:
             return []
-        like = f"%{q}%"
         with self._cursor() as cur:
             rows = cur.execute(
                 "SELECT id, ts, host, method, url, status, len_resp, req_blob, resp_blob "
@@ -1063,12 +1073,10 @@ class Project:
             hits: list[str] = []
             if where in ("any", "url") and q.lower() in (r[4] or "").lower():
                 hits.append("url")
-            if where in ("any", "req"):
-                if ql in _decompress(r[7]).lower():
-                    hits.append("request")
-            if where in ("any", "resp"):
-                if ql in _decompress(r[8]).lower():
-                    hits.append("response")
+            if where in ("any", "req") and ql in _decompress(r[7]).lower():
+                hits.append("request")
+            if where in ("any", "resp") and ql in _decompress(r[8]).lower():
+                hits.append("response")
             if hits:
                 out.append({
                     "id": r[0], "ts": r[1], "host": r[2], "method": r[3],
@@ -1172,7 +1180,7 @@ class Project:
         direction = "DESC" if desc else "ASC"
         with self._cursor() as cur:
             rows = cur.execute(
-                f"SELECT id,seq,payloads_json,status,len_resp,duration_ms,grep_hits,history_id,"
+                f"SELECT id,seq,payloads_json,status,len_resp,duration_ms,grep_hits,history_id,"  # noqa: S608  # order_col whitelisted via dict above, direction is a compile-time literal, attack_id is parameterised
                 f"body_md5,matched FROM intruder_results WHERE attack_id=? "
                 f"ORDER BY {order_col} {direction}",
                 (attack_id,),
@@ -1256,7 +1264,7 @@ class Project:
         args.append(cid)
         with self._cursor() as cur:
             cur.execute(
-                f"UPDATE sequencer_captures SET {', '.join(sets)} WHERE id=?",
+                f"UPDATE sequencer_captures SET {', '.join(sets)} WHERE id=?",  # noqa: S608  # `sets` entries are hardcoded `col=?` fragments assembled locally; all values pass through `args`
                 args,
             )
 
@@ -1373,7 +1381,7 @@ class Project:
 
     @staticmethod
     def _row_to_finding(r) -> dict:
-        out = dict(zip(Project._ISSUES_COLS, r))
+        out = dict(zip(Project._ISSUES_COLS, r, strict=False))
         try:
             out["references"] = json.loads(out.pop("references_json") or "[]")
         except (ValueError, TypeError):
@@ -1550,7 +1558,7 @@ class Project:
         placeholders = ",".join("?" * len(partners))
         try:
             rows = cur.execute(
-                f"SELECT id, url, confidence FROM issues "
+                f"SELECT id, url, confidence FROM issues "  # noqa: S608  # `placeholders` is a comma-joined string of `?` markers; rule ids and host are parameterised
                 f"WHERE rule_id IN ({placeholders}) "
                 f"AND COALESCE(host,'')=? AND status='open'",
                 (*partners, host or ""),
@@ -1569,7 +1577,7 @@ class Project:
         # Upgrade partners.
         ph = ",".join("?" * len(upgraded_partners))
         cur.execute(
-            f"UPDATE issues SET confidence='certain', updated_at=? "
+            f"UPDATE issues SET confidence='certain', updated_at=? "  # noqa: S608  # `ph` is a comma-joined string of `?` markers; ids/timestamp are parameterised
             f"WHERE id IN ({ph})",
             (ts, *upgraded_partners),
         )
@@ -1661,24 +1669,31 @@ class Project:
                        waf_tagged: bool = False,
                        limit: int = 500) -> list[dict]:
         cols = ",".join(self._ISSUES_COLS)
-        sql = f"SELECT {cols} FROM issues WHERE 1=1"
+        sql = f"SELECT {cols} FROM issues WHERE 1=1"  # noqa: S608  # `cols` is joined from the class-level _ISSUES_COLS whitelist; filters below use ? placeholders
         args: list = []
         if severity:
-            sql += " AND severity=?"; args.append(severity)
+            sql += " AND severity=?"
+            args.append(severity)
         if status:
-            sql += " AND status=?"; args.append(status)
+            sql += " AND status=?"
+            args.append(status)
         if host:
-            sql += " AND host=?"; args.append(host)
+            sql += " AND host=?"
+            args.append(host)
         if source:
-            sql += " AND source=?"; args.append(source)
+            sql += " AND source=?"
+            args.append(source)
         if rule_id:
-            sql += " AND rule_id=?"; args.append(rule_id)
+            sql += " AND rule_id=?"
+            args.append(rule_id)
         if confidence:
-            sql += " AND confidence=?"; args.append(confidence)
+            sql += " AND confidence=?"
+            args.append(confidence)
         if waf_tagged:
             # Phase 4 — surface only findings where a WAF / error-page
             # signature was attached by the fingerprint pipeline.
-            sql += " AND fingerprint_tags LIKE ?"; args.append("%behind_waf:%")
+            sql += " AND fingerprint_tags LIKE ?"
+            args.append("%behind_waf:%")
         sql += " ORDER BY CASE severity "
         sql += "WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 "
         sql += "WHEN 'low' THEN 3 ELSE 4 END, id DESC LIMIT ?"
@@ -1691,7 +1706,7 @@ class Project:
         cols = ",".join(self._ISSUES_COLS)
         with self._cursor() as cur:
             r = cur.execute(
-                f"SELECT {cols} FROM issues WHERE id=?", (fid,),
+                f"SELECT {cols} FROM issues WHERE id=?", (fid,),  # noqa: S608  # `cols` is joined from the class-level _ISSUES_COLS whitelist; fid is parameterised
             ).fetchone()
         if not r:
             return None
@@ -1719,7 +1734,7 @@ class Project:
             rows = cur.execute(
                 "SELECT severity, COUNT(*) FROM issues WHERE status='open' GROUP BY severity"
             ).fetchall()
-        out = {s: 0 for s in self.SEVERITIES}
+        out = dict.fromkeys(self.SEVERITIES, 0)
         for sev, n in rows:
             out[sev] = n
         return out
@@ -2152,7 +2167,7 @@ class Project:
         args.append(int(run_id))
         with self._cursor() as cur:
             cur.execute(
-                f"UPDATE plugin_runs SET {','.join(sets)} WHERE id=?", args)
+                f"UPDATE plugin_runs SET {','.join(sets)} WHERE id=?", args)  # noqa: S608  # `sets` entries are hardcoded `col=?` fragments assembled locally; all values pass through `args`
 
     # Cap a single run's log at this size so a runaway plugin can't
     # bloat the .rlr file unboundedly. Old content is dropped from the
@@ -2279,21 +2294,26 @@ class Project:
         sets: list[str] = []
         args: list = []
         if name is not None:
-            sets.append("name=?"); args.append(str(name))
+            sets.append("name=?")
+            args.append(str(name))
         if kind is not None:
-            sets.append("kind=?"); args.append(str(kind))
+            sets.append("kind=?")
+            args.append(str(kind))
         if payload_blob is not None:
-            sets.append("payload_blob=?"); args.append(bytes(payload_blob))
+            sets.append("payload_blob=?")
+            args.append(bytes(payload_blob))
         if active is not None:
-            sets.append("active=?"); args.append(1 if active else 0)
+            sets.append("active=?")
+            args.append(1 if active else 0)
         if bump_last_used:
-            sets.append("last_used_at=?"); args.append(int(time.time()))
+            sets.append("last_used_at=?")
+            args.append(int(time.time()))
         if not sets:
             return
         args.append(int(sid))
         with self._cursor() as cur:
             cur.execute(
-                f"UPDATE auth_matrix_sessions SET {', '.join(sets)} "
+                f"UPDATE auth_matrix_sessions SET {', '.join(sets)} "  # noqa: S608  # `sets` entries are hardcoded `col=?` fragments assembled locally; all values pass through `args`
                 "WHERE id=?",
                 args,
             )
@@ -2393,17 +2413,23 @@ class Project:
         sets: list[str] = []
         args: list = []
         if status is not None:
-            sets.append("status=?"); args.append(str(status))
+            sets.append("status=?")
+            args.append(str(status))
         if progress_done is not None:
-            sets.append("progress_done=?"); args.append(int(progress_done))
+            sets.append("progress_done=?")
+            args.append(int(progress_done))
         if progress_total is not None:
-            sets.append("progress_total=?"); args.append(int(progress_total))
+            sets.append("progress_total=?")
+            args.append(int(progress_total))
         if progress_msg is not None:
-            sets.append("progress_msg=?"); args.append(str(progress_msg))
+            sets.append("progress_msg=?")
+            args.append(str(progress_msg))
         if finished_at is not None:
-            sets.append("finished_at=?"); args.append(int(finished_at))
+            sets.append("finished_at=?")
+            args.append(int(finished_at))
         if error is not None:
-            sets.append("error=?"); args.append(str(error)[:2000])
+            sets.append("error=?")
+            args.append(str(error)[:2000])
         if verdict_counts is not None:
             sets.append("verdict_counts_json=?")
             args.append(json.dumps(dict(verdict_counts), ensure_ascii=False))
@@ -2412,7 +2438,7 @@ class Project:
         args.append(int(run_id))
         with self._cursor() as cur:
             cur.execute(
-                f"UPDATE auth_matrix_runs SET {', '.join(sets)} WHERE id=?",
+                f"UPDATE auth_matrix_runs SET {', '.join(sets)} WHERE id=?",  # noqa: S608  # `sets` entries are hardcoded `col=?` fragments assembled locally; all values pass through `args`
                 args,
             )
 
@@ -2602,9 +2628,11 @@ class Project:
         )
         args: list = [int(run_id)]
         if verdict:
-            sql += " AND verdict=?"; args.append(str(verdict))
+            sql += " AND verdict=?"
+            args.append(str(verdict))
         if history_id is not None:
-            sql += " AND history_id=?"; args.append(int(history_id))
+            sql += " AND history_id=?"
+            args.append(int(history_id))
         sql += " ORDER BY history_id, session_id LIMIT ?"
         args.append(int(limit))
         with self._cursor() as cur:
@@ -2691,7 +2719,7 @@ class Project:
             hids = [int(r[0]) for r in rows]
             placeholders = ",".join("?" for _ in hids)
             cur.execute(
-                f"UPDATE live_scan_backlog SET claimed_at=? "
+                f"UPDATE live_scan_backlog SET claimed_at=? "  # noqa: S608  # `placeholders` is a comma-joined string of `?` markers; timestamp and hids are parameterised
                 f"WHERE hid IN ({placeholders})",
                 [now, *hids],
             )

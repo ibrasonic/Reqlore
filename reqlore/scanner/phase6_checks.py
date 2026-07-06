@@ -23,21 +23,21 @@ import json
 import re
 import secrets
 import urllib.parse as up
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any, Literal, cast
 
-from ..engines import Request, Response
-from .findings import Finding
-from .rules import RuleMeta
+from ..engines import Request
 from .active import (
+    BUILTIN_ACTIVE_CHECKS,
     ActiveCheck,
     ActiveContext,
     ActiveOptions,
-    BUILTIN_ACTIVE_CHECKS,
     _mutated,
     _mutated_header,
     _scrub_headers,
 )
-
+from .findings import Finding
+from .rules import RuleMeta
 
 # ---------------------------------------------------------------------------
 # Shared helpers — kept small + private to this module.
@@ -216,7 +216,7 @@ class CRLFInjectionCheck(ActiveCheck):
                 try:
                     req = _mutated(ctx, key, payload, loc)
                     pr = send(req)
-                except Exception:
+                except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this CRLF probe and continue with remaining params
                     continue
                 # Hit 1 — header materialised separately.
                 inj = _header_value(pr.response.headers, "X-Reqlore-Inj")
@@ -304,7 +304,7 @@ class LDAPInjectionCheck(ActiveCheck):
                     try:
                         req = _mutated(ctx, key, probe, loc)
                         pr = send(req)
-                    except Exception:
+                    except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this LDAP probe and continue with remaining probes
                         continue
                     sig = _has_any(pr.response.body, _LDAP_ERROR_SIGS)
                     if sig is None:
@@ -378,7 +378,7 @@ class XPathInjectionCheck(ActiveCheck):
                     try:
                         req = _mutated(ctx, key, probe, loc)
                         pr = send(req)
-                    except Exception:
+                    except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this XPath probe and continue with remaining probes
                         continue
                     sig = _has_any(pr.response.body, _XPATH_ERROR_SIGS)
                     if sig is None:
@@ -451,7 +451,7 @@ class SMTPHeaderInjectionCheck(ActiveCheck):
                 try:
                     req = _mutated(ctx, key, payload, loc)
                     pr = send(req)
-                except Exception:
+                except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this SMTP-header probe and continue with remaining params
                     continue
                 sig = _has_any(pr.response.body, _SMTP_ERROR_SIGS)
                 if sig and sig not in ctx.resp_body[:_BODY_CAP].lower():
@@ -518,7 +518,7 @@ class SSIInjectionCheck(ActiveCheck):
                 try:
                     req = _mutated(ctx, key, probe, loc)
                     pr = send(req)
-                except Exception:
+                except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this SSI probe and continue with remaining params
                     continue
                 body = pr.response.body[:_BODY_CAP]
                 # Apache's mod_include emits ``(none)`` for an undefined
@@ -614,7 +614,7 @@ class ELInjectionCheck(ActiveCheck):
                     try:
                         req = _mutated(ctx, key, probe, loc)
                         pr = send(req)
-                    except Exception:
+                    except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this EL probe and continue with remaining probes
                         continue
                     if expected in pr.response.body[:_BODY_CAP]:
                         yield Finding(
@@ -703,7 +703,7 @@ class CodeInjectionCheck(ActiveCheck):
                     try:
                         req = _mutated(ctx, key, payload, loc)
                         pr = send(req)
-                    except Exception:
+                    except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this code-injection probe and continue with remaining probes
                         continue
                     if expected.encode() in pr.response.body[:_BODY_CAP]:
                         yield Finding(
@@ -808,7 +808,7 @@ class PaddingOracleCheck(ActiveCheck):
                     req_flip = _mutated(ctx, key, flipped, loc)
                 pr_orig = send(req_orig)
                 pr_flip = send(req_flip)
-            except Exception:
+            except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this padding-oracle pair and continue with remaining params
                 continue
             s1, s2 = pr_orig.response.status, pr_flip.response.status
             l1 = len(pr_orig.response.body or b"")
@@ -906,7 +906,7 @@ class CSVFormulaInjectionCheck(ActiveCheck):
                 try:
                     req = _mutated(ctx, key, payload, loc)
                     pr = send(req)
-                except Exception:
+                except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this CSV-formula probe and continue with remaining params
                     continue
                 body = pr.response.body[:_BODY_CAP]
                 # Vulnerable: marker echoed AND the leading char of the cell
@@ -1031,7 +1031,7 @@ class MassAssignmentCheck(ActiveCheck):
             )
             try:
                 pr = send(req)
-            except Exception:
+            except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this JSON mass-assignment probe and continue with remaining fields
                 continue
             # Detection: the server echoes our injected field back in the
             # JSON response. Two ways to count it: (a) the field key
@@ -1040,10 +1040,11 @@ class MassAssignmentCheck(ActiveCheck):
             parsed = _safe_json_load(resp_body)
             echoed = False
             sample = ""
-            if isinstance(parsed, dict):
-                if field_name in parsed and parsed[field_name] == evil_value:
-                    echoed = True
-                    sample = f'"{field_name}": {json.dumps(parsed[field_name])}'
+            if (isinstance(parsed, dict)
+                    and field_name in parsed
+                    and parsed[field_name] == evil_value):
+                echoed = True
+                sample = f'"{field_name}": {json.dumps(parsed[field_name])}'
             if not echoed:
                 # Substring check — last-resort heuristic
                 key_b = f'"{field_name}"'.encode()
@@ -1129,7 +1130,7 @@ class CachePoisoningCheck(ActiveCheck):
             try:
                 req = _mutated_header(ctx, hname, payload)
                 pr = send(req)
-            except Exception:
+            except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this cache-poisoning header probe and continue with remaining headers
                 continue
             body = pr.response.body[:_BODY_CAP]
             loc_h = _header_value(pr.response.headers, "Location") or ""
@@ -1166,7 +1167,7 @@ class CachePoisoningCheck(ActiveCheck):
                     request_id=ctx.history_id,
                     payload=f"{hname}: {payload}",
                     evidence=f"reflected in {where}; Cache-Control={cc or '(none)'}",
-                    confidence=conf,
+                    confidence=cast("Literal['tentative', 'firm', 'certain']", conf),
                 )
                 return
 
@@ -1394,7 +1395,7 @@ class XFFTrustCheck(ActiveCheck):
             try:
                 req = _mutated_header(ctx, hname, "127.0.0.1")
                 pr = send(req)
-            except Exception:
+            except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this client-IP-spoof probe and continue with remaining headers
                 continue
             if pr.response.status == 200:
                 yield Finding(
@@ -1795,7 +1796,7 @@ class InputTransformationCheck(ActiveCheck):
                 try:
                     req = _mutated(ctx, key, payload, loc)
                     pr = send(req)
-                except Exception:
+                except Exception:  # noqa: S112  # send() raises engine/transport errors on network/HTTP failure; skip this transform-detection probe and continue with remaining params
                     continue
                 body = pr.response.body[:_BODY_CAP]
                 if marker.encode() not in body:
@@ -1807,10 +1808,12 @@ class InputTransformationCheck(ActiveCheck):
                     transforms.append("case-fold-lower")
                 if f"AB%43-{marker}-&#88;YZ".encode() in body:
                     transforms.append("case-fold-upper")
-                if f"AbC-{marker}-XyZ".encode() in body and \
-                        b"&#88;" not in body[max(0, body.find(marker.encode()) - 50):body.find(marker.encode()) + 50]:
-                    if "html-entity-decode" not in transforms:
-                        transforms.append("html-entity-decode")
+                marker_pos = body.find(marker.encode())
+                window_slice = body[max(0, marker_pos - 50):marker_pos + 50]
+                if (f"AbC-{marker}-XyZ".encode() in body
+                        and b"&#88;" not in window_slice
+                        and "html-entity-decode" not in transforms):
+                    transforms.append("html-entity-decode")
                 if not transforms:
                     continue
                 yield Finding(

@@ -1,20 +1,31 @@
 """Repeater — load a request, edit, send, see response."""
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import asdict
 
 from flask import (
-    Blueprint, g, redirect, render_template, request, url_for,
+    Blueprint,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
-from .._prg import PRGCache
 from ...a11y import (
-    ResponseSummaryInput, build_find_context, render_curl, render_fetch,
-    render_httpx, render_raw_http, render_requests, summarise_response,
+    ResponseSummaryInput,
+    build_find_context,
+    render_curl,
+    render_fetch,
+    render_httpx,
+    render_raw_http,
+    render_requests,
+    summarise_response,
 )
-from ...engines import Request
-from ...engines import curl_cffi_engine, h3_engine, httpx_engine, raw_engine
+from ...engines import Request, curl_cffi_engine, h3_engine, httpx_engine, raw_engine
+from .._prg import PRGCache
 
 bp = Blueprint("repeater", __name__)
 
@@ -56,7 +67,8 @@ def _parse_raw(raw: bytes, fallback_url: str, fallback_method: str):
     for line in lines[1:]:
         if ":" in line:
             k, v = line.split(":", 1)
-            k = k.strip(); v = v.strip()
+            k = k.strip()
+            v = v.strip()
             headers.append((k, v))
             if k.lower() == "host":
                 host = v
@@ -82,10 +94,8 @@ def index():
                 summary = stashed["summary"]
                 render_blocks = stashed["render_blocks"]
         elif hid := request.args.get("from_history"):
-            try:
+            with contextlib.suppress(ValueError):
                 form.update(_load_from_history(int(hid)))
-            except ValueError:
-                pass
         elif curl := request.args.get("from_curl"):
             form.update(_load_from_curl(curl))
 
@@ -151,7 +161,8 @@ def index():
             except Exception as exc:  # noqa: BLE001 - surface ANY engine error to the UI
                 # Build a synthetic error response so the page renders the
                 # failure inline instead of returning a Flask 500.
-                from ...engines import Response as _Resp, Timings as _T
+                from ...engines import Response as _Resp
+                from ...engines import Timings as _T
                 resp_obj = _Resp(
                     status=0, reason="", headers=[], body=b"",
                     timings=_T(total_ms=int((time.monotonic() - t0) * 1000)),

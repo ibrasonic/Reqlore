@@ -1,8 +1,6 @@
 """WebSocket workbench: connect, send messages, view transcript."""
 from __future__ import annotations
 
-import time
-
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
 from ...websocket import WS_AVAILABLE, WSTranscript, send_messages

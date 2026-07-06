@@ -16,21 +16,17 @@ Covers:
 """
 from __future__ import annotations
 
-import time
 from unittest.mock import patch
-
-import pytest
 
 from reqlore._optdeps import DNS_AVAILABLE, PLAYWRIGHT_AVAILABLE
 from reqlore.cli import build_parser
 from reqlore.scanner import BUILTIN_RULES, Scanner
 from reqlore.scanner.engine import (
+    _RESUME_STATE_KEY,
     DEFAULT_DEADLINE_SECONDS,
     ScanResult,
-    _RESUME_STATE_KEY,
 )
 from reqlore.storage import Project
-
 
 # ----------------------------- helpers ---------------------------------------
 

@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import difflib
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable, Pattern
-
+from re import Pattern
 
 _DEFAULT_BODY_RULES: tuple[tuple[str, str], ...] = (
     # HTML CSRF tokens — input fields.

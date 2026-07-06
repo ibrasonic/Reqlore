@@ -33,10 +33,9 @@ from reqlore.reporter._common import (
 )
 from reqlore.storage import Project
 
-
 # ---------------- helpers ----------------
 
-_NOW = _dt.datetime(2026, 6, 9, 12, 0, 0, tzinfo=_dt.timezone.utc)
+_NOW = _dt.datetime(2026, 6, 9, 12, 0, 0, tzinfo=_dt.UTC)
 
 
 @pytest.fixture
@@ -59,28 +58,28 @@ def _add_full_finding(p: Project, **overrides) -> int:
         method="POST", url="https://vt.test/api/login",
         status=200, elapsed_ms=12,
     )
-    kw = dict(
-        severity="high",
-        title="Reflected XSS in search",
-        host="vt.test",
-        url="https://vt.test/search?q=x",
-        evidence="<script>alert(1)</script>",
-        payload="<svg/onload=alert(1)>",
-        source="manual",
-        rule_id="manual:reflected-xss",
-        rule_version=1,
-        description="User input is reflected without escaping.",
-        remediation="HTML-escape on output. Use a templating engine.",
-        references=["https://owasp.org/www-community/attacks/xss/",
+    kw = {
+        "severity": "high",
+        "title": "Reflected XSS in search",
+        "host": "vt.test",
+        "url": "https://vt.test/search?q=x",
+        "evidence": "<script>alert(1)</script>",
+        "payload": "<svg/onload=alert(1)>",
+        "source": "manual",
+        "rule_id": "manual:reflected-xss",
+        "rule_version": 1,
+        "description": "User input is reflected without escaping.",
+        "remediation": "HTML-escape on output. Use a templating engine.",
+        "references": ["https://owasp.org/www-community/attacks/xss/",
                      "https://cwe.mitre.org/data/definitions/79.html"],
-        cwe="CWE-79",
-        owasp="A03:2021",
-        cvss_vector="AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
-        cvss_score=6.1,
-        reproduction_token=token,
-    )
+        "cwe": "CWE-79",
+        "owasp": "A03:2021",
+        "cvss_vector": "AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+        "cvss_score": 6.1,
+        "reproduction_token": token,
+    }
     kw.update(overrides)
-    fid = p.add_finding(**kw)
+    fid = p.add_finding(**kw)  # type: ignore[arg-type]  # kw is dynamically composed test fixture; runtime types match add_finding signature
     return fid
 
 
@@ -99,13 +98,13 @@ def _reproductions(p: Project, findings: list[dict]) -> dict[str, dict]:
 
 
 def test_utc_now_passes_through_aware_datetime():
-    aware = _dt.datetime(2025, 1, 1, 0, 0, 0, tzinfo=_dt.timezone.utc)
+    aware = _dt.datetime(2025, 1, 1, 0, 0, 0, tzinfo=_dt.UTC)
     assert utc_now(aware) == aware
 
 
 def test_utc_now_assumes_utc_for_naive():
     naive = _dt.datetime(2025, 1, 1, 0, 0, 0)
-    assert utc_now(naive).tzinfo is _dt.timezone.utc
+    assert utc_now(naive).tzinfo is _dt.UTC
 
 
 def test_severity_counts_buckets_all_levels():

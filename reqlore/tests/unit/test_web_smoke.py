@@ -383,7 +383,10 @@ def test_proxy_addon_skips_self_ui_when_intercepting(tmp_path):
     and they can't forward or drop anything.
     """
     from reqlore.proxy.mitm import (
-        _HistoryAddon, _is_self_ui, _is_self_ui_request, _host_port_from_header,
+        _HistoryAddon,
+        _host_port_from_header,
+        _is_self_ui,
+        _is_self_ui_request,
     )
     from reqlore.proxy.rules import Rule
     from reqlore.storage import Project
@@ -570,7 +573,7 @@ def test_intercept_config_filters_by_method_path_and_excludes():
     method/host/path criteria AND don't hit the noise excludes.
     """
     from reqlore.proxy.rules import (
-        InterceptConfig, DEFAULT_NOISE_HOST_REGEX, DEFAULT_NOISE_PATH_REGEX,
+        InterceptConfig,
         should_hold_request,
     )
 
@@ -616,11 +619,12 @@ def test_intercept_config_round_trip_and_persistence(tmp_path):
     """Saving the filter via the form survives an app restart and is
     re-applied to a fresh ProxyController on boot.
     """
+    from werkzeug.datastructures import MultiDict
+
     from reqlore.proxy.mitm import ProxyController
     from reqlore.proxy.rules import InterceptConfig, should_hold_request
     from reqlore.storage import Project
     from reqlore.web import create_app
-    from werkzeug.datastructures import MultiDict
 
     proj_path = tmp_path / "icfg.rlr"
     ca_dir = tmp_path / "ca"
@@ -759,7 +763,9 @@ def test_request_only_rule_does_not_hold_responses():
     redirects get queued the moment intercept flips ON.
     """
     from reqlore.proxy.rules import (
-        InterceptConfig, Rule, should_hold_response,
+        InterceptConfig,
+        Rule,
+        should_hold_response,
     )
 
     rule = InterceptConfig().to_rule()  # request-only
@@ -786,6 +792,7 @@ def test_held_flow_does_not_block_other_flows(tmp_path):
     that prompted this test.
     """
     import asyncio
+
     from reqlore.proxy.mitm import _HistoryAddon
     from reqlore.proxy.rules import InterceptConfig
     from reqlore.storage import Project

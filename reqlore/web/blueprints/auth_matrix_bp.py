@@ -21,26 +21,31 @@ Routes under ``/auth-matrix/``:
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from flask import (
-    Blueprint, abort, current_app, flash, g, jsonify, redirect,
-    render_template, request, url_for,
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
 from ...auth_matrix import (
+    SESSION_KINDS,
     AuthMatrixRunner,
     AuthShadowWorker,
     RunOptions,
-    SESSION_KINDS,
     capture_session_from_history,
     decrypt_payload,
     derive_or_load_key,
     encrypt_payload,
 )
-from ...auth_matrix.sessions import Session
-
 
 bp = Blueprint("auth_matrix", __name__)
 

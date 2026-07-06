@@ -30,7 +30,7 @@ class Request:
                 return v
         return None
 
-    def with_header(self, name: str, value: str) -> "Request":
+    def with_header(self, name: str, value: str) -> Request:
         new = [(k, v) for k, v in self.headers if k.lower() != name.lower()]
         new.append((name, value))
         return Request(self.method, self.url, new, self.body, self.http_version, dict(self.extras))

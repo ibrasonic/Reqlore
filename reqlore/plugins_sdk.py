@@ -26,14 +26,16 @@ This module provides:
 """
 from __future__ import annotations
 
+import contextlib
 import threading
-from dataclasses import dataclass, field as _field
-from typing import Any, Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
+from dataclasses import field as _field
+from typing import Any
 from urllib.parse import urlparse
 
-from .scanner.findings import Finding, Severity   # noqa: F401 - re-export for SDK users
-from .scanner.passive import RuleContext           # noqa: F401 - re-export
-
+from .scanner.findings import Finding, Severity  # noqa: F401 - re-export for SDK users
+from .scanner.passive import RuleContext  # noqa: F401 - re-export
 
 SDK_VERSION = "1.0"
 
@@ -258,8 +260,8 @@ class IntField(Field):
             return int(self.default)
         try:
             v = int(s, 10)
-        except (TypeError, ValueError):
-            raise ValueError(f"{self.label}: not an integer ({s!r})")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{self.label}: not an integer ({s!r})") from exc
         if self.min is not None and v < self.min:
             raise ValueError(f"{self.label}: must be >= {self.min}")
         if self.max is not None and v > self.max:
@@ -351,7 +353,7 @@ class ScopeView:
         self._rules: list[dict] = list(rules or [])
 
     @classmethod
-    def from_project(cls, project: Any) -> "ScopeView":
+    def from_project(cls, project: Any) -> ScopeView:
         """Construct from a :class:`reqlore.storage.Project`. Defensive:
         a project without ``list_scope`` (older fakes in tests) yields
         an empty (permissive) scope."""
@@ -506,7 +508,7 @@ class PluginContext:
         on_progress: Callable[[int, int, str], None] | None = None,
         on_result: Callable[[dict], None] | None = None,
         oast: Any = None,
-        seed_request: "SeedRequest | None" = None,
+        seed_request: SeedRequest | None = None,
     ):
         self.project = project
         self.slug = slug
@@ -545,18 +547,14 @@ class PluginContext:
     def log(self, msg: str, level: str = "info") -> None:
         if self._on_log is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._on_log(str(level or "info"), str(msg))
-        except Exception:
-            pass
 
     def progress(self, done: int, total: int = 0, message: str = "") -> None:
         if self._on_progress is None:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._on_progress(int(done), int(total), str(message))
-        except Exception:
-            pass
 
     def add_result(self, row: dict) -> None:
         """Append a row to the live results table.  Keys map to the
@@ -565,12 +563,10 @@ class PluginContext:
         without losing it."""
         if self._on_result is None:
             return
-        try:
-            # Coerce to a plain dict so callers can pass dataclasses,
-            # sqlite rows, etc. without surprises downstream.
+        # Coerce to a plain dict so callers can pass dataclasses,
+        # sqlite rows, etc. without surprises downstream.
+        with contextlib.suppress(Exception):
             self._on_result(dict(row))
-        except Exception:
-            pass
 
     # ---- findings ----
     def record_finding(
@@ -624,8 +620,7 @@ class PluginContext:
         Errors propagate to the caller — the plugin chose to send, the
         plugin should decide what to do when the network blows up.
         """
-        from .engines import Request
-        from .engines import httpx_engine
+        from .engines import Request, httpx_engine
 
         if isinstance(body, str):
             body_b = body.encode("utf-8", errors="replace")
@@ -650,9 +645,12 @@ class PluginContext:
                         follow_redirects=follow_redirects, verify=verify,
                     )
                 profile = eng.split(":", 1)[1] if ":" in eng else "chrome120"
+                # curl_cffi_engine's public signature does not expose
+                # follow_redirects (see engines/curl_cffi_engine.py); drop
+                # the kwarg here rather than passing it and TypeErroring.
                 return curl_cffi_engine.send(
                     req, profile=profile, timeout=timeout,
-                    follow_redirects=follow_redirects, verify=verify,
+                    verify=bool(verify),
                 )
             if eng == "raw":
                 try:

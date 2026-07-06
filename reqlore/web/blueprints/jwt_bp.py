@@ -2,19 +2,21 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
 import time
+from typing import Any
 from urllib.parse import urlsplit
 
 import jwt as pyjwt
 from flask import Blueprint, g, redirect, render_template, request, url_for
 
-from .._prg import PRGCache
 from ...a11y import summarise_jwt
 from ...engines import Request, httpx_engine
 from ...jwk_resolver import resolve_public_key
+from .._prg import PRGCache
 
 bp = Blueprint("jwt", __name__)
 
@@ -38,7 +40,7 @@ _EMPTY_FORM = {
     "private_key": "", "public_key": "",
     "kid_values": "kid1\nkey-1\n../../keys/x\n/dev/null",
 }
-_EMPTY_OUT = {
+_EMPTY_OUT: dict[str, Any] = {
     "decoded": None, "summary": "", "signed": "",
     "alg_none": "", "key_confusion": "", "key_source": "",
     "kid_set": [], "error": "",
@@ -96,8 +98,8 @@ def _make_jwks_fetcher():
         except Exception:  # noqa: BLE001 - never fail the fetch over host parsing
             host = ""
         # Log the fetch to history unconditionally (success or engine
-        # error) so the tester has an audit trail.
-        try:
+        # error) so the tester has an audit trail; history is best-effort.
+        with contextlib.suppress(Exception):
             project.add_history(
                 host=host, method="GET", url=url,
                 status=resp.status, duration_ms=resp.timings.total_ms or duration_ms,
@@ -105,8 +107,6 @@ def _make_jwks_fetcher():
                 raw_req=_render_raw_get(url, headers),
                 raw_resp=_render_raw_response(resp),
             )
-        except Exception:  # noqa: BLE001 - history is best-effort; never break the fetch
-            pass
         if resp.error:
             raise ValueError(f"Fetch failed: {resp.error}")
         if resp.status < 200 or resp.status >= 300:
@@ -267,7 +267,9 @@ def index():
             values = [v for v in (form["kid_values"] or "").splitlines() if v.strip()]
             produced: list[tuple[str, str]] = []
             for kid in values:
-                h2 = dict(h); h2["kid"] = kid; h2["alg"] = "HS256"
+                h2 = dict(h)
+                h2["kid"] = kid
+                h2["alg"] = "HS256"
                 try:
                     tok = pyjwt.encode(p, form["secret"] or "secret", algorithm="HS256", headers=h2)
                     produced.append((kid, tok))

@@ -24,10 +24,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from flask import Flask
 
 from reqlore.storage import Project
-
 
 # ---------- storage layer ---------------------------------------------------
 

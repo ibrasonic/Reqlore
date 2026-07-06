@@ -12,23 +12,21 @@ from __future__ import annotations
 
 import time
 from dataclasses import fields
-from types import SimpleNamespace
 
 import pytest
 
 from reqlore.scanner import (
-    ActiveOptions,
-    ActiveScanResult,
-    ActiveScanner,
+    DEFAULT_PRESET,
     PRESET_DESCRIPTIONS,
     PRESET_NAMES,
-    DEFAULT_PRESET,
     SCAN_PRESETS,
+    ActiveOptions,
+    ActiveScanner,
+    ActiveScanResult,
     all_summaries,
     apply_preset,
     preset_summary,
 )
-
 
 # ---------------------------------------------------------------------------
 # Table integrity.

@@ -2,8 +2,15 @@
 from __future__ import annotations
 
 from reqlore.h2_tool import (
-    H2_PREFACE, build_goaway, build_ping, build_rst_stream, build_settings,
-    build_window_update, parse_frames, parse_hex, to_hex,
+    H2_PREFACE,
+    build_goaway,
+    build_ping,
+    build_rst_stream,
+    build_settings,
+    build_window_update,
+    parse_frames,
+    parse_hex,
+    to_hex,
 )
 
 

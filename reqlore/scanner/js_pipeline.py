@@ -52,11 +52,11 @@ The module exposes:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from .findings import Finding
-
 
 # Canonical tuple of accepted modes. Order matters: it's the order
 # the web UI renders them and the order ``preset_summary`` reports.
@@ -314,7 +314,7 @@ def run_js_pipeline(
         try:
             static_findings.extend(
                 static_fn(snippet, host=host, url=url) or [])
-        except Exception:  # noqa: BLE001 — never raise from the hook
+        except Exception:  # noqa: BLE001,S112 — static analyzer hook is user-supplied; skip a bad snippet and continue with remaining snippets
             continue
 
     result.static_findings = static_findings

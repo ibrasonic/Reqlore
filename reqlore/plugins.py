@@ -30,14 +30,16 @@ instead of taking the whole app down.
 """
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import sys
 import threading
 import time
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass
@@ -130,7 +132,7 @@ class PluginRegistry:
             rec.enabled = not rec.enabled
             return rec.enabled
 
-    def active_rules(self) -> list[Callable]:
+    def active_rules(self) -> builtins.list[Callable]:
         with self._lock:
             out: list[Callable] = []
             for rec in self._plugins.values():
@@ -138,7 +140,7 @@ class PluginRegistry:
                     out.extend(rec.rules)
             return out
 
-    def active_copy_as(self) -> list[Any]:
+    def active_copy_as(self) -> builtins.list[Any]:
         """Flatten all enabled plugins' copy_as() handlers."""
         with self._lock:
             out: list[Any] = []
@@ -147,7 +149,7 @@ class PluginRegistry:
                     out.extend(rec.copy_as_handlers)
             return out
 
-    def active_plugin_apps(self) -> list[Any]:
+    def active_plugin_apps(self) -> builtins.list[Any]:
         """Phase 16 — list of :class:`PluginApp` from enabled, error-
         free plugins. Ordered by plugin record then declaration
         order so the index page is stable."""
@@ -219,7 +221,7 @@ class PluginRegistry:
                 try:
                     obs.stop()
                     obs.join(timeout=1)
-                except Exception:
+                except Exception:  # noqa: S110  # watchdog observer teardown; a failing stop/join must not block shutdown of remaining observers
                     pass
             self._observers.clear()
 

@@ -19,12 +19,14 @@ on the runs list.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import threading
 import time
 from collections import Counter
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .crypto import derive_or_load_key
 from .normaliser import default_normaliser
@@ -36,8 +38,7 @@ from .runner import (
     _extract_body_from_serialised,
 )
 from .sessions import session_already_present
-from .verdict import Verdict, finding_severity_for_verdict
-
+from .verdict import finding_severity_for_verdict
 
 log = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class AuthShadowWorker:
         self._respect_scope = bool(respect_scope)
         self._options = options or RunOptions()
         self._sender_factory = sender_factory or _default_sender
-        self._q: "queue.Queue[int]" = queue.Queue(maxsize=max(1, int(maxsize)))
+        self._q: queue.Queue[int] = queue.Queue(maxsize=max(1, int(maxsize)))
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
@@ -112,10 +113,8 @@ class AuthShadowWorker:
         self._stop.set()
         t = self._thread
         if t is not None:
-            try:
+            with contextlib.suppress(Exception):
                 t.join(timeout=max(0.0, float(timeout)))
-            except Exception:
-                pass
         self._thread = None
 
     def shutdown(self) -> None:

@@ -30,7 +30,6 @@ import pytest
 from reqlore import browser as fxmod
 from reqlore import cli as reqlore_cli
 
-
 # ---------------------------------------------------------------------------
 # is_wsl() -- pure function matrix
 # ---------------------------------------------------------------------------
@@ -343,8 +342,8 @@ def test_cmd_browser_non_wsl_path_is_unchanged(
     class _FakeResult:
         pid = 1234
         exe = Path("/usr/bin/firefox")
-        profile = Path("/tmp/profile")
-        policies = Path("/tmp/policies.json")
+        profile = tmp_path / "profile"
+        policies = tmp_path / "policies.json"
 
     def fake_run_browser(**kwargs):
         called.update(kwargs)

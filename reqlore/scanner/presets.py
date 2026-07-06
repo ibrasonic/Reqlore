@@ -29,11 +29,10 @@ populates the field.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, fields, replace
+from dataclasses import fields, replace
 from types import MappingProxyType
 
 from .active import ActiveOptions
-
 
 # The canonical four. Names match Burp's UI labels so muscle memory
 # carries over. ``custom`` is a sentinel that means "the operator
@@ -50,71 +49,71 @@ DEFAULT_PRESET: str = "balanced"
 # chosen to land within a single order of magnitude of Burp's
 # defaults so a comparison run produces a similar workload.
 _PRESET_TABLE: dict[str, dict] = {
-    "lightweight": dict(
-        intensity_levels=frozenset({"light"}),
-        max_probes_per_check=10,
-        max_probes_per_target=2,
-        max_insertion_points_per_row=50,
-        rate_delay_ms=0,
-        follow_redirects=False,
-        wall_clock_seconds=15 * 60,
-        allow_smuggling_probes=False,
-        allow_credential_probes=False,
-        allow_race_probes=False,
-        allow_dom_xss_probes=False,
-        js_analysis_mode="off",
-    ),
-    "fast": dict(
-        intensity_levels=frozenset({"light", "medium"}),
-        max_probes_per_check=25,
-        max_probes_per_target=3,
-        max_insertion_points_per_row=100,
-        rate_delay_ms=0,
-        follow_redirects=False,
-        wall_clock_seconds=25 * 60,
-        allow_smuggling_probes=False,
-        allow_credential_probes=False,
-        allow_race_probes=False,
-        allow_dom_xss_probes=False,
-        js_analysis_mode="off",
-    ),
-    "balanced": dict(
-        intensity_levels=frozenset({"light", "medium"}),
-        max_probes_per_check=50,
-        max_probes_per_target=4,
-        max_insertion_points_per_row=200,
-        rate_delay_ms=50,
-        follow_redirects=True,
-        wall_clock_seconds=60 * 60,
-        allow_smuggling_probes=False,
-        allow_credential_probes=False,
-        allow_race_probes=False,
-        allow_dom_xss_probes=False,
+    "lightweight": {
+        "intensity_levels": frozenset({"light"}),
+        "max_probes_per_check": 10,
+        "max_probes_per_target": 2,
+        "max_insertion_points_per_row": 50,
+        "rate_delay_ms": 0,
+        "follow_redirects": False,
+        "wall_clock_seconds": 15 * 60,
+        "allow_smuggling_probes": False,
+        "allow_credential_probes": False,
+        "allow_race_probes": False,
+        "allow_dom_xss_probes": False,
+        "js_analysis_mode": "off",
+    },
+    "fast": {
+        "intensity_levels": frozenset({"light", "medium"}),
+        "max_probes_per_check": 25,
+        "max_probes_per_target": 3,
+        "max_insertion_points_per_row": 100,
+        "rate_delay_ms": 0,
+        "follow_redirects": False,
+        "wall_clock_seconds": 25 * 60,
+        "allow_smuggling_probes": False,
+        "allow_credential_probes": False,
+        "allow_race_probes": False,
+        "allow_dom_xss_probes": False,
+        "js_analysis_mode": "off",
+    },
+    "balanced": {
+        "intensity_levels": frozenset({"light", "medium"}),
+        "max_probes_per_check": 50,
+        "max_probes_per_target": 4,
+        "max_insertion_points_per_row": 200,
+        "rate_delay_ms": 50,
+        "follow_redirects": True,
+        "wall_clock_seconds": 60 * 60,
+        "allow_smuggling_probes": False,
+        "allow_credential_probes": False,
+        "allow_race_probes": False,
+        "allow_dom_xss_probes": False,
         # Phase 13 — run the static AST analyser on every JS / HTML
         # response, and spin up the headless browser only when a
         # static finding suggests it's worth confirming. Cheapest
         # path to runtime evidence.
-        js_analysis_mode="static_plus_confirm",
-    ),
-    "deep": dict(
-        intensity_levels=frozenset({"light", "medium", "intrusive"}),
-        max_probes_per_check=200,
-        max_probes_per_target=8,
-        max_insertion_points_per_row=400,
-        rate_delay_ms=100,
-        follow_redirects=True,
-        wall_clock_seconds=None,
-        allow_smuggling_probes=True,
+        "js_analysis_mode": "static_plus_confirm",
+    },
+    "deep": {
+        "intensity_levels": frozenset({"light", "medium", "intrusive"}),
+        "max_probes_per_check": 200,
+        "max_probes_per_target": 8,
+        "max_insertion_points_per_row": 400,
+        "rate_delay_ms": 100,
+        "follow_redirects": True,
+        "wall_clock_seconds": None,
+        "allow_smuggling_probes": True,
         # Credential-spray and race probes stay opt-in even under
         # "deep" because they have account-locking / state-mutating
         # side-effects. Operators must still tick the confirm box.
-        allow_credential_probes=False,
-        allow_race_probes=False,
-        allow_dom_xss_probes=True,
+        "allow_credential_probes": False,
+        "allow_race_probes": False,
+        "allow_dom_xss_probes": True,
         # Phase 13 — full dynamic DOM analysis with event driving.
         # Most expensive mode; gated to ``deep`` only.
-        js_analysis_mode="static_plus_dynamic",
-    ),
+        "js_analysis_mode": "static_plus_dynamic",
+    },
 }
 
 

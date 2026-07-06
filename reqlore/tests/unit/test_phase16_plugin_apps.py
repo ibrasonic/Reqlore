@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,6 @@ from reqlore.plugin_runner import PluginRunner
 from reqlore.plugins import PluginRegistry, reset_registry
 from reqlore.storage import Project
 from reqlore.web import create_app
-
 
 # ---------------------------------------------------------------- fixtures
 
@@ -45,7 +45,7 @@ def _isolate_registry():
 
 
 @pytest.fixture
-def project(tmp_path: Path) -> Project:
+def project(tmp_path: Path) -> Iterator[Project]:
     p = Project(tmp_path / "p16.rlr")
     yield p
     p.close()
@@ -408,7 +408,7 @@ class TestPluginRunsStorage:
     def test_append_log_caps_size(self, project):
         rid = project.create_plugin_run(slug="x", settings={})
         # Push more than the 256 KiB cap so trimming engages.
-        for i in range(2_000):
+        for _i in range(2_000):
             project.append_plugin_run_log(rid, "x" * 200)
         log = project.get_plugin_run(rid)["log"]
         assert len(log) <= Project._PLUGIN_LOG_CAP_BYTES
@@ -432,7 +432,7 @@ class TestPluginRunsStorage:
         assert {r["id"] for r in project.list_plugin_runs()} == {a1, a2, b1}
 
     def test_latest_run(self, project):
-        a1 = project.create_plugin_run(slug="a", settings={})
+        project.create_plugin_run(slug="a", settings={})
         a2 = project.create_plugin_run(slug="a", settings={})
         assert project.latest_plugin_run("a")["id"] == a2
         assert project.latest_plugin_run("never") is None

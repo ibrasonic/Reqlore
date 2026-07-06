@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import datetime as _dt
+from collections.abc import Iterable
 from io import BytesIO
-from typing import Iterable
 
 from ._common import (
     SEV_ORDER,
@@ -13,7 +13,6 @@ from ._common import (
     reqlore_version,
     utc_now,
 )
-from .markdown import render_markdown  # re-exported for fallback callers
 
 try:
     from docx import Document
@@ -69,7 +68,7 @@ def render_docx(project_meta: dict, findings: Iterable[dict], *,
 
     # Summary table
     doc.add_heading("Summary", level=1)
-    counts = {s: 0 for s in SEV_ORDER}
+    counts = dict.fromkeys(SEV_ORDER, 0)
     for f in findings:
         counts[f["severity"]] = counts.get(f["severity"], 0) + 1
     table = doc.add_table(rows=1, cols=2)

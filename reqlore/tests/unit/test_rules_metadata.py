@@ -8,12 +8,17 @@ from pathlib import Path
 import pytest
 
 from reqlore.scanner.active import BUILTIN_ACTIVE_CHECKS
+from reqlore.scanner.findings import Finding
 from reqlore.scanner.passive import BUILTIN_RULES
 from reqlore.scanner.rules import (
-    RuleMeta, SEVERITIES, apply_meta_defaults, id_for, legacy_rule_id,
-    meta_for, rule_meta,
+    SEVERITIES,
+    RuleMeta,
+    apply_meta_defaults,
+    id_for,
+    legacy_rule_id,
+    meta_for,
+    rule_meta,
 )
-from reqlore.scanner.findings import Finding
 
 
 # --------------------------------------------------------- RuleMeta itself

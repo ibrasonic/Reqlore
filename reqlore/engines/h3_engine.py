@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from . import Request, Response, Timings
 
 try:
-    import aioquic                       # noqa: F401
+    import aioquic  # noqa: F401
     H3_AVAILABLE = True
 except Exception:
     H3_AVAILABLE = False
@@ -40,6 +40,7 @@ def send(req: Request, *, timeout: float = 15.0,
     # Lazy imports so the optional dependency only loads on demand.
     import asyncio
     import ssl
+
     from aioquic.asyncio.client import connect
     from aioquic.h3.connection import H3Connection
     from aioquic.h3.events import DataReceived, HeadersReceived
@@ -101,14 +102,14 @@ def send(req: Request, *, timeout: float = 15.0,
                     if event.stream_ended:
                         done.set()
 
-            proto._quic_logger = None
-            proto._http = h3
+            proto._quic_logger = None  # type: ignore[attr-defined]  # aioquic private attr for QLOG output
+            proto._http = h3  # type: ignore[attr-defined]  # aioquic private slot for H3 client
             # Replace the http_event_received hook used by aioquic's H3 client.
             orig = proto._http_event_received if hasattr(proto, "_http_event_received") else None
             proto._http_event_received = _on_event  # type: ignore[attr-defined]
             try:
                 await asyncio.wait_for(done.wait(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             finally:
                 if orig:

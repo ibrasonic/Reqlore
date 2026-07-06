@@ -35,6 +35,7 @@ an error.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import threading
@@ -43,7 +44,6 @@ from typing import Any
 
 from .engines import Request, Response, httpx_engine, raw_engine
 from .intruder import template_to_request
-
 
 EXTRACTOR_KINDS: tuple[str, ...] = ("cookie", "header", "regex", "json")
 
@@ -213,17 +213,14 @@ class CaptureRunner:
 
     def pause(self) -> None:
         self._pause.clear()
-        try:
+        # status update best-effort
+        with contextlib.suppress(Exception):
             self.project.set_sequencer_capture_status(self.capture_id, "paused")
-        except Exception:  # noqa: BLE001 - status update best-effort
-            pass
 
     def resume(self) -> None:
         self._pause.set()
-        try:
+        with contextlib.suppress(Exception):
             self.project.set_sequencer_capture_status(self.capture_id, "running")
-        except Exception:  # noqa: BLE001
-            pass
 
     def wait(self, timeout: float | None = None) -> bool:
         return self._done.wait(timeout)

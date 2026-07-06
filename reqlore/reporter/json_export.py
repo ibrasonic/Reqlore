@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-from typing import Iterable
+from collections.abc import Iterable
 
 from ._common import (
     coverage_rows,

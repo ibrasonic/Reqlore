@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 
 from reqlore.plugins_sdk import (
-    SDK_VERSION, CopyAsHandler, assert_compatible, make_info,
+    SDK_VERSION,
+    CopyAsHandler,
+    assert_compatible,
+    make_info,
     make_passive_rule,
 )
 
@@ -58,6 +61,7 @@ def test_example_extra_headers_rule_yields_finding(tmp_path: Path):
     if not here.exists():
         pytest.skip("example plugin pack missing")
     spec = importlib.util.spec_from_file_location("ex_eh", here)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     rules = mod.scanner_rules()
@@ -84,6 +88,7 @@ def test_example_copy_as_php_renders_php(tmp_path: Path):
     if not here.exists():
         pytest.skip("example plugin pack missing")
     spec = importlib.util.spec_from_file_location("ex_cap", here)
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     handlers = mod.copy_as()

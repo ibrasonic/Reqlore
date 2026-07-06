@@ -12,7 +12,6 @@ from reqlore.cli import build_parser, main
 from reqlore.intruder import DEFAULT_MARKER
 from reqlore.storage import Project
 
-
 # ---------- parser surface ----------
 
 def _parse(*argv: str):
@@ -68,7 +67,8 @@ def server():
     t = threading.Thread(target=srv.serve_forever, daemon=True)
     t.start()
     yield srv.server_address[1]
-    srv.shutdown(); srv.server_close()
+    srv.shutdown()
+    srv.server_close()
 
 
 def _spec(tmp_path: Path, port: int, **overrides) -> Path:
@@ -185,7 +185,10 @@ def test_cli_intruder_export_csv(tmp_path: Path, server: int, capsys):
                "--id", str(aid), "--out", str(out_path)])
     assert rc == 0
     text = out_path.read_text(encoding="utf-8")
-    assert text.startswith("seq,status,len_resp,duration_ms,matched,grep_hits,body_md5,payloads,history_id")
+    assert text.startswith(
+        "seq,status,len_resp,duration_ms,matched,grep_hits,"
+        "body_md5,payloads,history_id"
+    )
     # Three result rows + header
     assert text.count("\n") == 4
     # CSV format inferred from .csv extension

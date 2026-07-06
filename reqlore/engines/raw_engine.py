@@ -9,6 +9,7 @@ Used when httpx's normalisation hides the bug:
 """
 from __future__ import annotations
 
+import contextlib
 import socket
 import ssl
 import time
@@ -26,7 +27,9 @@ def _build_raw(req: Request) -> bytes:
     headers = list(req.headers)
     if not any(k.lower() == "host" for k, _ in headers):
         host = p.hostname or ""
-        if p.port and not ((p.scheme == "http" and p.port == 80) or (p.scheme == "https" and p.port == 443)):
+        default_port = ((p.scheme == "http" and p.port == 80)
+                        or (p.scheme == "https" and p.port == 443))
+        if p.port and not default_port:
             host = f"{host}:{p.port}"
         headers.insert(0, ("Host", host))
     if req.body and not any(k.lower() == "content-length" for k, _ in headers):
@@ -126,7 +129,5 @@ def send(req: Request, *, timeout: float = 30.0, verify: bool = True) -> Respons
         )
     finally:
         if sock is not None:
-            try:
+            with contextlib.suppress(OSError):
                 sock.close()
-            except OSError:
-                pass

@@ -30,7 +30,6 @@ import pytest
 from reqlore.config import Settings
 from reqlore.web import create_app
 
-
 # Endpoints we cannot meaningfully GET in a smoke test. Kept in sync
 # with the Phase 1 matrix; see test_reliability_phase1 for rationale.
 _RULE_ENDPOINT_SKIPS: frozenset[str] = frozenset({

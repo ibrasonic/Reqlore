@@ -17,7 +17,6 @@ from reqlore.scanner.active import (
     _byte_3gram_jaccard,
 )
 
-
 # --------------------------- shared helpers ---------------------------------
 
 
@@ -159,11 +158,11 @@ def test_stored_xss_handles_query_param_on_post():
     def responder(req: Request) -> Response:
         if req.method == "POST":
             # Capture the query param value.
-            from urllib.parse import urlsplit, parse_qsl
+            from urllib.parse import parse_qsl, urlsplit
             qs = dict(parse_qsl(urlsplit(req.url).query, keep_blank_values=True))
             state["q"] = qs.get("note", "")
             return Response(status=200, headers=[], body=b"ok", engine="fake")
-        body = f"<html>last note: {state['q']}</html>".encode("utf-8")
+        body = f"<html>last note: {state['q']}</html>".encode()
         return Response(status=200, headers=[], body=body, engine="fake")
 
     row = _row(

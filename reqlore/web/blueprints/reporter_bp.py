@@ -1,10 +1,16 @@
 """Report export: Markdown / HTML / DOCX / JSON / SARIF."""
 from __future__ import annotations
 
+from typing import Any
+
 from flask import Blueprint, Response, abort, g, render_template, request
 
 from ...reporter import (
-    DOCX_AVAILABLE, render_docx, render_html, render_json, render_markdown,
+    DOCX_AVAILABLE,
+    render_docx,
+    render_html,
+    render_json,
+    render_markdown,
     render_sarif,
 )
 
@@ -45,13 +51,13 @@ def export(fmt: str):
         g.project.rule_run_summary_by_host() if include_coverage else None
     )
     reproductions = _reproductions_for(findings)
-    common_kwargs = dict(
-        classification=classification,
-        include_coverage=include_coverage,
-        coverage=coverage,
-        coverage_by_host=coverage_by_host,
-        reproductions=reproductions,
-    )
+    common_kwargs: dict[str, Any] = {
+        "classification": classification,
+        "include_coverage": include_coverage,
+        "coverage": coverage,
+        "coverage_by_host": coverage_by_host,
+        "reproductions": reproductions,
+    }
     if fmt == "md":
         body = render_markdown(meta, findings, **common_kwargs)
         return Response(body, mimetype="text/markdown; charset=utf-8",
@@ -69,8 +75,8 @@ def export(fmt: str):
                 "'pip install python-docx' and reload the page, or export as "
                 "Markdown / HTML instead."
             ))
-        body = render_docx(meta, findings, **common_kwargs)
-        return Response(body, mimetype=(
+        docx_body: bytes = render_docx(meta, findings, **common_kwargs)
+        return Response(docx_body, mimetype=(
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ), headers={"Content-Disposition":
                     'attachment; filename="reqlore-findings.docx"'})

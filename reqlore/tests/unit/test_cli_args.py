@@ -23,14 +23,14 @@ class TestBothSubcommand:
         ns = _parse(
             "both",
             "--project", "demo.rlr",
-            "--host", "0.0.0.0",
+            "--host", "0.0.0.0",  # noqa: S104  # argparse-parsing test, string is never used to bind a socket
             "--ui-port", "8787",
             "--proxy-port", "8080",
             "--unsafe-bind",
         )
         assert ns.subcommand == "both"
         assert ns.unsafe_bind is True
-        assert ns.host == "0.0.0.0"
+        assert ns.host == "0.0.0.0"  # noqa: S104  # asserting the argparse-parsed literal, not a bind address
         assert ns.ui_port == 8787
         assert ns.proxy_port == 8080
 
@@ -44,7 +44,7 @@ class TestUiSubcommand:
         ns = _parse(
             "ui",
             "--project", "demo.rlr",
-            "--host", "0.0.0.0",
+            "--host", "0.0.0.0",  # noqa: S104  # argparse-parsing test, string is never used to bind a socket
             "--unsafe-bind",
         )
         assert ns.unsafe_bind is True

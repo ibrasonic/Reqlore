@@ -1,7 +1,9 @@
 """Flask app factory."""
 from __future__ import annotations
 
+import contextlib
 import secrets
+from datetime import UTC
 from pathlib import Path
 
 from flask import Flask, current_app, g, request, session
@@ -37,15 +39,15 @@ def create_app(project_path: Path, settings: Settings, *,
 
     # Restore intercept toggle + filter config across restarts.
     if proxy:
-        from ..proxy.rules import InterceptConfig
         import json as _json
+
+        from ..proxy.rules import InterceptConfig
         raw = project.get_state("intercept_config", "")
         if raw:
-            try:
+            # corrupt state row — fall back to defaults
+            with contextlib.suppress(ValueError, TypeError):
                 proxy.set_intercept_config(
                     InterceptConfig.from_dict(_json.loads(raw)))
-            except (ValueError, TypeError):
-                pass  # corrupt state row — fall back to defaults
         if project.get_state("intercept_on", "0") == "1":
             proxy.set_intercept(True)
 
@@ -54,8 +56,8 @@ def create_app(project_path: Path, settings: Settings, *,
     # but it only ``start()``s when the project flag is on. OFF by
     # default (SC 3.2.5 Change on Request — user must opt in).
     if proxy is not None:
-        from ..scanner import BUILTIN_RULES, LiveScanWorker, Scanner
         from ..plugins import get_registry as _get_plugin_registry
+        from ..scanner import BUILTIN_RULES, LiveScanWorker, Scanner
         try:
             _extra_passive = _get_plugin_registry().active_rules()
         except Exception:
@@ -69,7 +71,7 @@ def create_app(project_path: Path, settings: Settings, *,
             _live_worker.start()
 
         import atexit
-        atexit.register(lambda w=_live_worker: w.stop(timeout=1.0))
+        atexit.register(lambda: _live_worker.stop(timeout=1.0))
 
     # Phase 14 — scheduler auto-start.  Off by default (SC 3.2.5).
     # When the operator has previously toggled `sched:auto_start` on,
@@ -80,15 +82,13 @@ def create_app(project_path: Path, settings: Settings, *,
         if "reqlore_scheduler" not in app.extensions:
             app.extensions["reqlore_scheduler"] = _Scheduler(project)
         if project.get_state("sched:auto_start", "0") == "1":
-            try:
+            # Boot must never fail because the scheduler couldn't
+            # arm a job; the /schedule/ UI surfaces the error.
+            with contextlib.suppress(Exception):
                 app.extensions["reqlore_scheduler"].start()
-            except Exception:
-                # Boot must never fail because the scheduler couldn't
-                # arm a job; the /schedule/ UI surfaces the error.
-                pass
         import atexit as _atexit
-        _atexit.register(lambda s=app.extensions["reqlore_scheduler"]: s.stop())
-    except Exception:
+        _atexit.register(lambda: app.extensions["reqlore_scheduler"].stop())
+    except Exception:  # noqa: S110  # scheduler is an optional feature; construction failure (missing dep, storage error) must not block web-app boot — /schedule/ UI surfaces the error
         pass
 
     # Phase 16 — Plugin App runner. One per project; survives the
@@ -101,8 +101,8 @@ def create_app(project_path: Path, settings: Settings, *,
             app.extensions["reqlore_plugin_runner"] = _PluginRunner(project)
         import atexit as _atexit_pr
         _atexit_pr.register(
-            lambda r=app.extensions["reqlore_plugin_runner"]: r.shutdown())
-    except Exception:
+            lambda: app.extensions["reqlore_plugin_runner"].shutdown())
+    except Exception:  # noqa: S110  # plugin runner construction failure must not prevent web boot; operator loses only plugin-app feature
         pass
 
     # Phase 17 — Auth Matrix runner + passive shadow worker. Both are
@@ -127,14 +127,14 @@ def create_app(project_path: Path, settings: Settings, *,
         try:
             if project.get_state("auth_matrix:shadow_enabled", "") == "1":
                 app.extensions["reqlore_auth_matrix_shadow"].start()
-        except Exception:
+        except Exception:  # noqa: S110  # auto-start of shadow worker is best-effort; failure leaves the worker stopped and operator can start it from the UI
             pass
         import atexit as _atexit_am
         _atexit_am.register(
-            lambda r=app.extensions["reqlore_auth_matrix_runner"]: r.shutdown())
+            lambda: app.extensions["reqlore_auth_matrix_runner"].shutdown())
         _atexit_am.register(
-            lambda s=app.extensions["reqlore_auth_matrix_shadow"]: s.stop(timeout=1.0))
-    except Exception:
+            lambda: app.extensions["reqlore_auth_matrix_shadow"].stop(timeout=1.0))
+    except Exception:  # noqa: S110  # auth-matrix runner construction failure must not prevent web boot; operator sees an "unavailable" banner on Auth Matrix pages
         pass
 
     # CSRF token (double-submit cookie pattern, kept simple)
@@ -215,13 +215,13 @@ def create_app(project_path: Path, settings: Settings, *,
         # Render a unix-seconds value as ISO 8601 UTC for the HTML
         # <time datetime="..."> machine-readable attribute. Returns the
         # input unchanged if it isn't a number we can interpret.
-        from datetime import datetime, timezone
+        from datetime import datetime
         try:
             n = int(ts)
         except (TypeError, ValueError):
             return ts or ""
         try:
-            return datetime.fromtimestamp(n, tz=timezone.utc).strftime(
+            return datetime.fromtimestamp(n, tz=UTC).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             )
         except (OverflowError, OSError, ValueError):
@@ -232,13 +232,13 @@ def create_app(project_path: Path, settings: Settings, *,
         # Render a unix-seconds value as a short, readable UTC string
         # for the visible text inside <time>. Falls back to the raw
         # input on bad data so we never blank out a row.
-        from datetime import datetime, timezone
+        from datetime import datetime
         try:
             n = int(ts)
         except (TypeError, ValueError):
             return ts or ""
         try:
-            return datetime.fromtimestamp(n, tz=timezone.utc).strftime(
+            return datetime.fromtimestamp(n, tz=UTC).strftime(
                 "%Y-%m-%d %H:%M:%S UTC"
             )
         except (OverflowError, OSError, ValueError):
@@ -251,36 +251,36 @@ def create_app(project_path: Path, settings: Settings, *,
         g.proxy = proxy
 
     # Blueprints
-    from .blueprints.dashboard import bp as dashboard_bp
-    from .blueprints.proxy_bp import bp as proxy_bp
-    from .blueprints.history import bp as history_bp
-    from .blueprints.repeater import bp as repeater_bp
-    from .blueprints.decoder import bp as decoder_bp
-    from .blueprints.settings_bp import bp as settings_bp
-    from .blueprints.help_bp import bp as help_bp
-    from .blueprints.intruder_bp import bp as intruder_bp
-    from .blueprints.matchreplace_bp import bp as mr_bp
-    from .blueprints.comparer_bp import bp as comparer_bp
-    from .blueprints.jwt_bp import bp as jwt_bp
-    from .blueprints.sitemap_bp import bp as sitemap_bp
-    from .blueprints.search_bp import bp as search_bp
-    from .blueprints.cues_bp import bp as cues_bp
-    from .blueprints.scanner_bp import bp as scanner_bp
-    from .blueprints.reporter_bp import bp as reporter_bp
-    from .blueprints.plugins_bp import bp as plugins_bp
-    from .blueprints.graphql_bp import bp as graphql_bp
-    from .blueprints.ws_bp import bp as ws_bp
-    from .blueprints.saml_bp import bp as saml_bp
-    from .blueprints.poc_bp import bp as poc_bp
-    from .blueprints.macros_bp import bp as macros_bp
-    from .blueprints.sequencer_bp import bp as sequencer_bp
-    from .blueprints.oast_bp import bp as oast_bp
-    from .blueprints.h2_bp import bp as h2_bp
-    from .blueprints.smuggling_bp import bp as smuggling_bp
-    from .blueprints.param_miner_bp import bp as param_miner_bp
-    from .blueprints.schedule_bp import bp as schedule_bp
-    from .blueprints.dom_hunter_bp import bp as dom_hunter_bp
     from .blueprints.auth_matrix_bp import bp as auth_matrix_bp
+    from .blueprints.comparer_bp import bp as comparer_bp
+    from .blueprints.cues_bp import bp as cues_bp
+    from .blueprints.dashboard import bp as dashboard_bp
+    from .blueprints.decoder import bp as decoder_bp
+    from .blueprints.dom_hunter_bp import bp as dom_hunter_bp
+    from .blueprints.graphql_bp import bp as graphql_bp
+    from .blueprints.h2_bp import bp as h2_bp
+    from .blueprints.help_bp import bp as help_bp
+    from .blueprints.history import bp as history_bp
+    from .blueprints.intruder_bp import bp as intruder_bp
+    from .blueprints.jwt_bp import bp as jwt_bp
+    from .blueprints.macros_bp import bp as macros_bp
+    from .blueprints.matchreplace_bp import bp as mr_bp
+    from .blueprints.oast_bp import bp as oast_bp
+    from .blueprints.param_miner_bp import bp as param_miner_bp
+    from .blueprints.plugins_bp import bp as plugins_bp
+    from .blueprints.poc_bp import bp as poc_bp
+    from .blueprints.proxy_bp import bp as proxy_bp
+    from .blueprints.repeater import bp as repeater_bp
+    from .blueprints.reporter_bp import bp as reporter_bp
+    from .blueprints.saml_bp import bp as saml_bp
+    from .blueprints.scanner_bp import bp as scanner_bp
+    from .blueprints.schedule_bp import bp as schedule_bp
+    from .blueprints.search_bp import bp as search_bp
+    from .blueprints.sequencer_bp import bp as sequencer_bp
+    from .blueprints.settings_bp import bp as settings_bp
+    from .blueprints.sitemap_bp import bp as sitemap_bp
+    from .blueprints.smuggling_bp import bp as smuggling_bp
+    from .blueprints.ws_bp import bp as ws_bp
 
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(proxy_bp, url_prefix="/proxy")
@@ -315,11 +315,9 @@ def create_app(project_path: Path, settings: Settings, *,
 
     # Let plugins register their own Flask hooks/blueprints (if any).
     from ..plugins import get_registry
-    try:
+    # A misbehaving plugin must never block app startup.
+    with contextlib.suppress(Exception):
         get_registry().call_register(app)
-    except Exception:
-        # A misbehaving plugin must never block app startup.
-        pass
 
     @app.errorhandler(404)
     def _404(e):

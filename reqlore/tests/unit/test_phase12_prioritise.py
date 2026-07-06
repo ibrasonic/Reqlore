@@ -40,7 +40,6 @@ from reqlore.scanner.prioritise import (
 )
 from reqlore.storage import Project
 
-
 # ---------------------------------------------------------------------------
 # Helper: build fake history rows. We don't need a full HistoryRow
 # dataclass — duck-typing on the attributes the scoring API reads is
@@ -93,9 +92,9 @@ def _row(
 class TestConstants:
 
     def test_state_changing_methods_canonical(self) -> None:
-        assert STATE_CHANGING_METHODS == frozenset(
+        assert frozenset(
             {"POST", "PUT", "PATCH", "DELETE"}
-        )
+        ) == STATE_CHANGING_METHODS
 
     def test_safe_methods_excluded(self) -> None:
         for m in ("GET", "HEAD", "OPTIONS", "TRACE", "CONNECT"):
@@ -524,7 +523,8 @@ class TestScannerIntegration:
         ]
         log: list[int] = []
         scanner = ActiveScanner(
-            checks=[_RecordingCheck(log)], sender=lambda req: None,
+            checks=[_RecordingCheck(log)],  # type: ignore[list-item]  # duck-typed mock; runtime protocol is what matters here
+            sender=None,
         )
         opts = ActiveOptions(
             enabled_checks=["probe"], prioritise=False,
@@ -549,7 +549,8 @@ class TestScannerIntegration:
         ]
         log: list[int] = []
         scanner = ActiveScanner(
-            checks=[_RecordingCheck(log)], sender=lambda req: None,
+            checks=[_RecordingCheck(log)],  # type: ignore[list-item]  # duck-typed mock; runtime protocol is what matters here
+            sender=None,
         )
         opts = ActiveOptions(
             enabled_checks=["probe"], prioritise=True,
@@ -561,7 +562,7 @@ class TestScannerIntegration:
         assert result.top_score > 0.0
 
     def test_prioritise_handles_empty_history(self) -> None:
-        scanner = ActiveScanner(checks=[], sender=lambda req: None)
+        scanner = ActiveScanner(checks=[], sender=None)
         opts = ActiveOptions(prioritise=True)
         result = scanner.run_on_project(_ScanProj([]), options=opts)
         # No rows → prioritised flag stays True (the queue was
@@ -578,7 +579,8 @@ class TestScannerIntegration:
         ]
         log: list[int] = []
         scanner = ActiveScanner(
-            checks=[_RecordingCheck(log)], sender=lambda req: None,
+            checks=[_RecordingCheck(log)],  # type: ignore[list-item]  # duck-typed mock; runtime protocol is what matters here
+            sender=None,
         )
         opts = ActiveOptions(
             enabled_checks=["probe"],

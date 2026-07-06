@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 
 from flask import (
-    Blueprint, abort, flash, g, redirect, render_template, request, url_for,
+    Blueprint,
+    abort,
+    flash,
+    g,
+    redirect,
+    render_template,
+    request,
+    url_for,
 )
 
+from ...macros import Macro
+from ...macros import run as run_macro
 from .._prg import PRGCache
-from ...macros import Macro, run as run_macro
 
 bp = Blueprint("macros", __name__)
 
@@ -65,9 +72,10 @@ def show(mid: int):
             last_run = run_macro(macro)
             flash(f"Ran {len(last_run.steps)} step(s) in {last_run.elapsed_ms} ms.",
                   "ok" if not any(s.error for s in last_run.steps) else "warn")
-            tok = _run_cache.put(last_run)
-            return redirect(url_for(".show", mid=mid, t=tok))
-    if tok := request.args.get("t"):
+            tok_new = _run_cache.put(last_run)
+            return redirect(url_for(".show", mid=mid, t=tok_new))
+    tok = request.args.get("t")
+    if tok:
         last_run = _run_cache.get(tok)
     definition = macro.to_json()
     from ...a11y import build_find_context
