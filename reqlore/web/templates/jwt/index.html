@@ -77,15 +77,33 @@
     <legend>RS→HS key confusion</legend>
     <p>Paste the server's RSA <em>public</em> key. Reqlore will sign the current token's payload with HS256,
        using the public key bytes as the HMAC secret — a classic forgery if the server validates with the same key.</p>
+    <p class="muted" id="j-pub-help">
+      Accepts <strong>four formats</strong> — auto-detected:
+      a PEM (<code>-----BEGIN PUBLIC KEY-----</code>),
+      a single JWK (<code>{"kty":"RSA","n":"…","e":"AQAB"}</code>),
+      a full JWKS document (<code>{"keys":[…]}</code>),
+      or a <code>https://target/.well-known/jwks.json</code> URL
+      (fetched through Reqlore's normal logged HTTP path — the GET
+      appears in <a href="{{ url_for('history.index') }}">History</a>
+      tagged <code>jwt/jwks-fetch</code>). If the current token has a
+      <code>kid</code> header, the matching JWKS entry is selected
+      automatically; otherwise the first RSA key wins. Only
+      <code>http://</code> / <code>https://</code> URLs are followed
+      and redirects are disabled.
+    </p>
     <div>
-      <label for="j-pub">Public key PEM</label>
-      <textarea id="j-pub" name="public_key" rows="4">{{ form.public_key }}</textarea>
+      <label for="j-pub">Public key (PEM, JWK, JWKS, or JWKS URL)</label>
+      <textarea id="j-pub" name="public_key" rows="4" aria-describedby="j-pub-help"
+                autocomplete="off" spellcheck="false">{{ form.public_key }}</textarea>
     </div>
     <button type="submit" name="action" value="key_confusion">Forge HS256-of-pubkey</button>
   </fieldset>
 
   {% if out.key_confusion %}
   <section aria-labelledby="j-kc"><h2 id="j-kc">Forged token</h2>
+    {% if out.key_source %}
+    <p class="muted">Key resolved from: <strong>{{ out.key_source }}</strong>. Converted to SPKI PEM before HMAC-signing.</p>
+    {% endif %}
     <pre class="block"><code>{{ out.key_confusion }}</code></pre>
   </section>
   {% endif %}
