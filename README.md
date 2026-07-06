@@ -29,7 +29,33 @@ The industry-standard desktop pentest suites are built on Java/JavaFX Swing UIs 
 
 Requires **Python 3.12+**. Pick the path that matches your platform.
 
-### Quickest: one-shot installer (Linux / macOS / Windows)
+### Fastest: install straight from GitHub (no clone)
+
+If you just want to *run* Reqlore, install it as a global command with
+[`pipx`](https://pipx.pypa.io) (isolated, recommended — and it sidesteps the
+Debian/Kali PEP 668 block automatically):
+
+```bash
+pipx install "git+https://github.com/ibrasonic/Reqlore.git"
+# add extras if you want them, e.g.:
+# pipx install "reqlore[report,yaml,schedule] @ git+https://github.com/ibrasonic/Reqlore.git"
+```
+
+Or with plain `pip` into a virtual environment:
+
+```bash
+python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install "git+https://github.com/ibrasonic/Reqlore.git"
+```
+
+Then:
+
+```
+reqlore init demo.rlr
+reqlore both --project demo.rlr   # UI on http://127.0.0.1:8787, proxy on 127.0.0.1:8080
+```
+
+### One-shot installer (Linux / macOS / Windows)
 
 ```bash
 # Linux / macOS

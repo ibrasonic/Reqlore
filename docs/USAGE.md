@@ -26,6 +26,25 @@ and findings stored in a single SQLite project file (`*.rlr`).
 
 Requires **Python 3.12+** (3.14 tested).
 
+### Fastest: install straight from GitHub (no clone)
+
+For running (not hacking on) Reqlore, install it as an isolated global command
+with [`pipx`](https://pipx.pypa.io) — this also sidesteps the Debian/Kali
+PEP 668 block automatically:
+
+```bash
+pipx install "git+https://github.com/ibrasonic/Reqlore.git"
+# with extras, e.g. report + yaml + schedule:
+# pipx install "reqlore[report,yaml,schedule] @ git+https://github.com/ibrasonic/Reqlore.git"
+```
+
+Or with plain `pip` into a virtual environment:
+
+```bash
+python -m venv .venv && . .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install "git+https://github.com/ibrasonic/Reqlore.git"
+```
+
 ### One-shot installer (recommended)
 
 ```bash
@@ -54,7 +73,7 @@ cd Reqlore
 py -m venv .venv
 .venv\Scripts\Activate.ps1
 py -m pip install -e ".[dev]"
-py -m pytest reqlore/tests/unit -q          # should be 1368 passed, 239 skipped
+py -m pytest reqlore/tests/unit -q          # should be 2883 passed, 368 skipped
 ```
 
 ### Optional extras
