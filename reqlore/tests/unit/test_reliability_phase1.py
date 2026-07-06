@@ -57,6 +57,11 @@ _RULE_ENDPOINT_SKIPS: frozenset[str] = frozenset({
     # and 404s otherwise. The smoke client has neither, so the 404 is
     # the correct behaviour.
     "plugins.send_to_chooser",
+    # `/proxy/ca` serves the generated CA PEM from disk and 404s with
+    # "No CA generated yet. Start the proxy once." until the mitm
+    # addon has run at least once. The smoke fixture builds an app
+    # with `proxy=None`, so the 404 is the documented behaviour.
+    "proxy.ca_download",
 })
 
 
