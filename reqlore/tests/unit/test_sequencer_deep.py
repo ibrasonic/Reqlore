@@ -1,6 +1,7 @@
 """Deep statistical randomness battery for the Sequencer."""
 from __future__ import annotations
 
+import base64
 import math
 import random
 import secrets
@@ -93,7 +94,19 @@ def test_encode_to_bits_constant_position_is_zero_bits():
 
 
 def test_deep_random_urlsafe_is_strong():
-    tokens = [secrets.token_urlsafe(32) for _ in range(200)]
+    # Deterministic high-entropy tokens from a seeded PRNG. Using unseeded
+    # secrets.token_urlsafe here made the Bonferroni-corrected battery flaky:
+    # with many sub-tests at significance=0.01 a genuinely-random draw would
+    # occasionally trip one and score "fair" instead of "strong" (a real
+    # statistical false-positive, not a bug). A fixed seed keeps the sample
+    # reproducible so the assertion is stable across runs/platforms.
+    rnd = random.Random(0x5EED)  # noqa: S311  # non-cryptographic — seeded PRNG for a reproducible high-entropy fixture
+    tokens = [
+        base64.urlsafe_b64encode(
+            bytes(rnd.getrandbits(8) for _ in range(32))
+        ).rstrip(b"=").decode("ascii")
+        for _ in range(200)
+    ]
     r = analyse_deep(tokens, significance=0.01)
     assert r.deep is not None
     assert r.deep.deep_rating == "strong"
