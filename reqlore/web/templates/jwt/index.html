@@ -2,20 +2,41 @@
 {% block title %}Reqlore — JWT workbench{% endblock %}
 {% block main %}
 <h1>JWT workbench</h1>
-<p>Decode JWTs, sign with HS/RS/ES, generate <code>alg=none</code> tokens, run RS↔HS key-confusion,
-   and produce <code>kid</code>-traversal payload sets.</p>
+<p>
+  Decode a token, re-sign it with HS / RS / ES (or <code>alg=none</code>),
+  mint an ephemeral attacker key for the <code>jwk</code> / <code>jku</code>
+  header sinks, run RS&#8596;HS key confusion, and build
+  <code>kid</code>-traversal sets — all without leaving Reqlore.
+</p>
 
-{% if out.error %}<p role="alert">{{ out.error }}</p>{% endif %}
+<nav class="section-nav" aria-label="JWT workbench sections">
+  <a href="#sec-decode">1. Decode</a>
+  <a href="#sec-resign">2. Re-sign &amp; forge</a>
+  <a href="#sec-confusion">3. Key confusion</a>
+  <a href="#sec-kid">4. kid traversal</a>
+</nav>
+
+{% if out.error %}
+<p role="alert" class="flash flash-warn">{{ out.error }}</p>
+{% endif %}
 
 <form method="post" action="{{ url_for('jwt.index') }}" class="stack" aria-label="JWT operations">
   <input type="hidden" name="_csrf" value="{{ csrf_token }}">
 
-  <fieldset>
-    <legend>Input token</legend>
+  <!-- 1. Decode ------------------------------------------------------------ -->
+  <fieldset id="sec-decode">
+    <legend>1. Decode</legend>
     <label for="j-tok">Compact JWT</label>
-    <textarea id="j-tok" name="token" rows="4" autocomplete="off">{{ form.token }}</textarea>
-    <button type="submit" name="action" value="decode">Decode (no verify)</button>
-    <button type="submit" name="action" value="alg_none">Produce alg=none variant</button>
+    <textarea id="j-tok" name="token" rows="4" autocomplete="off"
+              spellcheck="false" aria-describedby="j-tok-help">{{ form.token }}</textarea>
+    <p class="hint" id="j-tok-help">
+      Paste <code>header.payload.signature</code>. Decoding does not verify the
+      signature — it just base64url-decodes the two JSON segments.
+    </p>
+    <div class="row">
+      <button type="submit" name="action" value="decode">Decode (no verify)</button>
+      <button type="submit" name="action" value="alg_none">Produce alg=none variant</button>
+    </div>
   </fieldset>
 
   {% if out.decoded %}
@@ -37,8 +58,9 @@
   </section>
   {% endif %}
 
-  <fieldset>
-    <legend>Re-sign</legend>
+  <!-- 2. Re-sign & forge --------------------------------------------------- -->
+  <fieldset id="sec-resign">
+    <legend>2. Re-sign &amp; forge</legend>
     <div class="row">
       <div>
         <label for="j-alg">Algorithm</label>
@@ -49,22 +71,82 @@
     </div>
     <div>
       <label for="j-hdr">Header JSON</label>
-      <textarea id="j-hdr" name="header_text" rows="4">{{ form.header_text }}</textarea>
+      <textarea id="j-hdr" name="header_text" rows="5" spellcheck="false">{{ form.header_text }}</textarea>
     </div>
     <div>
       <label for="j-pl">Payload JSON</label>
-      <textarea id="j-pl" name="payload_text" rows="6">{{ form.payload_text }}</textarea>
+      <textarea id="j-pl" name="payload_text" rows="6" spellcheck="false">{{ form.payload_text }}</textarea>
     </div>
     <div>
       <label for="j-sec">HMAC secret (HS*)</label>
-      <input id="j-sec" name="secret" value="{{ form.secret }}" autocomplete="off">
+      <input id="j-sec" name="secret" value="{{ form.secret }}" autocomplete="off" spellcheck="false">
     </div>
     <div>
-      <label for="j-pk">Private key PEM (RS*/ES*)</label>
-      <textarea id="j-pk" name="private_key" rows="4">{{ form.private_key }}</textarea>
+      <label for="j-pk">Private key PEM (RS* / ES*)</label>
+      <textarea id="j-pk" name="private_key" rows="4" spellcheck="false"
+                aria-describedby="j-pk-help">{{ form.private_key }}</textarea>
+      <p class="hint" id="j-pk-help">
+        Paste your own PKCS8 PEM, or use <strong>Generate attacker key</strong>
+        below to mint one and wire up the <code>jwk</code> / <code>jku</code>
+        header automatically.
+      </p>
     </div>
-    <button type="submit" name="action" value="sign">Sign</button>
+
+    <!-- Attacker-key generator (jwk / jku header injection) -->
+    <fieldset id="sec-attacker" class="nested">
+      <legend>Generate attacker key (jwk / jku)</legend>
+      <p class="hint" id="j-atk-help">
+        Mints an ephemeral keypair for this session, writes its private PEM into
+        <em>Private key PEM</em> above, and sets <em>Algorithm</em> to
+        <code>RS256</code> (or <code>ES256</code> for EC). With
+        <strong>jwk</strong> it embeds the public key in the header; with
+        <strong>jku</strong> it hosts a JWK Set at a Reqlore URL and points the
+        header's <code>jku</code> at it — both the publish and any target fetch
+        appear in <a href="{{ url_for('history.index') }}">History</a> tagged
+        <code>jwt/jwks-host</code>. Then press <strong>Sign</strong>. The hosted
+        endpoint serves the public key only; the private key never leaves this
+        page.
+      </p>
+      <div class="row" role="group" aria-describedby="j-atk-help">
+        <div>
+          <label for="j-kty">Key type</label>
+          <select id="j-kty" name="key_type">
+            <option value="RSA" {% if form.key_type == "RSA" %}selected{% endif %}>RSA-2048 (RS256)</option>
+            <option value="EC" {% if form.key_type == "EC" %}selected{% endif %}>EC P-256 (ES256)</option>
+          </select>
+        </div>
+        <div>
+          <label for="j-adv">Advertise via</label>
+          <select id="j-adv" name="advertise">
+            <option value="jwk" {% if form.advertise == "jwk" %}selected{% endif %}>jwk (embed in header)</option>
+            <option value="jku" {% if form.advertise == "jku" %}selected{% endif %}>jku (host a JWK Set)</option>
+          </select>
+        </div>
+        <div>
+          <button type="submit" name="action" value="attacker_key">Generate attacker key</button>
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="row">
+      <button type="submit" name="action" value="sign">Sign</button>
+    </div>
   </fieldset>
+
+  {% if out.attacker_key %}
+  <section aria-labelledby="j-atk-out" role="status">
+    <h2 id="j-atk-out">Attacker key ready</h2>
+    <p>{{ out.attacker_key }}</p>
+    {% if out.attacker_key_url %}
+    <p>Hosted JWK Set URL (public key only):</p>
+    <pre class="block"><code>{{ out.attacker_key_url }}</code></pre>
+    {% endif %}
+    <p class="hint">
+      The private PEM and header above are filled in — press
+      <strong>Sign</strong> to produce the forged token.
+    </p>
+  </section>
+  {% endif %}
 
   {% if out.signed %}
   <section aria-labelledby="j-sg">
@@ -73,56 +155,69 @@
   </section>
   {% endif %}
 
-  <fieldset>
-    <legend>RS→HS key confusion</legend>
-    <p>Paste the server's RSA <em>public</em> key. Reqlore will sign the current token's payload with HS256,
-       using the public key bytes as the HMAC secret — a classic forgery if the server validates with the same key.</p>
-    <p class="muted" id="j-pub-help">
+  <!-- 3. RS→HS key confusion ---------------------------------------------- -->
+  <fieldset id="sec-confusion">
+    <legend>3. RS&#8594;HS key confusion</legend>
+    <p>
+      Paste the server's RSA <em>public</em> key. Reqlore signs the current
+      token's payload with HS256 using the public-key bytes as the HMAC secret
+      — a classic forgery when the server validates with the same key.
+    </p>
+    <p class="hint" id="j-pub-help">
       Accepts <strong>four formats</strong> — auto-detected:
       a PEM (<code>-----BEGIN PUBLIC KEY-----</code>),
       a single JWK (<code>{"kty":"RSA","n":"…","e":"AQAB"}</code>),
       a full JWKS document (<code>{"keys":[…]}</code>),
       or a <code>https://target/.well-known/jwks.json</code> URL
-      (fetched through Reqlore's normal logged HTTP path — the GET
-      appears in <a href="{{ url_for('history.index') }}">History</a>
-      tagged <code>jwt/jwks-fetch</code>). If the current token has a
-      <code>kid</code> header, the matching JWKS entry is selected
-      automatically; otherwise the first RSA key wins. Only
-      <code>http://</code> / <code>https://</code> URLs are followed
-      and redirects are disabled.
+      (fetched through Reqlore's normal logged HTTP path — the GET appears in
+      <a href="{{ url_for('history.index') }}">History</a> tagged
+      <code>jwt/jwks-fetch</code>). If the current token has a <code>kid</code>
+      header, the matching JWKS entry is selected automatically; otherwise the
+      first RSA key wins. Only <code>http://</code> / <code>https://</code>
+      URLs are followed and redirects are disabled.
     </p>
     <div>
       <label for="j-pub">Public key (PEM, JWK, JWKS, or JWKS URL)</label>
       <textarea id="j-pub" name="public_key" rows="4" aria-describedby="j-pub-help"
                 autocomplete="off" spellcheck="false">{{ form.public_key }}</textarea>
     </div>
-    <button type="submit" name="action" value="key_confusion">Forge HS256-of-pubkey</button>
+    <div class="row">
+      <button type="submit" name="action" value="key_confusion">Forge HS256-of-pubkey</button>
+    </div>
   </fieldset>
 
   {% if out.key_confusion %}
-  <section aria-labelledby="j-kc"><h2 id="j-kc">Forged token</h2>
+  <section aria-labelledby="j-kc">
+    <h2 id="j-kc">Forged token</h2>
     {% if out.key_source %}
-    <p class="muted">Key resolved from: <strong>{{ out.key_source }}</strong>. Converted to SPKI PEM before HMAC-signing.</p>
+    <p class="hint">Key resolved from: <strong>{{ out.key_source }}</strong>. Converted to SPKI PEM before HMAC-signing.</p>
     {% endif %}
     <pre class="block"><code>{{ out.key_confusion }}</code></pre>
   </section>
   {% endif %}
 
-  <fieldset>
-    <legend>kid traversal</legend>
-    <p>Generate HS256-signed variants of the decoded token, one per <code>kid</code> value.
-       Useful when the server reads keys from <code>kid</code> as a path.</p>
+  <!-- 4. kid traversal ----------------------------------------------------- -->
+  <fieldset id="sec-kid">
+    <legend>4. kid traversal</legend>
+    <p>
+      Generate HS256-signed variants of the decoded token, one per
+      <code>kid</code> value. Useful when the server reads keys from
+      <code>kid</code> as a path.
+    </p>
     <div>
       <label for="j-kids">kid candidates (one per line)</label>
-      <textarea id="j-kids" name="kid_values" rows="4">{{ form.kid_values }}</textarea>
+      <textarea id="j-kids" name="kid_values" rows="4" spellcheck="false">{{ form.kid_values }}</textarea>
     </div>
-    <button type="submit" name="action" value="kid_traversal">Build set</button>
+    <div class="row">
+      <button type="submit" name="action" value="kid_traversal">Build set</button>
+    </div>
   </fieldset>
 
   {% if out.kid_set %}
-  <section aria-labelledby="j-ks"><h2 id="j-ks">kid set</h2>
+  <section aria-labelledby="j-ks">
+    <h2 id="j-ks">kid set</h2>
     <table>
-      <caption>kid → token</caption>
+      <caption>kid &#8594; token</caption>
       <thead><tr><th scope="col">kid</th><th scope="col">token</th></tr></thead>
       <tbody>
       {% for kid, tok in out.kid_set %}

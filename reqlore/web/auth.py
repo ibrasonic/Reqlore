@@ -46,7 +46,10 @@ from ..config import Settings
 _HASHER = PasswordHasher(time_cost=3, memory_cost=64 * 1024, parallelism=2)
 
 # Paths that must work without auth so the login page itself can render.
-_PUBLIC_ENDPOINTS = frozenset({"auth.login", "auth.logout", "static"})
+# ``jwt.jwks_host`` serves an attacker-controlled JWK Set for the jku sink and
+# is fetched by the *target server* (which has no Reqlore session) — testers
+# legitimately point jku at lab IPs, so it must not be gated.
+_PUBLIC_ENDPOINTS = frozenset({"auth.login", "auth.logout", "static", "jwt.jwks_host"})
 
 # Per-IP throttle state: { ip: FailureRecord }. In-process only; restarts
 # clear it. Acceptable for a single-operator tool; if you need persistence,

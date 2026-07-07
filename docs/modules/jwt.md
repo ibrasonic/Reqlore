@@ -27,6 +27,7 @@ For per-payload signing inside an [Intruder](intruder.md) attack, see the
 |----------|--------|---------------------------------------------------------------------------------------|
 | `/jwt/`  | GET    | Render the workbench. Prefill from `?token=<jwt>` (link from Send-to) or `?t=<token>` (PRG cache). |
 | `/jwt/`  | POST   | Run an action. Stash result in PRGCache, 302 to `?t=<cache-token>` (no resubmit on refresh). |
+| `/jwt/keys/<id>/jwks.json` | GET | Serve a hosted attacker **JWK Set** (public half only) for the `jku` sink. Unauthenticated and free of any allow-list/SSRF guard by design — the *target server* fetches it, and testers legitimately point `jku` at localhost / lab IPs. Every fetch is logged to [History](history.md) as `jwt/jwks-host`. Unknown ids 404. |
 
 ## Form fields
 
@@ -37,7 +38,9 @@ For per-payload signing inside an [Intruder](intruder.md) attack, see the
 | Header JSON                 | textarea  | empty                                          | Auto-filled on Decode. Must be valid JSON when signing.                                |
 | Payload JSON                | textarea  | empty                                          | Auto-filled on Decode. Must be valid JSON when signing.                                |
 | HMAC secret (HS*)           | input     | empty                                          | Required for HS* sign. `autocomplete="off"`.                                           |
-| Private key PEM (RS*/ES*)   | textarea  | empty                                          | Required for RS*/ES* sign.                                                             |
+| Private key PEM (RS*/ES*)   | textarea  | empty                                          | Required for RS*/ES* sign. Auto-filled by **Generate attacker key**.                    |
+| Key type (attacker key)     | select    | `RSA-2048`                                     | `RSA-2048` (RS256) or `EC P-256` (ES256). Which keypair **Generate attacker key** mints. |
+| Advertise via (attacker key)| select    | `jwk`                                          | `jwk` (embed the public key in the header) or `jku` (host a JWK Set and point the header's `jku` at it). |
 | Public key (key confusion)  | textarea  | empty                                          | **Smart input** — accepts a PEM, a single JWK (`{"kty":"RSA",...}`), a full JWKS document (`{"keys":[...]}`), or a `https://.../jwks.json` **URL** (fetched through Reqlore's normal logged HTTP path, `engine=jwt/jwks-fetch` in History). The token's `kid` header auto-selects the matching JWKS entry; otherwise the first RSA key wins. Only `http://` and `https://` URLs are followed; redirects disabled; 10-second timeout; body cap 1 MB; paste cap 128 KB. |
 | kid candidates              | textarea  | `kid1\nkey-1\n../../keys/x\n/dev/null`         | One per line. Empty lines dropped. Default set is a traversal payload.                 |
 
@@ -48,6 +51,7 @@ For per-payload signing inside an [Intruder](intruder.md) attack, see the
 | **Decode (no verify)**        | Split the token, base64url-decode header and payload, fill the JSON fields, render `summarise_jwt()` one-liner. No signature check. |
 | **Produce alg=none variant**  | Decode unverified, set header `alg` to `"none"`, re-encode without signature. Output: `<header>.<payload>.` (trailing dot, empty signature). |
 | **Sign**                      | Re-encode header + payload with the chosen algorithm. HS* uses the secret field; RS*/ES* uses the private key field. `alg=none` produces an unsigned token. |
+| **Generate attacker key**     | Mint (or reuse) an ephemeral keypair for the session, write its PKCS8 private-key PEM into *Private key PEM*, and set *Algorithm* to `RS256` (RSA) or `ES256` (EC). With **Advertise via = jwk** the public key is injected as a `jwk` header member (creating/replacing it, leaving the rest of the header intact). With **jku** a JWK Set is published at `/jwt/keys/<id>/jwks.json` and the header's `jku` is pointed at it (plus a matching `kid`). Finish the forge with **Sign** — nothing about signing changes. Reused across presses so the signed token stays consistent with the embedded/hosted key. |
 | **Forge HS256-of-pubkey (key confusion)** | Decode current token, set `alg` to `HS256`, and HMAC-sign the header.payload with the server's RSA **public key bytes** as the HMAC secret. Signing bypasses PyJWT (which since 2.4 refuses to use an asymmetric key as HMAC secret) and uses `hmac.new(pem_bytes, ..., sha256)` directly — exactly the operation a vulnerable server performs when it picks the verifier by the token's `alg` header. The public-key field accepts PEM, JWK, JWKS, or a JWKS URL (see *Smart key input* below). |
 | **Build kid set (kid traversal)** | Generate one HS256-signed variant per `kid` candidate — same payload, different `kid` header. Used against servers that fetch keys by `kid` from a filesystem path. |
 
@@ -119,17 +123,68 @@ vulnerable server performs. The blueprint therefore uses
 vulnerable server does. This is the only place in Reqlore where PyJWT
 is bypassed for signing.
 
+## Attacker key (jwk / jku header injection)
+
+Exploiting the `jwk` (embedded-key) and `jku` (remote key-set URL) header
+sinks used to be the one part of the workbench that forced you out to
+external tooling — generate an RSA/EC keypair with `openssl`/`node`,
+hand-paste the halves, and for `jku` stand up your own `python -m
+http.server` to host a JWK Set. **Generate attacker key** collapses all of
+that into one button, mirroring how the smart *Public key* input collapsed
+RS→HS confusion.
+
+| Advertise via | What the button does                                                                                                                                                   |
+|---------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **jwk**       | Mints the keypair, writes its private PEM into *Private key PEM*, sets *Algorithm*, and injects the public JWK as a `jwk` member of the header JSON (removing any `jku`). This is the embedded-key attack: a server that trusts the token's own `jwk` will verify against your key. |
+| **jku**       | Same keypair wiring, but publishes `{"keys":[<public JWK with a random kid>]}` at `http://<ui-host>:<ui-port>/jwt/keys/<id>/jwks.json` and writes that URL into the header's `jku` (plus the matching `kid`, removing any `jwk`). A server that fetches keys from the token's `jku` will fetch *yours*. |
+
+After pressing it, the output panel confirms exactly what happened — e.g.
+*"Attacker key generated (RSA-2048); public half embedded as jwk."* or
+*"…JWK Set hosted at http://127.0.0.1:8787/jwt/keys/ab12/jwks.json."* Then
+press **Sign** to produce the forged token.
+
+### Security & scope
+
+- The keypair is **ephemeral** and lives only in this process (never on
+  disk, never in the signed session cookie), keyed by your browser
+  session. It is **reused across presses** so the token you sign matches
+  the key you embedded/hosted. Switching *Key type* mints a fresh key; the
+  hosted `jku` URL stays stable across presses.
+- The hosted endpoint serves **only the generated public JWK Set** — the
+  private key never leaves the workbench page.
+- The endpoint is intentionally **unauthenticated and has no allow-list /
+  SSRF guard**: the *target server* is what fetches it, and testers
+  legitimately point `jku` at `127.0.0.1` and lab IPs. It binds on the
+  same interface as the UI (a `0.0.0.0` bind, e.g. under Docker, is
+  rewritten to `127.0.0.1` so the URL is actually fetchable locally).
+- Both the **publish** (method `PUT`) and every **target fetch** (method
+  `GET`) are logged to [History](history.md) as `jwt/jwks-host`, alongside
+  the smart-input's `jwt/jwks-fetch`.
+- Errors are field-prefixed and specific — never a bare 500. Missing/invalid
+  advertise choice → *"Choose an advertise-via option (jwk or jku)."*;
+  a host-endpoint failure → *"Could not start the key-host endpoint on
+  <url>."*
+
 ## Accessibility notes
 
 - Main form `aria-label="JWT operations"`. Errors render in `<p role="alert">`.
+- A `class="section-nav"` landmark (`aria-label="JWT workbench sections"`) at
+  the top provides in-page jump links to the four numbered fieldsets
+  (Decode, Re-sign &amp; forge, Key confusion, kid traversal) — a bypass-block
+  for keyboard and screen-reader users.
 - Each output block is a `<section aria-labelledby="…">` — `j-dec` decoded,
-  `j-an` alg=none, `j-sg` signed token, `j-kc` key confusion, `j-ks` kid set.
-- Logical fieldsets with legends: *Input token*, *Re-sign*, *RS→HS key
-  confusion*, *kid traversal*.
+  `j-an` alg=none, `j-atk-out` attacker key (also `role="status"`), `j-sg`
+  signed token, `j-kc` key confusion, `j-ks` kid set.
+- Numbered fieldsets with legends: *1. Decode*, *2. Re-sign &amp; forge*
+  (which nests a *Generate attacker key (jwk / jku)* fieldset), *3. RS→HS key
+  confusion*, *4. kid traversal*.
+- Every control has a programmatically-associated `<label>`; help text is
+  wired with `aria-describedby` (`j-tok-help`, `j-pk-help`, `j-atk-help`,
+  `j-pub-help`). The attacker-key controls are wrapped in a
+  `role="group"` described by `j-atk-help`.
 - kid set output is a real `<table>` with `<caption>`, `<thead>`, `<th scope="col">`.
 - JSON blocks render as `<pre><code>` (code semantics, no AAA contrast trap).
-- Read order: form → action buttons → conditional outputs in the order
-  above.
+- Read order: section nav → numbered fieldsets → conditional outputs.
 
 ## How it integrates
 
@@ -191,10 +246,31 @@ Decode. The default `kid` list already targets `/dev/null` and
 **Build set**. The table lists one signed token per kid — try each
 against the server's kid lookup endpoint.
 
+### 6. jwk / jku header injection (attacker key)
+
+Decode the target's RS/ES token so *Header JSON* and *Payload JSON* are
+filled. In *2. Re-sign &amp; forge* → *Generate attacker key*:
+
+- **Embedded (jwk):** set *Advertise via* = `jwk`, pick a *Key type*, press
+  **Generate attacker key**. The private PEM lands in *Private key PEM* and
+  a `jwk` member appears in the header. Press **Sign**. If the server
+  trusts the token's own `jwk`, the forged token verifies.
+- **Remote (jku):** set *Advertise via* = `jku`, press **Generate attacker
+  key**. Reqlore hosts your public JWK Set and writes its URL into the
+  header's `jku`. The confirmation panel prints the URL (also visible in
+  [History](history.md) as `jwt/jwks-host`). Press **Sign**. When the
+  target fetches that `jku`, it pulls *your* key and the token verifies —
+  the fetch is logged too. Point the target at the printed URL (edit the
+  host if your lab target can't reach `127.0.0.1`).
+
 ## Storage footprint
 
 **None persistent.** Form state lives in PRGCache (32-entry LRU,
-in-memory, per-process). Closing the tab loses it. No `.rlr` writes.
+in-memory, per-process). Closing the tab loses it. No `.rlr` writes. The
+attacker keypair and any hosted JWK Set also live only in memory (a
+bounded per-session store, cleared on restart) — nothing is written to
+disk. The publish/fetch of a hosted `jku` set *does* add rows to
+`http_history` (engine `jwt/jwks-host`), like any other logged request.
 
 ## CLI
 
@@ -220,9 +296,13 @@ reqlore intruder run --project <p> <attack-id>
 | *"Public key: kid '…' not found in JWKS (available: …)"* | Token's `kid` header names a key the JWKS doesn't contain              | Check the target actually serves that JWKS; try the URL form so History records the raw JSON.     |
 | *"Public key: Only RSA keys are supported for RS->HS forge (got kty=EC)."* | The kid pointed at an EC/OKP/oct JWK                                    | The target isn't RS-signing this token; use the normal **Sign** flow with an EC private key instead. |
 | *"Public key: Fetched body exceeds 1024 KB limit."* | The URL served something huge (an HTML page, an error blob, a wrong endpoint) | Point at the actual JWKS endpoint; paste the JSON inline as a fallback.                          |
+| *"Choose an advertise-via option (jwk or jku)."* | Pressed **Generate attacker key** without selecting an *Advertise via* value | Pick `jwk` or `jku` from the dropdown and press it again.                                        |
+| *"Could not start the key-host endpoint on <url>."* | The in-memory JWK-Set host could not be created for the `jku` publish | Retry; if it persists, use `jwk` (embedded) mode, which needs no hosting.                        |
+| `jku` URL shows `127.0.0.1` but the lab target can't reach it | The UI binds `0.0.0.0` (e.g. Docker) so Reqlore prints a loopback URL | Edit the `jku` host in *Header JSON* to an address your target can reach, then **Sign**.         |
 
 ## Test contract
 
 - `reqlore/tests/unit/test_diff_and_jwt.py::test_jwt_summary_alg_none_warning` — `summarise_jwt()` flags `alg=none` in plain English.
 - `reqlore/tests/unit/test_jwt_smart_key.py` — 41 cases covering the smart key input: format detection (PEM / JWK / JWKS / URL), kid selection, non-RSA rejection, scheme allow-list, size caps, JSON parse errors, fetch errors, URL logged into `http_history`, HTTP non-2xx surfaced as UI error, and end-to-end forge success for PEM, JWK, and JWKS inputs.
+- `reqlore/tests/unit/test_jwt_attacker_key.py` — the `jwk` / `jku` attacker-key feature: embedded-jwk token verifies against the generated key; jku path hosts + serves the JWK Set and fetch-then-verify succeeds; both RSA-2048 and EC P-256; keypair reuse and stable jku URL across presses; key-type switch regenerates; the two named error cases return a friendly 200 (not 500); publish + fetch logged as `jwt/jwks-host`; unknown hosted id 404s; the served set never contains the private half.
 - For Intruder's `jwt:` processor coverage, see `reqlore/tests/unit/test_intruder*.py`.

@@ -562,6 +562,14 @@ fieldset {
   border-radius: 4px;
 }
 legend { padding: 0 0.5rem; font-weight: 600; }
+/* Nested fieldset (e.g. JWT "Generate attacker key" inside Re-sign): a subtle
+   inset panel so the sub-group reads as part of its parent, not a peer. */
+fieldset.nested {
+  margin-top: 1rem;
+  background: var(--bg-subtle, rgba(127, 127, 127, 0.06));
+  border-style: dashed;
+}
+fieldset.nested > legend { font-weight: 500; }
 label {
   display: block;
   font-weight: 600;

