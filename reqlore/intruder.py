@@ -1,11 +1,13 @@
 """Intruder — payload-driven request fuzzer.
 
-Four attack types:
+Five attack types:
 - sniper        : one position at a time, iterates each payload set across each position.
 - battering     : every position gets the SAME payload each iteration.
 - pitchfork     : positions advance in lockstep through their own payload set;
                   total iterations = min(len(set_i) for i).
 - clusterbomb   : cartesian product across every position; total = product(len(set_i)).
+- race          : fire a group of requests *simultaneously* (single-packet HTTP/2
+                  or last-byte-sync HTTP/1.1) to hit server-side race windows.
 
 Templates are raw HTTP request bytes with marker pairs (default ``\u00a7``) bracketing
 each insertion point. The marker character is configurable to avoid clashes with
@@ -37,8 +39,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .engines import Request, Response, curl_cffi_engine, h3_engine, httpx_engine, raw_engine
+from .engines import (
+    Request,
+    Response,
+    curl_cffi_engine,
+    h3_engine,
+    httpx_engine,
+    race_engine,
+    raw_engine,
+)
 from .storage import Project
+
+# Hard ceiling on the size of a synchronized race group. Single-packet
+# comfortably handles 20-50 streams; last-byte-sync more. 100 is a sane
+# safety cap that keeps a mis-configured attack from opening hundreds of
+# sockets at once.
+_RACE_CAP = 100
 
 DEFAULT_MARKER = "\u00a7"   # section sign — conventional payload marker
 
@@ -693,6 +709,11 @@ class AttackOptions:
     stop_on_match: bool = False
     stop_on_status: list[int] = field(default_factory=list)
     emit_findings: bool = True
+    # Race attack only. ``race_mode``: auto | single-packet | last-byte.
+    # ``race_count``: group size when the template has no markers (a pure
+    # "N identical requests" race); 0 falls back to a sensible default.
+    race_mode: str = "auto"
+    race_count: int = 0
 
 
 @dataclass
@@ -770,6 +791,8 @@ class AttackRunner:
                 stop_on_match=bool(opts_raw.get("stop_on_match", False)),
                 stop_on_status=[int(s) for s in opts_raw.get("stop_on_status", [])],
                 emit_findings=bool(opts_raw.get("emit_findings", True)),
+                race_mode=str(opts_raw.get("race_mode", "auto")),
+                race_count=max(0, int(opts_raw.get("race_count", 0))),
             )
             stop_codes = set(options.stop_on_status)
 
@@ -792,14 +815,22 @@ class AttackRunner:
                 return
 
             jobs: list[_Job] = []
-            for seq, combo in enumerate(
-                iterate_streaming(atype, sources, len(positions))
-            ):
-                if seq >= options.max_requests:
-                    break
-                processed = [apply_processors(p, options.processors) for p in combo]
-                jobs.append(_Job(seq=seq, payloads=processed))
+            if atype == "race":
+                jobs = self._build_race_jobs(sources, len(positions), options)
+            else:
+                for seq, combo in enumerate(
+                    iterate_streaming(atype, sources, len(positions))
+                ):
+                    if seq >= options.max_requests:
+                        break
+                    processed = [apply_processors(p, options.processors) for p in combo]
+                    jobs.append(_Job(seq=seq, payloads=processed))
             self.total_jobs = len(jobs)
+
+            if atype == "race":
+                self._run_race_group(
+                    jobs, template, positions, base_url, options)
+                return
 
             send = _send_factory(engine, options)
 
@@ -919,6 +950,131 @@ class AttackRunner:
             self.project.set_intruder_status(self.attack_id, final)
         finally:
             self._done.set()
+
+    def _build_race_jobs(
+        self, sources: Sequence[PayloadSource], n_positions: int,
+        options: AttackOptions,
+    ) -> list[_Job]:
+        """Build the jobs that make up a synchronized race group.
+
+        Two shapes:
+
+        * **Marked template** (positions + a payload set) \u2014 each payload in
+          the first set becomes one distinct request in the group
+          (battering-style: the same payload fills every marker). Lets an
+          operator race, e.g., a coupon-redemption request across N
+          different coupon codes at once.
+        * **Unmarked template** (no positions) \u2014 a pure "N identical
+          requests" race; ``race_count`` (or 20) copies of the template.
+
+        Group size is capped by ``race_count``, ``max_requests`` and the
+        hard :data:`_RACE_CAP` ceiling.
+        """
+        cap = min(options.max_requests, _RACE_CAP)
+        if options.race_count:
+            cap = min(cap, options.race_count)
+        jobs: list[_Job] = []
+        if n_positions > 0 and sources:
+            for seq, payload in enumerate(sources[0]()):
+                if seq >= cap:
+                    break
+                value = apply_processors(payload, options.processors)
+                jobs.append(_Job(seq=seq, payloads=[value] * n_positions))
+        else:
+            count = options.race_count or 20
+            count = min(count, options.max_requests, _RACE_CAP)
+            jobs = [_Job(seq=seq, payloads=[]) for seq in range(count)]
+        return jobs
+
+    def _run_race_group(
+        self, jobs: list[_Job], template: bytes,
+        positions: list[tuple[int, int]], base_url: str,
+        options: AttackOptions,
+    ) -> None:
+        """Render the group and fire it through the race engine.
+
+        Every request lands as a normal Intruder result (+ History row +
+        optional grep finding). ``duration_ms`` carries the per-request
+        arrival offset from group release, so a tight cluster of similar
+        durations is the telltale of a landed race window. The group
+        summary (transport, release window, 2xx count) is stored as the
+        attack's ``stop_reason``.
+        """
+        http_ver = "2" if options.race_mode in ("auto", "single-packet") else "1.1"
+        prepared: list[tuple[_Job, bytes, Request]] = []
+        for job in jobs:
+            rendered = apply_payloads(template, positions, job.payloads)
+            req = template_to_request(rendered, base_url, http_version=http_ver)
+            prepared.append((job, rendered, req))
+
+        if not prepared:
+            self.stop_reason = "race group is empty"
+            self.project.set_intruder_status(self.attack_id, "done")
+            return
+
+        try:
+            result = race_engine.send_group(
+                [req for _, _, req in prepared], mode=options.race_mode,
+                verify=options.verify_tls, timeout=options.timeout,
+            )
+        except Exception as exc:  # noqa: BLE001 - engine-agnostic safety net
+            self.stop_reason = (
+                f"race send failed: {exc.__class__.__name__}: {exc}")
+            self.project.set_intruder_status(self.attack_id, "errored")
+            return
+
+        ok_2xx = 0
+        for (job, rendered, req), item in zip(
+            prepared, result.items, strict=False
+        ):
+            resp = item.response
+            if resp is None:
+                self.errors[job.seq] = item.error or "no response"
+                resp = Response(
+                    status=0, body=b"", engine="race", error=item.error)
+            grep_hits, grep_matched = grep_extract(resp.body or b"", options.grep)
+            raw_req = resp.raw_request or rendered
+            raw_resp = _serialise_response(resp)
+            body_md5 = hashlib.md5(
+                resp.body or b"", usedforsecurity=False).hexdigest()
+            dur = max(0, item.recv_offset_us // 1000)
+            try:
+                host = urlsplit(req.url).hostname or ""
+            except Exception:  # noqa: BLE001
+                host = ""
+            if 200 <= resp.status < 300:
+                ok_2xx += 1
+            hid = self.project.add_history(
+                host=host, method=req.method, url=req.url, status=resp.status,
+                duration_ms=dur, engine=f"intruder/race-{result.transport}",
+                raw_req=raw_req, raw_resp=raw_resp,
+                tags=f"intruder:{self.attack_id}",
+            )
+            self.project.add_intruder_result(
+                attack_id=self.attack_id, seq=job.seq, payloads=job.payloads,
+                status=resp.status, len_resp=len(raw_resp), duration_ms=dur,
+                grep_hits=grep_hits, history_id=hid, body_md5=body_md5,
+                matched=grep_matched,
+            )
+            if options.emit_findings and grep_matched:
+                _emit_intruder_finding(
+                    self.project, attack_id=self.attack_id, seq=job.seq,
+                    host=host, url=req.url, payloads=job.payloads,
+                    status=resp.status, grep_hits=grep_hits, history_id=hid,
+                    raw_req=raw_req, raw_resp=raw_resp, elapsed_ms=dur,
+                )
+
+        self.stop_reason = (
+            f"race [{result.transport}] fired {len(result.items)} requests; "
+            f"release window {result.release_window_us}\u00b5s; "
+            f"{ok_2xx}\u00d7 2xx"
+        )
+        final = (
+            "errored"
+            if self.errors and len(self.errors) >= len(prepared)
+            else "done"
+        )
+        self.project.set_intruder_status(self.attack_id, final)
 
 
 def _emit_intruder_finding(project, *, attack_id: int, seq: int, host: str,

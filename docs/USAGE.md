@@ -256,7 +256,7 @@ Storage.
 ### Attack workbenches
 
 - [Repeater](modules/repeater.md) — edit + replay any request, any engine.
-- [Intruder](modules/intruder.md) — Sniper / Battering ram / Pitchfork / Cluster bomb; payload processors including `jwt:`.
+- [Intruder](modules/intruder.md) — Sniper / Battering ram / Pitchfork / Cluster bomb / Race (single-packet HTTP/2 + last-byte-sync HTTP/1.1); payload processors including `jwt:`.
 - [Param miner](modules/param-miner.md) — query / body / header parameter discovery.
 - [Scanner](modules/scanner.md) — passive + active checks; presets; manual finding entry; suppressions.
 - [Auth Matrix](modules/auth-matrix.md) — Autorize / AuthMatrix-style structured access-control testing; active runs against a history slice **and** a passive shadow worker that replays every proxied response under every saved session.

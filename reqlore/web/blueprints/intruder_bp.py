@@ -47,6 +47,7 @@ ATTACK_TYPES = [
     ("battering", "Battering Ram — same payload in every position"),
     ("pitchfork", "Pitchfork — N sets advance in lockstep"),
     ("clusterbomb", "Cluster Bomb — every combination (cartesian)"),
+    ("race", "Race — fire a group at once (single-packet HTTP/2 / last-byte HTTP/1.1)"),
 ]
 
 
@@ -89,6 +90,8 @@ def new():
         "retries": "0",
         "stop_on_match": "",
         "stop_on_status": "",
+        "race_mode": "auto",
+        "race_count": "20",
     }
     # Per-position source config for pitchfork / cluster-bomb attacks.
     # Set 1 uses the un-suffixed fields above (backward-compatible). Sets
@@ -133,10 +136,14 @@ def new():
         template = form["template"].replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
         marker = form["marker"] or DEFAULT_MARKER
         positions = find_positions(template, marker)
-        if not positions:
+        is_race = form["attack_type"] == "race"
+        payload_sets: list = []
+        if not positions and not is_race:
             error = (f"No markers found. Wrap insertion points with {marker} "
                      f"(e.g. {marker}payload{marker}).")
-        else:
+        elif positions:
+            # Race groups may run with no markers (N identical requests);
+            # only collect payload sets when the template actually has them.
             try:
                 payload_sets = _collect_payload_sets(form)
             except ValueError as exc:
@@ -144,37 +151,39 @@ def new():
                 error = str(exc)
             if not error and (not payload_sets or not payload_sets[0]):
                 error = "Payload set is empty."
-            if not error:
-                stop_codes: list[int] = []
-                for tok in (form["stop_on_status"] or "").replace(";", ",").split(","):
-                    tok = tok.strip()
-                    if tok.isdigit():
-                        stop_codes.append(int(tok))
-                options = {
-                    "concurrency": int(form["concurrency"] or 4),
-                    "delay_ms": int(form["delay_ms"] or 0),
-                    "max_requests": int(form["max_requests"] or 1000),
-                    "processors": [
-                        p.strip() for p in (form["processors"] or "").split(",")
-                        if p.strip()
-                    ],
-                    "grep": [g for g in (form["grep"] or "").splitlines() if g.strip()],
-                    "retries": max(0, int(form["retries"] or 0)),
-                    "stop_on_match": bool(form.get("stop_on_match")),
-                    "stop_on_status": stop_codes,
-                }
-                aid = g.project.create_intruder(
-                    name=form["name"] or "Attack",
-                    attack_type=form["attack_type"],
-                    template=template,
-                    positions=positions,
-                    payloads=payload_sets,
-                    options=options,
-                    url=form["url"],
-                    engine=form["engine"],
-                )
-                flash(f"Created attack #{aid}.", "ok")
-                return redirect(url_for("intruder.detail", aid=aid))
+        if not error:
+            stop_codes: list[int] = []
+            for tok in (form["stop_on_status"] or "").replace(";", ",").split(","):
+                tok = tok.strip()
+                if tok.isdigit():
+                    stop_codes.append(int(tok))
+            options = {
+                "concurrency": int(form["concurrency"] or 4),
+                "delay_ms": int(form["delay_ms"] or 0),
+                "max_requests": int(form["max_requests"] or 1000),
+                "processors": [
+                    p.strip() for p in (form["processors"] or "").split(",")
+                    if p.strip()
+                ],
+                "grep": [g for g in (form["grep"] or "").splitlines() if g.strip()],
+                "retries": max(0, int(form["retries"] or 0)),
+                "stop_on_match": bool(form.get("stop_on_match")),
+                "stop_on_status": stop_codes,
+                "race_mode": form["race_mode"] or "auto",
+                "race_count": max(0, int(form["race_count"] or 0)),
+            }
+            aid = g.project.create_intruder(
+                name=form["name"] or "Attack",
+                attack_type=form["attack_type"],
+                template=template,
+                positions=positions,
+                payloads=payload_sets,
+                options=options,
+                url=form["url"],
+                engine=form["engine"],
+            )
+            flash(f"Created attack #{aid}.", "ok")
+            return redirect(url_for("intruder.detail", aid=aid))
     return render_template(
         "intruder/new.html", form=form, attack_types=ATTACK_TYPES,
         processors=processor_names(), wordlists=wordlist_names(),

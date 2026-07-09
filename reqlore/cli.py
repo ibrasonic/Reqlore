@@ -668,6 +668,10 @@ def cmd_intruder(args: argparse.Namespace) -> int:
             est = len(built.payloads[0])
         elif built.attack_type == "pitchfork":
             est = min(len(s) for s in built.payloads)
+        elif built.attack_type == "race":
+            group = (len(built.payloads[0]) if built.payloads
+                     else int(built.options.get("race_count") or 20))
+            est = min(group, 100)
         else:  # clusterbomb
             est = 1
             for s in built.payloads:

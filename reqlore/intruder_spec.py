@@ -25,7 +25,7 @@ from .intruder import (
     payloads_numbers,
 )
 
-_VALID_ATTACK_TYPES = ("sniper", "battering", "pitchfork", "clusterbomb")
+_VALID_ATTACK_TYPES = ("sniper", "battering", "pitchfork", "clusterbomb", "race")
 _VALID_SOURCES = ("text", "numbers", "brute", "common_pw", "wordlist", "wordlist_file")
 
 
@@ -147,23 +147,30 @@ def build_attack(spec: dict, *, base_dir: Path | None = None) -> BuiltAttack:
         raise SpecError("'template' (raw HTTP request) is required.")
     template = template_text.replace("\r\n", "\n").replace("\n", "\r\n").encode("utf-8")
     positions = find_positions(template, marker)
-    if not positions:
+    # A race attack may fire N identical requests with no markers at all,
+    # so markers (and payloads) are optional for that type only.
+    if not positions and attack_type != "race":
         raise SpecError(
             f"No markers in template. Wrap insertion points with {marker} "
             f"(e.g. {marker}payload{marker}).")
 
     raw_payloads = spec.get("payloads")
-    if not isinstance(raw_payloads, list) or not raw_payloads:
-        raise SpecError("'payloads' must be a non-empty list of payload-set entries.")
     payload_sets: list[list[str]] = []
-    for i, entry in enumerate(raw_payloads):
-        if not isinstance(entry, dict):
-            raise SpecError(f"payloads[{i}] must be a mapping.")
-        payload_sets.append(_payload_set_from_entry(entry, base_dir=base_dir))
-    if not payload_sets[0]:
-        raise SpecError("First payload set is empty.")
-    if attack_type in ("sniper", "battering"):
-        payload_sets = payload_sets[:1]
+    if attack_type == "race" and not positions:
+        # Unmarked race: no payload sets required.
+        payload_sets = []
+    else:
+        if not isinstance(raw_payloads, list) or not raw_payloads:
+            raise SpecError(
+                "'payloads' must be a non-empty list of payload-set entries.")
+        for i, entry in enumerate(raw_payloads):
+            if not isinstance(entry, dict):
+                raise SpecError(f"payloads[{i}] must be a mapping.")
+            payload_sets.append(_payload_set_from_entry(entry, base_dir=base_dir))
+        if not payload_sets[0]:
+            raise SpecError("First payload set is empty.")
+        if attack_type in ("sniper", "battering", "race"):
+            payload_sets = payload_sets[:1]
 
     raw_opts = spec.get("options", {}) or {}
     if not isinstance(raw_opts, dict):
@@ -180,6 +187,8 @@ def build_attack(spec: dict, *, base_dir: Path | None = None) -> BuiltAttack:
         "timeout": float(raw_opts.get("timeout", 15.0)),
         "follow_redirects": bool(raw_opts.get("follow_redirects", False)),
         "verify_tls": bool(raw_opts.get("verify_tls", True)),
+        "race_mode": str(raw_opts.get("race_mode", "auto")),
+        "race_count": max(0, int(raw_opts.get("race_count", 0))),
     }
 
     return BuiltAttack(

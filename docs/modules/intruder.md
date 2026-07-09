@@ -45,6 +45,64 @@ pipeline that includes per-payload JWT signing.
 | `battering`   | Battering Ram — same payload in every position      | 1 — same payload in every marker    |
 | `pitchfork`   | Pitchfork — N sets advance in lockstep              | up to 4 (stops at shortest)         |
 | `clusterbomb` | Cluster Bomb — every combination (cartesian)        | up to 4 (cartesian product)         |
+| `race`        | Race — fire a group simultaneously                  | 0-1 (see below)                     |
+
+## Race attacks — hitting server-side race windows
+
+The `race` attack type fires a whole **group** of requests as close to
+simultaneously as the protocol physically allows, to exploit
+time-of-check-to-time-of-use flaws: double-spending a gift card, redeeming
+one coupon N times, bypassing a "one vote / one signup / one withdrawal"
+limit, or any check-then-act sequence with no lock. This is the same class
+of attack as Burp's *single-packet* / Turbo Intruder's `race()` — Reqlore
+ships both transports and picks the strongest automatically.
+
+Two transports, in `reqlore/engines/race_engine.py`:
+
+- **Single-packet (HTTP/2)** — *the strongest primitive.* All requests
+  share one TLS connection; each is primed on the wire minus its final
+  `DATA` frame (`END_STREAM` withheld), then the final frames for every
+  stream are flushed in **one** `sendall` → a single TCP segment. The
+  server therefore dequeues all requests on the same event-loop tick,
+  eliminating network jitter entirely: the group arrives within
+  microseconds of itself regardless of round-trip time. Requires the
+  origin to negotiate `h2` over ALPN (HTTPS).
+- **Last-byte-sync (HTTP/1.1)** — the fallback for origins without HTTP/2.
+  One connection and one worker thread per request; each sends its request
+  minus the final byte, all block on a shared `threading.Barrier`, then
+  release the last byte together. Synchronization is bound by the local
+  socket loop (tens of microseconds) instead of N full round-trips.
+
+**Transport** (form field / `race_mode` option):
+
+| Value           | Behaviour                                                             |
+|-----------------|----------------------------------------------------------------------|
+| `auto` (default)| Single-packet when the origin speaks HTTP/2, else last-byte-sync.     |
+| `single-packet` | Force HTTP/2 single-packet.                                          |
+| `last-byte`     | Force HTTP/1.1 last-byte-sync.                                       |
+
+**Group composition:**
+
+- **With markers** — the first payload set becomes the group: one distinct
+  request per payload, all fired together (e.g. race five different coupon
+  codes at once).
+- **Without markers** — a pure "N identical requests" race; **Group size**
+  (`race_count`, default 20) copies of the template are fired.
+
+Group size is capped by `race_count`, `max_requests`, and a hard ceiling of
+100 (`_RACE_CAP` in `reqlore/intruder.py`) so a mis-configured attack can't
+open hundreds of sockets at once.
+
+**Reading the results:** each request lands as a normal result row (+
+History entry + optional grep finding). The `duration_ms` column carries
+each response's **arrival offset from group release**, so a tight cluster
+of similar durations is the fingerprint of a landed race window; sort by
+Length or Status to spot the one response that behaved differently (the
+race "winner"). The group summary — transport, release window in µs, and
+count of 2xx responses — is stored as the attack's stop-reason.
+
+Race attacks are also available headlessly: set `attack_type: race` in an
+`intruder_spec` file, with optional `options.race_mode` / `options.race_count`.
 
 Sets 2-4 are hidden inside a `data-multi-only` wrapper on the form,
 revealed live (via [reqlore.js](../../reqlore/web/static/reqlore.js)) only

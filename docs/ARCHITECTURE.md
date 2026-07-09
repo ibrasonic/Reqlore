@@ -34,11 +34,15 @@ chosen by the caller, plus a render-only helper. Full details in
 | `h3_engine` | HTTP/3 over QUIC via `aioquic`. Optional `[h3]` extra. 15 s timeout. | Targets that only speak H3. |
 | `curl_cffi_engine` | curl-impersonate JA3/JA4 spoofing. Optional `[impersonate]` extra. 15 s timeout. 8 profiles. | Anti-bot bypass; reaching CDNs that fingerprint TLS handshakes. |
 | `curl_render` | **Render only**, never sends. | "Copy as curl" exports. |
+| `race_engine` | Synchronized request **groups**: HTTP/2 single-packet + HTTP/1.1 last-byte-sync. | Intruder `race` attacks — hitting server-side race windows (TOCTOU). |
 
 HTTP/2 frame work and WebSocket fuzzing are handled by dedicated
 workbenches (`reqlore.h2_tool` + `/h2/`, `reqlore.websocket` + `/ws/`)
 rather than transport engines — they own their own protocol state and
 need UI surface that doesn't fit the `send(req) -> resp` contract.
+`race_engine` similarly steps outside that contract: it exposes
+`send_group(requests) -> RaceResult` because a race attack is defined by
+firing many requests *together*, not one at a time.
 
 A common `Request` dataclass and `Response` dataclass are shared across
 engines so the UI doesn't care which engine produced a response. The

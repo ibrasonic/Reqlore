@@ -66,6 +66,7 @@ For phase-by-phase delivery, see [ROADMAP.md](ROADMAP.md).
 | Feature | Status | Notes |
 |---|---|---|
 | Sniper / Battering Ram / Pitchfork / Cluster Bomb | ✅ | See [intruder.md](modules/intruder.md). |
+| Race — single-packet (HTTP/2) / last-byte-sync (HTTP/1.1) | ✅ | Fires a whole request group simultaneously; `race_engine.py`. |
 | Payload sources (list / file / brute / dates / numbers / common-pw) | ✅ | |
 | Payload processors (case / encode / hash / regex / prefix / suffix) | ✅ | `PROCESSORS` + `ARG_PROCESSORS` in `reqlore/intruder.py`. |
 | JWT-mint processor (per-payload signed token) | ✅ | `jwt:<spec>` syntax. |

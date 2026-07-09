@@ -102,6 +102,35 @@ def test_build_attack_first_set_empty(tmp_path: Path):
         build_attack(spec, base_dir=tmp_path)
 
 
+def test_build_attack_race_unmarked_no_payloads(tmp_path: Path):
+    """A race attack may fire N identical requests: no markers, no
+    payloads, and the race options are carried through."""
+    spec = _minimal(
+        attack_type="race",
+        template="POST /buy HTTP/1.1\nHost: example.com\n\nqty=1",
+        payloads=[],
+        options={"race_mode": "single-packet", "race_count": 30},
+    )
+    built = build_attack(spec, base_dir=tmp_path)
+    assert built.attack_type == "race"
+    assert built.positions == []
+    assert built.payloads == []
+    assert built.options["race_mode"] == "single-packet"
+    assert built.options["race_count"] == 30
+
+
+def test_build_attack_race_with_marker_keeps_one_set(tmp_path: Path):
+    spec = _minimal(
+        attack_type="race",
+        payloads=[{"source": "text", "values": ["x", "y"]},
+                  {"source": "text", "values": ["z"]}],
+    )
+    built = build_attack(spec, base_dir=tmp_path)
+    assert built.attack_type == "race"
+    assert built.payloads == [["x", "y"]]  # only the first set is used
+    assert built.options["race_mode"] == "auto"
+
+
 def test_build_attack_wordlist_source(tmp_path: Path):
     spec = _minimal(payloads=[{"source": "wordlist", "name": "common_usernames"}])
     built = build_attack(spec, base_dir=tmp_path)

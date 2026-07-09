@@ -319,6 +319,33 @@
     <p id="i-rt-help" class="muted">Retries apply only to network/send exceptions, not to HTTP status codes. Each retry waits the per-request delay.</p>
   </fieldset>
 
+  <fieldset>
+    <legend>Race (only for the <code>race</code> attack type)</legend>
+    <p class="muted">
+      Fires a whole group of requests <em>simultaneously</em> to hit
+      server-side race windows (double-spend, coupon reuse, TOCTOU).
+      <strong>Single-packet</strong> sends every request in one TCP segment
+      over HTTP/2 — the strongest primitive, immune to network jitter.
+      <strong>Last-byte-sync</strong> is the HTTP/1.1 fallback. With markers
+      the first payload set becomes the group (one request per payload);
+      with no markers, <em>Group size</em> identical copies are fired.
+    </p>
+    <div class="row">
+      <div>
+        <label for="i-race-mode">Transport</label>
+        <select id="i-race-mode" name="race_mode">
+          <option value="auto" {% if form.race_mode == 'auto' %}selected{% endif %}>auto (single-packet if HTTP/2, else last-byte)</option>
+          <option value="single-packet" {% if form.race_mode == 'single-packet' %}selected{% endif %}>single-packet (HTTP/2)</option>
+          <option value="last-byte" {% if form.race_mode == 'last-byte' %}selected{% endif %}>last-byte-sync (HTTP/1.1)</option>
+        </select>
+      </div>
+      <div>
+        <label for="i-race-count">Group size (unmarked template; max {{ 100 }})</label>
+        <input id="i-race-count" name="race_count" value="{{ form.race_count }}" inputmode="numeric">
+      </div>
+    </div>
+  </fieldset>
+
   <button type="submit" accesskey="c"><u>C</u>reate attack</button>
 </form>
 {% endblock %}
